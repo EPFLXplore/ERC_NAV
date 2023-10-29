@@ -1,0 +1,11 @@
+<launch>
+  <!-- Launch the stereo camera -->
+  <include file="src/sensors/front_camera/launch/stereo.launch.py">
+  </include>
+
+  <!-- Launch the obstacle filter node -->
+  <!-- <node name="obstacle_filter_node" pkg="obstacle_filter" exec="obstacle_filter_node">
+  </node> -->
+  <include file="src/sensors/obstacle_filter/launch/obstacle_filter.launch.py">
+  </include>
+</launch>

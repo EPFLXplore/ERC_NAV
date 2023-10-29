@@ -1,0 +1,9 @@
+<launch>
+
+
+  <!-- Launch the node that manage the motors commands -->
+  <node name="cs_interface_receive_goal" pkg="cs_interface" exec="cs_interface_receive_goal" >
+  </node>
+
+
+</launch>
