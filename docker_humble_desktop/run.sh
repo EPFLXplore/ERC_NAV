@@ -26,7 +26,7 @@ echo ""
 echo "Running docker..."
 
 docker run -it \
-    --name nav_foxy_desktop \
+    --name nav_humble_desktop \
     --rm \
     --runtime=nvidia \
     --gpus all \
@@ -39,4 +39,4 @@ docker run -it \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
-    ghcr.io/epflxplore/nav:foxy-desktop
+    ghcr.io/epflxplore/nav:humble-desktop

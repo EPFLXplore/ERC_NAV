@@ -2,7 +2,7 @@ name: Docker CI
 
 on:
   push:
-    branches: ["foxy"]
+    branches: ["humble"]
 
 env:
   REGISTRY: ghcr.io
@@ -16,9 +16,9 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - dockerfile: ./docker_foxy_desktop/Dockerfile
+          - dockerfile: ./docker_humble_desktop/Dockerfile
             context: .
-            tag: foxy-desktop
+            tag: humble-desktop
             platform: linux/amd64
 
     permissions:
