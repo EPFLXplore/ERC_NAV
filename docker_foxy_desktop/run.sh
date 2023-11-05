@@ -25,6 +25,12 @@ ls -FAlh $XAUTH
 echo ""
 echo "Running docker..."
 
+# Get the current working directory
+current_dir=$(pwd)
+
+# Use dirname to get the parent directory
+parent_dir=$(dirname "$current_dir")
+
 docker run -it \
     --name nav_foxy_desktop \
     --rm \
@@ -39,4 +45,6 @@ docker run -it \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
+    -v $parent_dir:/home/xplore/dev_ws/src \
+    -v nav_foxy_desktop_home_volume:/home/xplore \
     ghcr.io/epflxplore/nav:foxy-desktop
