@@ -3,6 +3,20 @@
 Warning: the code is not finish and have compilation error
 
 
+## Organisation of the repository
+
+The repository is organized as followed:
+
+![Structure](ERC_NAV/doc/repo_structure.png)
+
+* The sensors directory contains the camera, lidar (ouster package) and imu packages that extract the data from the sensors and publish ROS2 topics of type: PointCloud2 for the lidar, Image and/or Pointcloud2 for the camera and IMU for the IMU. The imu package was created last year by the electronics team.
+* The localization directory contains the code for the lidar (LIOSAM) and camera localization separately. 
+* The obstacle_detection directory contains the code for the lidar and camera obstacle detection separately. 
+* The path_planning directory contains the nav2 code that creates global and local costmaps and generates a path to the goal. A controller publishes velocity commands (type Twist) to follow the path. 
+* The wheels_control directory contains all the code for the manual and autonomous kinematics of the wheels and the control of the motors.
+
+
+
 
 ### Set/reset lidar connection
 
