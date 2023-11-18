@@ -7,7 +7,11 @@ Warning: the code is not finish and have compilation error
 
 The repository is organized as followed:
 
-![Structure](ERC_NAV/doc/repo_structure.png)
+<div style="text-align:center">
+    <img src="doc/repo_structure.png" alt="Structure" width="300"/>
+</div>
+<br>
+
 
 * The sensors directory contains the camera, lidar (ouster package) and imu packages that extract the data from the sensors and publish ROS2 topics of type: PointCloud2 for the lidar, Image and/or Pointcloud2 for the camera and IMU for the IMU. The imu package was created last year by the electronics team.
 * The localization directory contains the code for the lidar (LIOSAM) and camera localization separately. 
