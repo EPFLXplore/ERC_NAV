@@ -21,7 +21,7 @@
 *rosbag2_2023_08_26-00_14_07
 
 ## data files are not for gitHub
-*.png
+
 *.jpg
 *.gif
 *.mp4
@@ -38,3 +38,6 @@
 *.catkin_workspace 
 *.json
 *.gv
+
+
+
