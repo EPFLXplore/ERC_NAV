@@ -1,6 +1,6 @@
 <launch>
   <!-- Launch the stereo camera -->
-  <include file="src/sensors/front_camera/launch/stereo.launch.py">
+  <include file="src/sensors/camera/launch/stereo.launch.py">
   </include>
 
   <!-- Launch the obstacle filter node -->
