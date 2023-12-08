@@ -1,0 +1,3 @@
+[submodule "localization/lidar/LIO-SAM"]
+	path = localization/lidar/LIO-SAM
+	url = git@github.com:TixiaoShan/LIO-SAM.git
