@@ -1,7 +1,7 @@
 ###########################################
 # Xplore Navigation image
 ###########################################
-FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
+FROM ghcr.io/epflxplore/docker_commons:humble-jetson
 
 ARG DEBIAN_FRONTEND=noninteractive
 

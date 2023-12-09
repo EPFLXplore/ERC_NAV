@@ -20,6 +20,10 @@ jobs:
             context: .
             tag: humble-desktop
             platform: linux/amd64
+          - dockerfile: ./docker_humble_jetson/Dockerfile
+            context: .
+            tag: humble-jetson
+            platform: linux/arm64
 
     permissions:
       contents: read
