@@ -1,7 +1,7 @@
 ###########################################
 # Xplore Navigation image
 ###########################################
-FROM ghcr.io/epflxplore/docker_commons:foxy-desktop
+FROM ghcr.io/epflxplore/docker_commons:foxy-desktop-nvidia
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -35,7 +35,7 @@ WORKDIR /home/$USERNAME/dev_ws
 
 # Install ROS 2 Nav dependencies
 RUN rosdep update \
-    && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y --skip-keys "libg2o g2o"
+    && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
