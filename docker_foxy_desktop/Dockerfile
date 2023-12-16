@@ -37,5 +37,8 @@ WORKDIR /home/$USERNAME/dev_ws
 RUN rosdep update \
     && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
 
+# Add the source of the project to the .bashrc
+RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
+
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
