@@ -1,7 +1,7 @@
 #include <cmath>
 #include <iostream>
 
-#include "normal_kinematic_model_slow.hpp"
+#include "wheels_control/normal_kinematic_model_slow.hpp"
 
 
 RoverSlowNormalKinematicModel::RoverSlowNormalKinematicModel():

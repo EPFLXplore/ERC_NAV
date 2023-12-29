@@ -17,7 +17,7 @@ description:  - Take the rover velocity and compute the position of the steering
 #include <functional>
 #include <memory>
 #include <string>
-#include "utility.hpp"
+#include "wheels_control/utility.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -26,10 +26,10 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "custom_msg/msg/motorcmds.hpp" 
 #include "custom_msg/msg/wheelstatus.hpp"
 
-#include "definition.hpp"
-#include "basic_kinematic_model.hpp"
-#include "normal_kinematic_model.hpp"
-#include "normal_kinematic_model_slow.hpp"
+#include "wheels_control/definition.hpp"
+#include "wheels_control/basic_kinematic_model.hpp"
+#include "wheels_control/normal_kinematic_model.hpp"
+#include "wheels_control/normal_kinematic_model_slow.hpp"
 
 
 

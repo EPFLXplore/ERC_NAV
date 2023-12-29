@@ -27,11 +27,11 @@ Function used from motors.hpp:  - connected()
 #include <unordered_set>
 
 
-//#include "EposCmd.h"
-#include "definition.hpp"
+// #include "EposCmd.h"
+#include "wheels_control/definition.hpp"
 
 
-#include "motors.hpp"
+#include "wheels_control/motors.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include <rclcpp/timer.hpp>
 #include "std_msgs/msg/string.hpp"
@@ -89,7 +89,7 @@ class MotorCmds : public rclcpp::Node
         int i = 0;
         bool homing;
 
-        this->declare_parameter("homing");
+        // this->declare_parameter("homing");
 
         if (this->get_parameter("homing", homing)) {
             RCLCPP_INFO(this->get_logger(), "Got homing_param: %s", homing ? "true" : "false");

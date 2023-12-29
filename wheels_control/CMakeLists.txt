@@ -21,10 +21,11 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(custom_msg)  
+find_package(custom_msg)
 
 include_directories(
-  include/wheels_control
+  include
+  ${ament_INCLUDE_DIRS}
 )
 
 # install launch directory
@@ -86,12 +87,13 @@ add_executable(NAV_displacement_cmds
 
 ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs) 
 
+add_executable(NAV_motor_cmds src/Motors_cmds_node.cpp src/motors.cpp)
+ament_target_dependencies(NAV_motor_cmds rclcpp custom_msg std_msgs)
 
-
-add_executable(NAV_motor_cmds src/Motors_cmds_node.cpp src/motors.cpp )
-ament_target_dependencies(NAV_motor_cmds rclcpp custom_msg )
-
-
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
 
 
 # add epos libraries
