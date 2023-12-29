@@ -1,0 +1,150 @@
+# Startup
+
+## Drive System
+### Motor
+Motor type: maxon EC motir (BLDC)
+Nomial current: 4130 mA
+Torque constant: Box check - 37.524mNm/A
+
+Thermal time constant winding: 25.1s
+Max speed: 6250 rpm
+Number of pole pair: 8
+
+
+### Gear
+System with gear: Box check
+Absolute reduction: 53 -1 
+Direction of rotation, drive to output: Same
+Max continuous input speed: 100 000 rpm
+
+
+### Sensors
+Connector - Type - Mounting Position
+X4 - Hall sensor : Digital Hall sensors : -
+X5 - Encoder : None : -
+X6 - Sensor : None : -
+
+## Controller
+### Commutation
+Type: Block commutation
+Sensors: X4 - Digital Hall sensors
+
+
+### Regulation
+Current: PI current controller
+Velocity: PI velocity controller (low-pass filter)
+Position: PID position controller
+
+Main sensor: X4 - Digital Hall sensors
+
+
+### Units
+Position Unit: 1 inc
+Velocity Unit: 1 rpm 
+Acceleration Unit:1 rpm/s
+
+Current Unit: 1mA
+Torque Unit: 0.001 mNm
+
+
+### Limits
+Max continuous current: 4130 mA
+*** Max output current: 8 000 mA ***
+Max accelertion: 4 294 967 295 rpm/s
+*** Max profile velocity: 10000 rpm ***
+*** Following error window: 10000000 inc ***
+
+Use software position limit: Box empty
+Min position limit: 0 inc
+Max position limit: 0 inc
+
+(
+Max temperature power stage: 100.0 C
+Power supply undervoltage limit: 8.000 V
+Power overvoltage limit: 58.000 V
+)
+
+### Device Control
+Shutdown option code: Disable drive function
+Disable operation option code: Slow down on deceleration
+Quick stop option code: Slow down on quick stop deceleration -> quick stop active
+Fault reaction option code: Slow down on quick stop deceleration
+Abort connection option code: Quick stop command
+
+*** Profile deceleration: 3 000 rpm/s ***
+Quick stop deceleration: 10 000 rpm/s
+
+
+### Windows
+Use standstill window to detect motor standstill during state transitions: Box check
+Standstill window: 30 rpm
+Standstill window time: 2 ms
+Standstill window timeout:  Box check - 1000 ms
+
+Use position window for the target reached condition: Box empty
+Position window: 4294967295 inc
+Position windw time: 0 ms
+
+
+### Touch Probe
+State: Switched Off
+Mode: First Trigger Only
+Source: Digital Input
+Triggers: No Edge
+
+
+## Inputs/outputs
+### Digital Inputs
+Input - Functionality - Polarity:
+Digital input 1 : Negative limit switch : Hight active
+Digital input 2 : Positive limit switch : Hight active
+Digital input 3 : Home switch : Hight active
+Digital input 4 : General purpose D : Hight active
+
+High-speed digital input 1 : None : Hight active
+High-speed digital input 2 : None : Hight active
+High-speed digital input 3 : None : Hight active
+High-speed digital input 4 : None : Hight active
+
+
+### Digital Outputs
+Output - Functionality - Polarity:
+Digital output 1 : General purpose A : High active
+Digital output 2 : General purpose B : High active
+High-speed digital output1 : None : High active
+
+
+
+### Analog Inputs
+Input - Functionality:
+Analog input 1 : General purpose A
+Analog input 2 : General purpose B
+
+
+
+### Analog Outputs
+Output - Functionality:
+Analog output 1 : General purpose A
+Analog output 2 : General purpose B
+
+
+# Regulation Tuning
+## Current
+
+### System Identification
+Step amplitude:
+
+### Controller Design
+Stiffness
+P-gain:
+I-gain:
+
+### Test signal
+Type:
+Period:
+Amplitude peak:
+Offset:
+
+
+Error: Identification current could not be reached during auto tuning identification
+Error : Auto tuning identificatino error - Auto tuning identification timeout termination requirements not meet
