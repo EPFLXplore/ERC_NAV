@@ -20,8 +20,6 @@ RUN apt-get install -y --no-install-recommends \
     libyaml-cpp-dev \
     lcov
 
-RUN pip install torch
-
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
 RUN /etc/init.d/udev restart
@@ -41,6 +39,9 @@ RUN rosdep update \
 
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
+
+# Install additional Python packages
+RUN pip install torch
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
