@@ -28,7 +28,7 @@ USER $USERNAME
 
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src
-COPY . .
+COPY . ./ERC_NAV
 
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
@@ -41,7 +41,10 @@ RUN rosdep update \
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
 
 # Install additional Python packages
-RUN pip install torch
+RUN pip install torch --no-cache-dir
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
+
+# Remove all the confidential Xplore source code from the image
+RUN sudo rm -rf /home/$USERNAME/dev_ws/src/*

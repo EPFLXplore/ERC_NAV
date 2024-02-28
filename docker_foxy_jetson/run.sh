@@ -45,6 +45,6 @@ docker run -it \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
-    -v $parent_dir:/home/xplore/dev_ws/src \
+    -v $parent_dir:/home/xplore/dev_ws/src/ERC_NAV \
     -v nav_foxy_desktop_home_volume:/home/xplore \
     ghcr.io/epflxplore/nav:foxy-jetson
