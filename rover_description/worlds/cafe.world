@@ -1,5 +1,5 @@
-<!-- Usage notes are located in this file, look for "Usage"-->
 <?xml version="1.0" ?>
+<!-- Usage notes are located in this file, look for "Usage"-->
 <sdf version="1.5">
   <world name="default">
     <gui>
