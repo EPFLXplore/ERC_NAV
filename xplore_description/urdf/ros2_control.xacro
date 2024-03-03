@@ -85,7 +85,7 @@
     </ros2_control>
     <gazebo>
         <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
-            <parameters>$(find rover_description)/config/control.yaml</parameters>
+            <parameters>$(find xplore_description)/config/control.yaml</parameters>
         </plugin>
     </gazebo>  
 
