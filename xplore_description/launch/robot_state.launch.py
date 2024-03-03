@@ -16,11 +16,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use sim time if true",
     )
 
-    default_rover_urdf_file = "assemblage.urdf.xacro"
+    default_rover_urdf_file = "rover/rover.urdf.xacro"
     rover_urdf_file_arg = DeclareLaunchArgument(
         "rover_urdf_file",
         default_value=default_rover_urdf_file,
-        description="Name of the rover URDF file to be loaded",
+        description="Relative path, inside the urdf directory, of the rover URDF file to be loaded",
     )
 
     use_sim_time = LaunchConfiguration("use_sim_time", default=default_use_sim_time)

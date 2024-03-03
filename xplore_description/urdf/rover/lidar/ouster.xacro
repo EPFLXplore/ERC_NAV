@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://ros.org/wiki/xacro">
 
-  <xacro:include filename="inertial_macros.xacro"/>
+  <xacro:include filename="$(find xplore_description)/urdf/common/inertial_macro.xacro" />
 
 
     <joint name="lidar_joint" type="fixed">
@@ -14,7 +14,7 @@
       <link name="lidar_link">
         <visual>
           <geometry>
-            <mesh filename="file://$(find xplore_description)/meshes/lidar/os1.dae" />
+            <mesh filename="file://$(find xplore_description)/meshes/rover/lidar/os1.dae" />
             </geometry>
         </visual>
         <collision >
