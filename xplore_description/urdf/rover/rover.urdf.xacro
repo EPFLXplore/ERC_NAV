@@ -1,14 +1,14 @@
 <?xml version="1.0" ?>
-<robot name="kerby" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-<xacro:include filename="$(find xplore_description)/urdf/materials.xacro" />
-<xacro:include filename="$(find xplore_description)/urdf/kerby.trans" />
-<xacro:include filename="$(find xplore_description)/urdf/kerby.gazebo" />
-<xacro:include filename="$(find xplore_description)/urdf/ouster.xacro" />
-<xacro:include filename="$(find xplore_description)/urdf/imu.xacro" /> 
-<xacro:include filename="$(find xplore_description)/urdf/inertial_macros.xacro" />
-<xacro:include filename="$(find xplore_description)/urdf/oakd_camera.xacro" />
-<xacro:include filename="$(find xplore_description)/urdf/ros2_control.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/common/materials.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/rover.transmission.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/rover.gazebo.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/lidar/ouster.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/imu/imu.xacro" /> 
+<xacro:include filename="$(find xplore_description)/urdf/common/inertial_macro.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/camera/oakd_camera.xacro" />
+<xacro:include filename="$(find xplore_description)/urdf/rover/rover.ros2_control.xacro" />
 
 
 

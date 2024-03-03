@@ -26,7 +26,7 @@
   <link name="camera_link">
     <visual name="camera_visual">
       <geometry>
-          <mesh filename="file://$(find xplore_description)/meshes/camera/OAK-D.dae" />
+          <mesh filename="file://$(find xplore_description)/meshes/rover/camera/OAK-D.dae" />
         </geometry>
     </visual>
     <collision>
