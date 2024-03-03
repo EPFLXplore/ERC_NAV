@@ -14,7 +14,7 @@
       <link name="lidar_link">
         <visual>
           <geometry>
-            <mesh filename="file://$(find rover_description)/meshes/os1.dae" />
+            <mesh filename="file://$(find xplore_description)/meshes/os1.dae" />
             </geometry>
         </visual>
         <collision >

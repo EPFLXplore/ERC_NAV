@@ -22,13 +22,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use rviz if true",
     )
 
-    default_use_gazebo = "true"
-    use_gazebo_arg = DeclareLaunchArgument(
-        "use_gazebo",
-        default_value=default_use_gazebo,
-        description="Use gazebo if true",
-    )
-
     default_rviz_config = "display_config.rviz"
     rviz_config_arg = DeclareLaunchArgument(
         "rviz_config",
@@ -36,65 +29,19 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Name of the rviz configuration file to be loaded",
     )
 
-    default_world_model = "marsyard2022.world.xacro"
-    world_model_arg = DeclareLaunchArgument(
-        "world_model",
-        default_value=default_world_model,
-        description="Name of the world model file to be loaded",
-    )
-
     use_rviz = LaunchConfiguration("use_rviz", default=default_use_rviz)
-    use_gazebo = LaunchConfiguration("use_gazebo", default=default_use_gazebo)
     rviz_config = LaunchConfiguration(
         "rviz_config", default=default_rviz_config
     ).perform(context)
-    world_model = LaunchConfiguration(
-        "world_model", default=default_world_model
-    ).perform(context)
 
     # ------------- Setup Paths -------------
-    pkg_name = "rover_description"
+    pkg_name = "xplore_description"
 
     pkg_share_dir = get_package_share_directory(pkg_name)
-    gazebo_ros_share_dir = get_package_share_directory("gazebo_ros")
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
-    world_model_path = os.path.join(pkg_share_dir, "worlds", world_model)
-
-    gazebo_model_path = os.path.join(pkg_share_dir, "models")
-    os.environ["GAZEBO_MODEL_PATH"] = gazebo_model_path
-
-    # ------------- Launch Commands -------------
-    start_gazebo_server_client_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(gazebo_ros_share_dir, "launch", "gazebo.launch.py")
-        ),
-        launch_arguments={"world": world_model_path}.items(),
-        condition=IfCondition(use_gazebo),
-    )
 
     # ------------- Launch Nodes -------------
-    spawn_entity_gazebo_node = launch_ros.actions.Node(
-        package="gazebo_ros",
-        executable="spawn_entity.py",
-        arguments=[
-            "-entity",
-            "robot",
-            "-topic",
-            "robot_description",
-            "-x",
-            "0.0",
-            "-y",
-            "0.0",
-            "-z",
-            "4.0",
-            "-Y",
-            "0.0",
-        ],
-        output="screen",
-        condition=IfCondition(use_gazebo),
-    )
-
     rviz_node = launch_ros.actions.Node(
         package="rviz2",
         executable="rviz2",
@@ -110,20 +57,15 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(pkg_share_dir, "launch", "robot_state.launch.py")
         ),
         launch_arguments={
-            "use_sim_time": "true",
+            "use_sim_time": "false",
         }.items(),
     )
 
     return [
         # Arguments
         use_rviz_arg,
-        use_gazebo_arg,
         rviz_config_arg,
-        world_model_arg,
-        # Commands
-        start_gazebo_server_client_cmd,
         # Nodes
-        spawn_entity_gazebo_node,
         rviz_node,
         # Other Launch Files
         robot_state_launch,

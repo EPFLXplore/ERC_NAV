@@ -29,7 +29,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     ).perform(context)
 
     # ------------- Setup Paths -------------
-    pkg_name = "rover_description"
+    pkg_name = "xplore_description"
 
     pkg_share_dir = get_package_share_directory(pkg_name)
 
