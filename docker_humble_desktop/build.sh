@@ -1,1 +1,1 @@
-docker build --pull --no-cache --progress=plain -t ghcr.io/epflxplore/nav:humble-desktop -f Dockerfile ..
+docker build --pull --progress=plain -t ghcr.io/epflxplore/nav:humble-desktop -f Dockerfile ..
