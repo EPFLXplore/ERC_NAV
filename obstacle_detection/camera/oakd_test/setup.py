@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'obstacle_filter'
+package_name = 'oakd_test'
 
 setup(
     name=package_name,
@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'obstacle_filter_node = obstacle_filter.obstacle_filter_node:main',
-            'slope_filter_node = obstacle_filter.slope_filter_node:main',
+            'imu_node = oakd_test.imu_node:main',
+            'edge_detect_node = oakd_test.edge_detect_node:main',
         ],
     },
 )
