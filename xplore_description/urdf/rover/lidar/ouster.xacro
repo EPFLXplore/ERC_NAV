@@ -69,7 +69,7 @@
 
 
 
-   <gazebo reference="lidar_link">
+   <!-- <gazebo reference="lidar_link">
         <sensor name="sensor_scan" type="ray">
           <ray>
             <scan>
@@ -97,6 +97,6 @@
              <frame_name>lidar_link</frame_name>
           </plugin>
         </sensor>
-      </gazebo>   
+      </gazebo>    -->
 
 </robot>
