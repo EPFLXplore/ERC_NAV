@@ -427,7 +427,7 @@
 
 
 <joint name="right_pivot" type="continuous">
-  <origin xyz="0 0.250474 -0.021516" rpy="0 0 0"/>
+  <origin xyz="-0.1 0.250474 -0.021516" rpy="0 0 0"/>
   <parent link="chassis_link"/>
   <child link="right_leg"/>
   <axis xyz="0.0 1.0 0.0"/>
@@ -436,7 +436,7 @@
 
 
 <joint name="left_pivot" type="continuous">
-  <origin xyz="0 -0.210526 -0.021516" rpy="0 0 0"/>
+  <origin xyz="-0.1 -0.210526 -0.021516" rpy="0 0 0"/>
   <parent link="chassis_link"/>
   <child link="left_leg"/>
    <mimic joint="right_pivot" multiplier="-1.0" />
