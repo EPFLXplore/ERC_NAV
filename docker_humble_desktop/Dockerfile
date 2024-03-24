@@ -11,6 +11,7 @@ RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-navigation2 \
     ros-${ROS_DISTRO}-nav2-bringup \
+    ros-${ROS_DISTRO}-robot-localization \
     ros-${ROS_DISTRO}-slam-toolbox \
     ros-${ROS_DISTRO}-test-msgs \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
