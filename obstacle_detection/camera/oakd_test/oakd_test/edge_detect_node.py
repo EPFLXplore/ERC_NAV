@@ -30,13 +30,13 @@ def main():
     xinEdgeCfg.setStreamName(edgeCfgStr)
 
     # Properties
-    camRgb.setBoardSocket(dai.CameraBoardSocket.RGB)
+    camRgb.setBoardSocket(dai.CameraBoardSocket.AUTO)
     camRgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
 
     monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-    monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
+    monoLeft.setBoardSocket(dai.CameraBoardSocket.CAM_B)
     monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-    monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+    monoRight.setBoardSocket(dai.CameraBoardSocket.CAM_C)
 
     edgeDetectorRgb.setMaxOutputFrameSize(camRgb.getVideoWidth() * camRgb.getVideoHeight())
 
@@ -65,11 +65,11 @@ def main():
         print("Switch between sobel filter kernels using keys '1' and '2'")
 
         while(True):
-            edgeLeft = edgeLeftQueue.get()
+            edgeLeft = edgeLeftQueue.get()  # return a ImgFrame object, blocking call
             edgeRight = edgeRightQueue.get()
             edgeRgb = edgeRgbQueue.get()
 
-            edgeLeftFrame = edgeLeft.getFrame()
+            edgeLeftFrame = edgeLeft.getFrame() # returns numpy array with shape (height, width, 1)
             edgeRightFrame = edgeRight.getFrame()
             edgeRgbFrame = edgeRgb.getFrame()
 
