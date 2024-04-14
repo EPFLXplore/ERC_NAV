@@ -163,7 +163,7 @@
   </collision>
 </link>
 
-<link name="wheel2_1ink">
+<link name="wheel2_link">
   <inertial>
     <origin xyz="0.0003394916280188287 -0.010196510227617639 -2.006330920018007e-05" rpy="0 0 0"/>
     <mass value="1.592763813314383"/>
@@ -184,7 +184,7 @@
   </collision>
 </link>
 
-<link name="wheel3_1ink">
+<link name="wheel3_link">
   <inertial>
     <origin xyz="0.0003392711202230836 -0.010196510227618527 -1.9767207815879484e-05" rpy="0 0 0"/>
     <mass value="1.592763813314383"/>
@@ -205,7 +205,7 @@
   </collision>
 </link>
 
-<link name="wheel1_1ink">
+<link name="wheel1_link">
   <inertial>
     <origin xyz="-0.0003399213580693172 0.010197232694972913 -1.9767207816323573e-05" rpy="0 0 0"/>
     <mass value="1.592763813314383"/>
@@ -227,7 +227,7 @@
 </link>
 
 
-<link name="wheel4_1ink">
+<link name="wheel4_link">
   <inertial>
     <origin xyz="-0.0003391418658636458 0.010197232694973468 -2.0063309200568646e-05" rpy="0 0 0"/>
     <mass value="1.592763813314383"/>
@@ -396,28 +396,28 @@
 <joint name="driving2" type="continuous">
   <origin xyz="-0.017133 0.01669 -0.269456" rpy="0 0 0"/>
   <parent link="steering2_link"/>
-  <child link="wheel2_1ink"/>
+  <child link="wheel2_link"/>
   <axis xyz="-0.033267 0.999444 0.002046"/>
 </joint>
 
 <joint name="driving3" type="continuous">
   <origin xyz="-0.017133 0.01669 -0.269457" rpy="0 0 0"/>
   <parent link="steering3_link"/>
-  <child link="wheel3_1ink"/>
+  <child link="wheel3_link"/>
   <axis xyz="-0.033267 0.999444 0.002046"/>
 </joint>
 
 <joint name="driving1" type="continuous">
   <origin xyz="0.017134 -0.016691 -0.269457" rpy="0 0 0"/>
   <parent link="steering1_link"/>
-  <child link="wheel1_1ink"/>
+  <child link="wheel1_link"/>
   <axis xyz="0.033267 -0.999444 0.002046"/>
 </joint>
 
 <joint name="driving4" type="continuous">
   <origin xyz="0.017133 -0.016691 -0.269456" rpy="0 0 0"/>
   <parent link="steering4_link"/>
-  <child link="wheel4_1ink"/>
+  <child link="wheel4_link"/>
   <axis xyz="0.033267 -0.999444 0.002046"/>
 </joint>
 

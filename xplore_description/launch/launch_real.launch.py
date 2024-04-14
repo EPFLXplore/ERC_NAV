@@ -40,6 +40,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     pkg_share_dir = get_package_share_directory(pkg_name)
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
+    ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     # ------------- Launch Nodes -------------
     rviz_node = launch_ros.actions.Node(
@@ -49,6 +50,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen",
         arguments=["-d", rviz_config_path],
         condition=IfCondition(use_rviz),
+    )
+
+    robot_localization_node = launch_ros.actions.Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        output="screen",
+        parameters=[
+            ekf_config_path,
+            {"use_sim_time": False},
+        ],
     )
 
     # ------------- Import Other Launch Files -------------
@@ -67,6 +79,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         rviz_config_arg,
         # Nodes
         rviz_node,
+        robot_localization_node,
         # Other Launch Files
         robot_state_launch,
     ]

@@ -60,6 +60,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
     world_model_path = os.path.join(pkg_share_dir, "worlds", world_model)
+    ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     gazebo_model_path = os.path.join(pkg_share_dir, "models")
     os.environ["GAZEBO_MODEL_PATH"] = gazebo_model_path
@@ -104,6 +105,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(use_rviz),
     )
 
+    robot_localization_node = launch_ros.actions.Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        output="screen",
+        parameters=[
+            ekf_config_path,
+            {"use_sim_time": True},
+        ],
+    )
+
     # ------------- Import Other Launch Files -------------
     robot_state_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -125,6 +137,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         # Nodes
         spawn_entity_gazebo_node,
         rviz_node,
+        robot_localization_node,
         # Other Launch Files
         robot_state_launch,
     ]

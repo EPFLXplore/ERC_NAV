@@ -1,91 +1,125 @@
 <?xml version="1.0" ?>
-<robot name="rover" xmlns:xacro="http://www.ros.org/wiki/xacro" >
+<robot name="rover"
+  xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-<xacro:property name="body_color" value="Gazebo/Grey" />
+  <xacro:property name="body_color" value="Gazebo/Grey" />
 
-<gazebo reference="chassis_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-  <gravity>true</gravity>
-</gazebo>
+  <gazebo reference="chassis_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+    <gravity>true</gravity>
+  </gazebo>
 
-<gazebo reference="steering1_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="steering1_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="steering2_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="steering2_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="steering3_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="steering3_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="steering4_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="steering4_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="wheel3_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="wheel3_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="wheel4_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="wheel4_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="wheel2_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="wheel2_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="wheel1_link">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="wheel1_link">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="caster_wheel">
-  <material>Gazebo/Grey</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="caster_wheel">
+    <material>Gazebo/Grey</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
-<gazebo reference="caster_axis">
-  <material>Gazebo/Grey</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-</gazebo>
+  <gazebo reference="caster_axis">
+    <material>Gazebo/Grey</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+  </gazebo>
 
   <gazebo reference="lidar_axis">
-        <material>Gazebo/LightGrey</material>  
-  </gazebo> 
+    <material>Gazebo/LightGrey</material>
+  </gazebo>
 
-<gazebo reference="right_leg">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-  <selfCollide>true</selfCollide>
-</gazebo>
+  <gazebo reference="right_leg">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+    <selfCollide>true</selfCollide>
+  </gazebo>
 
-<gazebo reference="left_leg">
-  <material>${body_color}</material>
-  <mu1>0.2</mu1>
-  <mu2>0.2</mu2>
-  <selfCollide>true</selfCollide>
-</gazebo>
+  <gazebo reference="left_leg">
+    <material>${body_color}</material>
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+    <selfCollide>true</selfCollide>
+  </gazebo>
+
+  <gazebo>
+    <plugin name="wheel_drive_controller" filename="libgazebo_ros_diff_drive.so">
+
+      <ros>
+        <namespace>/diff_drive</namespace>
+      </ros>
+
+      <!-- wheels -->
+      <num_wheel_pairs>2</num_wheel_pairs>
+      <left_joint>driving1</left_joint>
+      <left_joint>driving4</left_joint>
+      <right_joint>driving2</right_joint>
+      <right_joint>driving3</right_joint>
+
+      <!-- kinematics -->
+      <wheel_separation>0.4</wheel_separation>
+      <wheel_diameter>0.2</wheel_diameter>
+
+      <!-- limits -->
+      <max_wheel_torque>20</max_wheel_torque>
+      <max_wheel_acceleration>1.0</max_wheel_acceleration>
+
+      <!-- output -->
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>false</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+    </plugin>
+  </gazebo>
+
 
 </robot>
