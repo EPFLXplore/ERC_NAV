@@ -31,6 +31,8 @@ current_dir=$(pwd)
 # Use dirname to get the parent directory
 parent_dir=$(dirname "$current_dir")
 
+USERNAME=xplore
+
 docker run -it \
     --name nav_humble_desktop \
     --rm \
@@ -47,4 +49,5 @@ docker run -it \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src/ERC_NAV \
     -v nav_humble_desktop_home_volume:/home/xplore \
-    ghcr.io/epflxplore/nav:humble-desktop
+    ghcr.io/epflxplore/nav:humble-desktop \
+    /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"
