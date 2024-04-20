@@ -1,6 +1,0 @@
-[submodule "localization/lidar/LIO-SAM"]
-	path = localization/lidar/LIO-SAM
-	url = git@github.com:TixiaoShan/LIO-SAM.git
-[submodule "sensors/lidar/ros2_ouster_drivers"]
-	path = sensors/lidar/ros2_ouster_drivers
-	url = git@github.com:ros-drivers/ros2_ouster_drivers.git
