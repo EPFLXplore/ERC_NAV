@@ -1,0 +1,13 @@
+<launch>
+
+ 
+
+  <!-- Launch the fake cs gamepad node -->
+  <node pkg="lidar_filter" name="NAV_lidar_filter_node"  exec="NAV_lidar_filter_node" >
+  </node>
+
+
+
+</launch>
+
+

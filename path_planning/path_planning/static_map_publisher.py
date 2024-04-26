@@ -10,18 +10,18 @@ from ament_index_python import get_package_share_directory
 METERS_PER_PIXEL = 0.2
 
 if __name__ == "__main__":
-    xplore_description_share_directory = get_package_share_directory(
-        "xplore_description"
-    )
+    # xplore_description_share_directory = get_package_share_directory(
+    #     "xplore_description"
+    # )
 
-    static_map_path = os.path.join(
-        xplore_description_share_directory,
-        "models",
-        "marsyard2022_terrain",
-        "dem",
-        "marsyard2022_terrain_hm.tif",
-    )
-    static_map = cv.imread(static_map_path, cv.IMREAD_UNCHANGED)
+    # static_map_path = os.path.join(
+    #     xplore_description_share_directory,
+    #     "models",
+    #     "marsyard2022_terrain",
+    #     "dem",
+    #     "marsyard2022_terrain_hm.tif",
+    # )
+    static_map = cv.imread("marsyard2022_terrain_hm.tif", cv.IMREAD_UNCHANGED)
     H, W = static_map.shape
 
     # Compute the X, Y, Z coordinates

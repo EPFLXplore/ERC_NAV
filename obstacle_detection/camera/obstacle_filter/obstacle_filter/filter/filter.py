@@ -47,7 +47,7 @@ def lstsq(array_, device='cpu'):
 
     return coeff.cpu()
 
-
+# Vectorized RANSAC implementation
 def ransac(array, num_iterations, threshold_distance, num_inliers, num_random_pts=3, device='cpu'):
     array = array.to(device) # 3 x grid_x x grid_y x (height * width)
     array = array.permute(1, 2, 3, 0) # grid_x x grid_y x (height * width) x 3  
@@ -108,6 +108,7 @@ def getPC(depth_array, gridshape = (8, 8), \
 
     ground_vector = torch.tensor([0, np.cos(camera_angle/180*torch.pi), np.sin(camera_angle/180*torch.pi)])
 
+    # intrinsic camera parameters (hardcoded for now)
     if depth_array.shape[0] == 720: # 720p
         f_x = 798.31
 
@@ -122,15 +123,18 @@ def getPC(depth_array, gridshape = (8, 8), \
     
     # before 1280 720
     # after 256 144
+
+    # skip points to speed up computation (downsample the image)
     skip_points = 5
     depth_array = depth_array[::skip_points, ::skip_points]
 
     depth_array = torch.from_numpy(depth_array.astype(np.float32))
 
-    f_x = f_x / skip_points
-    c_x = c_x / skip_points
-    c_y = c_y / skip_points
-
+    # for recentering image before converting to point cloud
+    f_x = f_x / skip_points # focal length in x direction
+    c_x = c_x / skip_points # principal point in x direction
+    c_y = c_y / skip_points # principal point in y direction
+    
     x, y, z = convertToPointCloud(depth_array, f_x, c_x, c_y)
     pc = torch.stack((x, y, z), axis=0) # 3 x height x width
 
@@ -164,7 +168,7 @@ def getPC(depth_array, gridshape = (8, 8), \
         array = array * (array[2, :, :, :] < max_depth) * (array[2, :, :, :] > min_depth)
 
         # filter 2 : compute ratio of valid points to all points, 
-        # if ratio is too low, then discard the subgrid
+        # if ratio is too low, then discard the subgrid (there is not valid points in an area of the image. camera couldnt find the depth of points)
         valid_subgrids = torch.zeros((gridshape[0], gridshape[1]), dtype=bool) # grid_x x grid_y
 
         num_pts_per_subgrid = grid_height * grid_width
@@ -173,7 +177,7 @@ def getPC(depth_array, gridshape = (8, 8), \
 
         # valid_pts_mask = (depth_vals > 0) # grid_x x grid_y x nb_pts
 
-        ratio = 0.4
+        ratio = 0.4     # minimum ratio of valid points to all points
         for i in range(gridshape[0]):
             for j in range(gridshape[1]):
                 valid_pts_mask = array[2, i, j, :] > 0

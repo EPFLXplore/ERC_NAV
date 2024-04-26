@@ -9,6 +9,7 @@ import cv2
 from cv_bridge import CvBridge # might need to sudo apt install ros-foxy-vision-opencv
 import time
 
+# Important
 # from .filter.ransac_filter import getPC
 # from .filter.lstsq_filter import getPC_lstsq
 from .filter.filter import getPC
@@ -88,16 +89,16 @@ class ObstacleFilterNode(Node):
             qos_profile_sensor_data)
 
         # declare parameters to be given as input to the 
-        self.declare_parameter('gridshape_y', 8)
+        self.declare_parameter('gridshape_y', 8)    # 8x8 grid by default = 64 sub images
         self.declare_parameter('gridshape_x', 8)
-        self.declare_parameter('max_depth', 3000)
-        self.declare_parameter('min_depth', 100)
-        self.declare_parameter('num_iter', 50)
-        self.declare_parameter('thresh_dist', 20)
-        self.declare_parameter('num_inliers', 360)
-        self.declare_parameter('camera_angle', 17)
-        self.declare_parameter('obstacle_angle', 45)
-        self.declare_parameter('how_to_replace', 'random')
+        self.declare_parameter('max_depth', 3000)   # 3 meters
+        self.declare_parameter('min_depth', 100)    # 10 cm
+        self.declare_parameter('num_iter', 50)      # 50 iterations for ransac
+        self.declare_parameter('thresh_dist', 20)   # 20 mm distance treashold for ransac (inliers)
+        self.declare_parameter('num_inliers', 360)  # 360 inliers for ransac for a valid plane
+        self.declare_parameter('camera_angle', 17)  # 17 degrees camera angle (hardcoded for now)
+        self.declare_parameter('obstacle_angle', 45)    # 45 degrees obstacle angle
+        self.declare_parameter('how_to_replace', 'random')  
 
         self.declare_parameter('filter', 'ransac')
         self.declare_parameter('device', 'cpu')
@@ -137,6 +138,7 @@ class ObstacleFilterNode(Node):
 
         # print("Time for message processing: ", t2-t1)
         
+        # points, not_points = getPC_lstsq(depth_array, \
         points, not_points = getPC(depth_array, \
                     (gridshape_y, gridshape_x), max_depth, min_depth, \
                     num_iter, thresh_dist, num_inliers, how_to_replace, \
