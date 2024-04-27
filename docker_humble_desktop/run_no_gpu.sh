@@ -36,8 +36,6 @@ USERNAME=xplore
 docker run -it \
     --name nav_humble_desktop \
     --rm \
-    --runtime=nvidia \
-    --gpus all \
     --privileged \
     --net=host \
     -e DISPLAY=unix$DISPLAY \

@@ -27,7 +27,7 @@ USER $USERNAME
 
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src
-COPY . ./ERC_NAV
+COPY . .
 
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
