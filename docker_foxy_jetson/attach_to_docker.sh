@@ -1,0 +1,1 @@
+docker exec -it nav_foxy_jetson bash
