@@ -28,8 +28,14 @@ endif()
 ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
-  path_planning/static_map_publisher.py
+  path_planning/static_cost_map_publisher.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  launch
+  config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

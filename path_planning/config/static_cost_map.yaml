@@ -1,0 +1,7 @@
+image: static_cost_map.png
+resolution: 0.2
+origin: [-25.0, -25.0, 0.0]
+occupied_thresh: 0.99
+free_thresh: 0
+negate: 0
+mode: scale

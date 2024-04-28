@@ -138,6 +138,16 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         spawn_entity_gazebo_node,
         rviz_node,
         robot_localization_node,
+        launch_ros.actions.Node(
+             package='tf2_ros',
+             executable='static_transform_publisher',
+             arguments = ['--x', '0', '--y', '0', '--z', '0', '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1', '--frame-id', 'map', '--child-frame-id', 'odom']
+        ),
+        launch_ros.actions.Node(
+             package='tf2_ros',
+             executable='static_transform_publisher',
+             arguments = ['--x', '0', '--y', '0', '--z', '0', '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1', '--frame-id', 'odom', '--child-frame-id', 'base_link']
+        ),
         # Other Launch Files
         robot_state_launch,
     ]
