@@ -7,10 +7,13 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 
 RUN apt-get update && apt-get upgrade -y
-#RUN apt-get install libtins-dev  
-RUN apt install net-tools 
-#RUN apt-get install iproute2 
-#RUN apt install dnsmasq 
+RUN apt-get install libtins-dev -y
+RUN apt install net-tools -y
+RUN apt-get install iproute2 -y
+RUN apt install dnsmasq -y
+RUN add-apt-repository ppa:borglab/gtsam-release-4.1 -y
+RUN apt install libgtsam-dev libgtsam-unstable-dev -y
+RUN python3 -m pip install pyserial
 
 
 USER $USERNAME
