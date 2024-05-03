@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+
+    # Topics
+    topic_manual_cmdvel: "/NAV/manual_cmd_vel"              # cmd_vel manual navigation
+    topic_auto_cmdVel: "/NAV/auto_cmd_vel"                  # cmd_vel autonom navigation
+    topic_cs_gamepad: "/CS/NAV_gamepad"                     # game pad from the Nav
+
+
+    # Motors params
