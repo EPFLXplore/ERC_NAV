@@ -1,0 +1,1 @@
+docker exec -it nav_humble_desktop bash

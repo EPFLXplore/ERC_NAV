@@ -50,5 +50,15 @@ RUN rosdep update \
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
 
+# Install additional Python packages
+RUN pip install opencv-python --no-cache-dir
+RUN pip install depthai --no-cache-dir
+RUN pip install pygame_gui --no-cache-dir
+RUN pip install pygame --no-cache-dir
+RUN pip install transforms3d --no-cache-dir
+
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
+
+# Remove all the confidential Xplore source code from the image
+RUN sudo rm -rf /home/$USERNAME/dev_ws/src/*
