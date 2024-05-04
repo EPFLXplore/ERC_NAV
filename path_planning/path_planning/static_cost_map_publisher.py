@@ -11,7 +11,7 @@ from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 
 METERS_PER_PIXEL = 0.2
-MAX_SLOPE_ANGLE = 35  # [deg]
+MAX_SLOPE_ANGLE = 40  # [deg]
 
 
 class StaticCostMapPublisher(Node):

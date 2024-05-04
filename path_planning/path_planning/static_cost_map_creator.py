@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 METERS_PER_PIXEL = 0.2
-MAX_SLOPE_ANGLE = 35  # [deg]
+MAX_SLOPE_ANGLE = 40  # [deg]
 
 
 class StaticCostMapCreator:

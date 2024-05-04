@@ -1,23 +1,53 @@
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      # Robot parameters
       global_frame: map
       robot_base_frame: base_link
-      use_sim_time: True
       robot_radius: 0.50
+      # footprint_padding: 0.01
+      # footprint: []
+      # observation_sources: []
+      # Map parameters
+      height: 50
+      width: 50
+      origin_x: -25.0
+      origin_y: -25.0
       resolution: 0.2
-      track_unknown_space: true
+      track_unknown_space: True
+      rolling_window: False
+      # Cost parameters
+      lethal_cost_threshold: 254
+      unknown_cost_value: 255
+      trinary_costmap: False
+      use_maximum: False
+      # Topic parameters
+      map_topic: /map
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      use_sim_time: True
+      always_send_full_costmap: False
+      transform_tolerance: 0.3
+      initial_transform_timeout: 60
+      # Plugins parameters
       plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: True
+        footprint_clearing_enabled: False
+        map_topic: /map
+        subscribe_to_updates: True
         map_subscribe_transient_local: True
+        transform_tolerance: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: True
         cost_scaling_factor: 3.0
         inflation_radius: 0.50
-      always_send_full_costmap: True
+        inflate_unknown: False
+        inflate_around_unknown: False
+      # Filters parameters
+      # filter: []
 
 map_server:
   ros__parameters:
