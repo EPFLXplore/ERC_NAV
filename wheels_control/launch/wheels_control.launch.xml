@@ -28,9 +28,9 @@
 
 
   <!-- Launch the node that manage the motors commands -->
-  <node if="$(var motor_cmds)" name="NAV_motor_cmds" pkg="wheels_control" exec="NAV_motor_cmds" >
+  <!-- <node if="$(var motor_cmds)" name="NAV_motor_cmds" pkg="wheels_control" exec="NAV_motor_cmds" >
    <param name = "homing" value="$(var homing)"/>
-  </node>
+  </node> -->
 
 
 
