@@ -175,6 +175,8 @@ class DisplacementCmds : public rclcpp::Node
       else if (kinematic_state == LATERAL_KINEMATIC){
           
           current_motors_cmds = lateralKinematicModel.run(go_left,go_right);
+          RCLCPP_INFO(get_logger(), "current_motors_cmds ");
+
       }
       
       else 
@@ -221,18 +223,17 @@ class DisplacementCmds : public rclcpp::Node
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
-      RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]);                   
-
+      RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]); 
+                        
       bool change_state = msg->buttons[8];
-      bool lateral = (msg->buttons[0] || msg->buttons[1]);
+      bool lateral = (msg->buttons[3] || msg->buttons[4]);
 
       go_left = msg->buttons[3];
       go_right = msg->buttons[4];
 
-      if(lateral){
+      if(lateral){                  
         RCLCPP_INFO(get_logger(), "IS LATERAL ");                   
-
-        kinematic_state == LATERAL_KINEMATIC;
+        kinematic_state = LATERAL_KINEMATIC;
       }
       else if (change_state)
       {
@@ -240,14 +241,17 @@ class DisplacementCmds : public rclcpp::Node
           if(kinematic_state == BASIC_KINEMATIC)
           {
             kinematic_state = NORMAL_KINEMATIC;
-            RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
+           // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
 
           }
           else
           {
             kinematic_state = BASIC_KINEMATIC;
-            RCLCPP_INFO(get_logger(), "STATE ROTATION OR TRANSLATION",  kinematic_state);
+            //RCLCPP_INFO(get_logger(), "STATE ROTATION OR TRANSLATION",  kinematic_state);
           }
+      } else {
+        kinematic_state = NORMAL_KINEMATIC;
+           // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
       }
 
 
