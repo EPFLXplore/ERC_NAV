@@ -28,8 +28,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     pkg_share_dir = get_package_share_directory(pkg_name)
     nav2_ros_share_dir = get_package_share_directory("nav2_bringup")
 
-    static_cost_map_config_path = os.path.join(
-        pkg_share_dir, "config", "static_cost_map.yaml"
+    map_server_params_config_path = os.path.join(
+        pkg_share_dir, "config", "map_server_params.yaml"
     )
     nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params.yaml")
 
@@ -42,7 +42,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             "use_sim_time": use_sim_time,
             "autostart": "true",
             "params_file": nav2_params_config_path,
-            "map": static_cost_map_config_path,
+            "map": map_server_params_config_path,
         }.items(),
     )
 

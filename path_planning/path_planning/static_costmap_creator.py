@@ -114,7 +114,7 @@ class StaticCostMapCreator:
 
         plt.show()
 
-    def generate_static_cost_map(self):
+    def generate_static_costmap(self):
         # Compute the height gradient
         static_map_dx = (
             np.concatenate((self.static_map[:, 1:], self.static_map[:, -1:]), axis=1)
@@ -132,13 +132,13 @@ class StaticCostMapCreator:
         # Compute the slope angle
         slope_angle = np.arctan(height_gradient_norm) * 180 / np.pi
 
-        # Compute the static cost map with values between 0 (obstacle) and 255 (free space)
-        static_cost_map = np.zeros_like(slope_angle)
-        static_cost_map[slope_angle >= MAX_SLOPE_ANGLE] = 0
-        static_cost_map[slope_angle < MAX_SLOPE_ANGLE] = (
+        # Compute the static costmap with values between 0 (obstacle) and 255 (free space)
+        static_costmap = np.zeros_like(slope_angle)
+        static_costmap[slope_angle >= MAX_SLOPE_ANGLE] = 0
+        static_costmap[slope_angle < MAX_SLOPE_ANGLE] = (
             255 * (MAX_SLOPE_ANGLE - slope_angle[slope_angle < MAX_SLOPE_ANGLE]) / MAX_SLOPE_ANGLE
         )
-        static_cost_map = static_cost_map.astype(np.uint8)
+        static_costmap = static_costmap.astype(np.uint8)
 
         H, W = self.static_map.shape
         X = np.arange(0, W, 1) * METERS_PER_PIXEL
@@ -148,27 +148,27 @@ class StaticCostMapCreator:
         ax.pcolormesh(
             X,
             Y,
-            static_cost_map,
-            vmin=static_cost_map.min(),
-            vmax=static_cost_map.max(),
+            static_costmap,
+            vmin=static_costmap.min(),
+            vmax=static_costmap.max(),
             cmap="hot",
         )
-        ax.set_title("Static cost map")
+        ax.set_title("Static costmap")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
 
-        # Get the static_cost_map directory
-        static_cost_map_dir = os.path.join(
+        # Get the static_costmap directory
+        static_costmap_dir = os.path.join(
             os.path.dirname(self.current_file_dir),
             "config",
         )
 
-        static_cost_map_path = os.path.join(static_cost_map_dir, "static_cost_map.png")
-        cv.imwrite(static_cost_map_path, static_cost_map)
+        static_costmap_path = os.path.join(static_costmap_dir, "static_costmap.png")
+        cv.imwrite(static_costmap_path, static_costmap)
         plt.show()
 
 
 if __name__ == "__main__":
-    static_cost_map_creator = StaticCostMapCreator()
-    # static_cost_map_creator.plot_all_maps()
-    static_cost_map_creator.generate_static_cost_map()
+    static_costmap_creator = StaticCostMapCreator()
+    # static_costmap_creator.plot_all_maps()
+    static_costmap_creator.generate_static_costmap()
