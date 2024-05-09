@@ -30,7 +30,7 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "wheels_control/basic_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model_slow.hpp"
-
+#include "wheels_control/lateral_kinematic_model.hpp"
 
 
 using namespace std::chrono_literals;
@@ -39,6 +39,7 @@ using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""},{0,0,0,0},{0,0,0,0}};
 motors_obj current_motors_position = {{0,0,0,0},{0,0,0,0}};
+
 
 
 
@@ -108,7 +109,7 @@ class DisplacementCmds : public rclcpp::Node
       destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&DisplacementCmds::destroy_callback, this, std::placeholders::_1));
 
 
-
+      
 
       wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
       wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
@@ -126,6 +127,9 @@ class DisplacementCmds : public rclcpp::Node
 
 
   private:
+    bool go_left = false;
+    bool go_right = false;
+
     void callback_abort(std_msgs::msg::String::SharedPtr msg)
     {
         if (msg->data == "abort")   
@@ -146,6 +150,10 @@ class DisplacementCmds : public rclcpp::Node
         {
           kinematic_state = BASIC_KINEMATIC;
         }
+        else if (msg->data == "lateral")  
+        {
+          kinematic_state = LATERAL_KINEMATIC;
+        }
 
 
 
@@ -164,11 +172,19 @@ class DisplacementCmds : public rclcpp::Node
       if(kinematic_state == NORMAL_KINEMATIC)
           // normal_kinematics_manager(v_x, v_y, r_z);  
           current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
-      else
+      else if (kinematic_state == LATERAL_KINEMATIC){
+          
+          current_motors_cmds = lateralKinematicModel.run(go_left,go_right);
+          RCLCPP_INFO(get_logger(), "current_motors_cmds ");
+
+      }
+      
+      else 
       {
           // basic_kinematics_manager(v_x, v_y, r_z);
           current_motors_cmds = basicKinematicModel.run(current_motors_position, v_x, v_y, r_z);
       }
+      
 
       send_kinematic_msg();
 
@@ -207,24 +223,38 @@ class DisplacementCmds : public rclcpp::Node
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
-      
+      RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]); 
+                        
       bool change_state = msg->buttons[8];
+      bool lateral = (msg->buttons[3] || msg->buttons[4]);
 
-      if (change_state)
+      go_left = msg->buttons[3];
+      go_right = msg->buttons[4];
+
+      if(lateral){                  
+        RCLCPP_INFO(get_logger(), "IS LATERAL ");                   
+        kinematic_state = LATERAL_KINEMATIC;
+      }
+      else if (change_state)
       {
           RCLCPP_INFO(get_logger(), "CHANGE STATE",  change_state);
           if(kinematic_state == BASIC_KINEMATIC)
           {
             kinematic_state = NORMAL_KINEMATIC;
-            RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
+           // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
 
           }
           else
           {
             kinematic_state = BASIC_KINEMATIC;
-            RCLCPP_INFO(get_logger(), "STATE ROTATION OR TRANSLATION",  kinematic_state);
+            //RCLCPP_INFO(get_logger(), "STATE ROTATION OR TRANSLATION",  kinematic_state);
           }
+      } else {
+        kinematic_state = NORMAL_KINEMATIC;
+           // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
       }
+
+
 
     }
 
@@ -264,6 +294,7 @@ class DisplacementCmds : public rclcpp::Node
         
     RoverBasicKinematicModel basicKinematicModel;
     RoverNormalKinematicModel normalKinematicModel;
+    RoverLateralKinematicModel lateralKinematicModel;
     //RoverSlowNormalKinematicModel slownormalKinematicModel;
     
     rclcpp::Publisher<custom_msg::msg::Motorcmds>::SharedPtr pub_kinematic;         

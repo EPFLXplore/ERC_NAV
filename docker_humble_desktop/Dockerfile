@@ -19,9 +19,20 @@ RUN apt-get install -y --no-install-recommends \
     libyaml-cpp-dev \
     lcov
 
+RUN apt-get install libtins-dev -y
+RUN apt install net-tools -y
+RUN apt-get install iproute2 -y
+RUN apt install dnsmasq -y
+RUN add-apt-repository ppa:borglab/gtsam-release-4.1 -y
+RUN apt install libgtsam-dev libgtsam-unstable-dev -y
+RUN python3 -m pip install pyserial
+
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
 RUN /etc/init.d/udev restart
+
+
+
 
 USER $USERNAME
 

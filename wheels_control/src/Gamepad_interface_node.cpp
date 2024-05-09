@@ -97,7 +97,7 @@ class GamepadInterface : public rclcpp::Node
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
-        
+     // bool lateral = (msg->axes[0]) > 0.5f;
       float r_z = (msg->axes[0]);  
       float v_x = 0;
       float v_y = 0;
@@ -108,13 +108,12 @@ class GamepadInterface : public rclcpp::Node
       string nav_message = "";
       
 
-
       if (msg->axes[5] > 0)
         v_x = msg->axes[5];
       else
         v_x = -msg->axes[2];
 
-      // RCLCPP_INFO(this->get_logger(), "Publishing: '%f'", r_z);
+      RCLCPP_INFO(this->get_logger(), "RECEIVED JOY");
 
       // if (r_z != 0)
       //   r_z = r_z * 2 -1; // to be between -1 and 1
