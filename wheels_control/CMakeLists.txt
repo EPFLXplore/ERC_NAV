@@ -61,7 +61,6 @@ ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
   scripts/fake_cs_gamepad.py
-  # scripts/interface_cs_gamepad.py
   scripts/fake_cs_shutdown.py
   DESTINATION lib/${PROJECT_NAME}
 )
