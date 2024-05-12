@@ -4,6 +4,7 @@ import launch
 import launch_ros
 from ament_index_python.packages import get_package_share_directory
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import Command, LaunchConfiguration
 
 
@@ -16,6 +17,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use sim time if true",
     )
 
+    default_use_joint_gui = "false"
+    use_joint_gui_arg = DeclareLaunchArgument(
+        "use_joint_gui",
+        default_value=default_use_joint_gui,
+        description="Use joint state publisher gui",
+    )
+
     default_rover_urdf_file = "rover/rover.urdf.xacro"
     rover_urdf_file_arg = DeclareLaunchArgument(
         "rover_urdf_file",
@@ -24,6 +32,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
     use_sim_time = LaunchConfiguration("use_sim_time", default=default_use_sim_time)
+    use_joint_gui = LaunchConfiguration("use_joint_gui", default=default_use_joint_gui)
     rover_urdf_file = LaunchConfiguration(
         "rover_urdf_file", default=default_rover_urdf_file
     ).perform(context)
@@ -52,15 +61,25 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable="joint_state_publisher",
         name="joint_state_publisher",
         arguments=[rover_model_path],
+        condition=UnlessCondition(use_joint_gui),
+    )
+
+    joint_state_publisher_gui_node = launch_ros.actions.Node(
+        package="joint_state_publisher_gui",
+        executable="joint_state_publisher_gui",
+        name="joint_state_publisher_gui",
+        condition=IfCondition(use_joint_gui),
     )
 
     return [
         # Arguments
         use_sim_time_arg,
+        use_joint_gui_arg,
         rover_urdf_file_arg,
         # Nodes
         robot_state_publisher_node,
         joint_state_publisher_node,
+        joint_state_publisher_gui_node,
     ]
 
 

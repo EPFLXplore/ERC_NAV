@@ -18,6 +18,9 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
     ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-gazebo-ros2-control \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \

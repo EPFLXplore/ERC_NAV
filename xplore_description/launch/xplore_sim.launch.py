@@ -7,8 +7,10 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     OpaqueFunction,
+    RegisterEventHandler,
 )
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -60,6 +62,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
     world_model_path = os.path.join(pkg_share_dir, "worlds", world_model)
+    control_config_path = os.path.join(pkg_share_dir, "config", "control.yaml")
     ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     gazebo_model_path = os.path.join(pkg_share_dir, "models")
@@ -72,6 +75,15 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ),
         launch_arguments={"world": world_model_path}.items(),
         condition=IfCondition(use_gazebo),
+    )
+
+    robot_state_launch_cmd = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_share_dir, "launch", "robot_state.launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "true",
+        }.items(),
     )
 
     # ------------- Launch Nodes -------------
@@ -89,8 +101,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             "0.0",
             "-z",
             "4.0",
-            "-Y",
-            "0.0",
+            "-timeout",
+            "60",
         ],
         output="screen",
         condition=IfCondition(use_gazebo),
@@ -105,6 +117,37 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(use_rviz),
     )
 
+    control_node = launch_ros.actions.Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[control_config_path],
+        output="both",
+    )
+
+    joint_state_broadcaster_spawner_node = launch_ros.actions.Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "joint_state_broadcaster",
+        ],
+    )
+
+    position_controller_spawner_node = launch_ros.actions.Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "position_controller",
+        ],
+    )
+
+    velocity_controller_spawner_node = launch_ros.actions.Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "velocity_controller",
+        ],
+    )
+
     robot_localization_node = launch_ros.actions.Node(
         package="robot_localization",
         executable="ekf_node",
@@ -116,14 +159,23 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ],
     )
 
-    # ------------- Import Other Launch Files -------------
-    robot_state_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_share_dir, "launch", "robot_state.launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": "true",
-        }.items(),
+    # ------------- Delayed Launch Nodes -------------
+    # Delay rviz_node start after joint_state_broadcaster_spawner_node
+    delay_rviz_after_joint_state_broadcaster_spawner_node = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=joint_state_broadcaster_spawner_node,
+            on_exit=[rviz_node],
+        )
+    )
+
+    # Delay robot_localization_node start after joint_state_broadcaster_spawner_node
+    delay_robot_localization_after_joint_state_broadcaster_spawner_node = (
+        RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner_node,
+                on_exit=[robot_localization_node],
+            )
+        )
     )
 
     return [
@@ -134,22 +186,63 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         world_model_arg,
         # Commands
         start_gazebo_server_client_cmd,
+        robot_state_launch_cmd,
         # Nodes
         spawn_entity_gazebo_node,
-        rviz_node,
-        robot_localization_node,
+        control_node,
+        joint_state_broadcaster_spawner_node,
+        position_controller_spawner_node,
+        velocity_controller_spawner_node,
+        delay_rviz_after_joint_state_broadcaster_spawner_node,
+        delay_robot_localization_after_joint_state_broadcaster_spawner_node,
         launch_ros.actions.Node(
-             package='tf2_ros',
-             executable='static_transform_publisher',
-             arguments = ['--x', '0', '--y', '0', '--z', '0', '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1', '--frame-id', 'map', '--child-frame-id', 'odom']
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            arguments=[
+                "--x",
+                "0",
+                "--y",
+                "0",
+                "--z",
+                "0",
+                "--qx",
+                "0",
+                "--qy",
+                "0",
+                "--qz",
+                "0",
+                "--qw",
+                "1",
+                "--frame-id",
+                "map",
+                "--child-frame-id",
+                "odom",
+            ],
         ),
         launch_ros.actions.Node(
-             package='tf2_ros',
-             executable='static_transform_publisher',
-             arguments = ['--x', '0', '--y', '0', '--z', '0', '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1', '--frame-id', 'odom', '--child-frame-id', 'base_link']
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            arguments=[
+                "--x",
+                "0",
+                "--y",
+                "0",
+                "--z",
+                "0",
+                "--qx",
+                "0",
+                "--qy",
+                "0",
+                "--qz",
+                "0",
+                "--qw",
+                "1",
+                "--frame-id",
+                "odom",
+                "--child-frame-id",
+                "base_link",
+            ],
         ),
-        # Other Launch Files
-        robot_state_launch,
     ]
 
 
