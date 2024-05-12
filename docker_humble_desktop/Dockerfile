@@ -6,6 +6,7 @@ FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Install ROS 2 Nav packages
+RUN add-apt-repository ppa:borglab/gtsam-release-4.1
 RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-navigation2 \
@@ -17,7 +18,13 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-depthai-ros \
     python3-zmq \
     libyaml-cpp-dev \
-    lcov
+    lcov \
+    libtins-dev \
+    net-tools \
+    iproute2 \
+    dnsmasq \
+    libgtsam-dev \
+    libgtsam-unstable-dev
 
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
@@ -45,6 +52,7 @@ RUN pip install depthai --no-cache-dir
 RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
+RUN pip install pyserial --no-cache-dir
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*

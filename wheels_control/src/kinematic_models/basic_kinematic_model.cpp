@@ -182,4 +182,3 @@ bool RoverBasicKinematicModel::check_steering_position_for_rotation() const
 
     return wheel_positioned_for_rotation == NB_WHEELS;
 }
-
