@@ -47,6 +47,7 @@
 #define NORMAL_KINEMATIC "normal"
 #define NORMAL_KINEMATIC_SLOW "normal_slow"
 #define LATERAL_KINEMATIC "lateral"
+#define CRAB_KINEMATIC "crab"
 
 #define CURRENT_LIMIT 0
 
