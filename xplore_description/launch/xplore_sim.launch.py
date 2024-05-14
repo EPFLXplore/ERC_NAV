@@ -9,7 +9,7 @@ from launch.actions import (
     OpaqueFunction,
     RegisterEventHandler,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -73,7 +73,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         PythonLaunchDescriptionSource(
             os.path.join(gazebo_ros_share_dir, "launch", "gazebo.launch.py")
         ),
-        launch_arguments={"world": world_model_path}.items(),
+        launch_arguments={"world": world_model_path, "verbose": "false"}.items(),
         condition=IfCondition(use_gazebo),
     )
 
@@ -112,7 +112,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="rviz2",
         executable="rviz2",
         name="rviz2",
-        output="screen",
+        output="log",
         arguments=["-d", rviz_config_path],
         condition=IfCondition(use_rviz),
     )
@@ -122,6 +122,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable="ros2_control_node",
         parameters=[control_config_path],
         output="both",
+        remappings=[
+            ("~/robot_description", "/robot_description"),
+        ],
+        condition=UnlessCondition(use_gazebo),
     )
 
     joint_state_broadcaster_spawner_node = launch_ros.actions.Node(
@@ -242,6 +246,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
                 "--child-frame-id",
                 "base_link",
             ],
+        ),
+        launch_ros.actions.Node(
+            package="path_planning",
+            executable="speed_pub.py",
         ),
     ]
 
