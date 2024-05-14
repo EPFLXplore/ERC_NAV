@@ -89,7 +89,7 @@ bool RoverStbyKinematicModel::check_steering_position_for_rotation(motors_obj cu
 
     for (auto motor = 0; motor < NB_WHEELS; motor++) 
     {
-        if (std::abs(std::abs(current_motors_position.steer[motor]) - 90) < 50)  // 50 cest un petit interval et 90 cest langle quon veut 
+        if (std::abs(std::abs(current_motors_position.steer[motor]) - 90) < 2)  // 50 cest un petit interval et 90 cest langle quon veut 
         {
             wheel_positioned_for_rotation++;
         }

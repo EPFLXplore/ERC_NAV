@@ -157,7 +157,7 @@ class DisplacementCmds : public rclcpp::Node
         }
         else if (msg->data == "lateral")  
         {
-          kinematic_state = LATERAL_KINEMATIC;
+          //kinematic_state = LATERAL_KINEMATIC;
         else if ( msg- >data = "crab" )
         {
           kinematic_state = CRAB_KINEMATIC;
