@@ -320,6 +320,7 @@ class DisplacementCmds : public rclcpp::Node
     RoverBasicKinematicModel basicKinematicModel;
     RoverNormalKinematicModel normalKinematicModel;
     RoverLateralKinematicModel lateralKinematicModel;
+    RoverStbyKinematicModel stbyKinematicModel;
     //RoverSlowNormalKinematicModel slownormalKinematicModel;
     
     rclcpp::Publisher<custom_msg::msg::Motorcmds>::SharedPtr pub_kinematic;         
