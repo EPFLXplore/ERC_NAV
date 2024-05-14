@@ -108,8 +108,8 @@ class DisplacementCmds : public rclcpp::Node
       sub_kinematic_state = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_kinematic", 1, std::bind(&DisplacementCmds::callback_mode_kinematic, this, std::placeholders::_1));
 
-      sub_fake_cs_crab = this->create_subscription<std_msgs::msg::String>(
-        "/ROVER/l_or_r", 1, std::bind(&DisplacementCmds::callback_mode_crab, this, std::placeholders::_1));
+      // sub_fake_cs_crab = this->create_subscription<std_msgs::msg::String>(
+      //   "/ROVER/l_or_r", 1, std::bind(&DisplacementCmds::callback_mode_crab, this, std::placeholders::_1));
 
       destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&DisplacementCmds::destroy_callback, this, std::placeholders::_1));
 
@@ -125,6 +125,7 @@ class DisplacementCmds : public rclcpp::Node
 
       basicKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
       normalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
+      stbyKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
       //slownormalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
 
 
@@ -155,11 +156,7 @@ class DisplacementCmds : public rclcpp::Node
         {
           kinematic_state = BASIC_KINEMATIC;
         }
-        else if (msg->data == "lateral")  
-        {
-          //kinematic_state = LATERAL_KINEMATIC;
-        }
-        else if ( msg->data = "crab" )
+        else if ( msg->data == "crab" )
         {
           kinematic_state = CRAB_KINEMATIC;
         }
@@ -174,7 +171,7 @@ class DisplacementCmds : public rclcpp::Node
         {
           stbyKinematicModel.set_sign_neg();
         }
-        else if (msg->data = "right") 
+        else if (msg->data == "right") 
         {
           stbyKinematicModel.set_sign_pos();
         }
@@ -193,12 +190,12 @@ class DisplacementCmds : public rclcpp::Node
       if(kinematic_state == NORMAL_KINEMATIC)
           // normal_kinematics_manager(v_x, v_y, r_z);  
           current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
-      else if (kinematic_state == LATERAL_KINEMATIC){
+      // else if (kinematic_state == LATERAL_KINEMATIC){
           
-          current_motors_cmds = lateralKinematicModel.run(go_left,go_right);
-          RCLCPP_INFO(get_logger(), "current_motors_cmds ");
+      //     current_motors_cmds = lateralKinematicModel.run(go_left,go_right);
+      //     RCLCPP_INFO(get_logger(), "current_motors_cmds ");
 
-      }
+      // }
       else if(kinematic_state == BASIC_KINEMATIC)
       {
           // basic_kinematics_manager(v_x, v_y, r_z);
@@ -332,6 +329,7 @@ class DisplacementCmds : public rclcpp::Node
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_kinematic_state;
     rclcpp::Subscription<custom_msg::msg::Wheelstatus>::SharedPtr sub_topic_absolute_encoders;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_fake_cs_crab;
 
 };
 

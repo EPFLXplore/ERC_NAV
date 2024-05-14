@@ -1,5 +1,5 @@
-#ifndef ROVER_BASIC_KINEMATIC_MODEL_HPP
-#define ROVER_BASIC_KINEMATIC_MODEL_HPP
+#ifndef ROVER_S_TBY_KINEMATIC_MODEL_HPP
+#define ROVER_S_TBY_KINEMATIC_MODEL_HPP
 
 
 
@@ -14,7 +14,7 @@ class RoverStbyKinematicModel
 
 
         void translation(_Float64 norm_speed);
-        void rotation();
+        void rotation(float alpha);
         bool check_steering_position_for_rotation(motors_obj current_motors_position) const ;
         
 

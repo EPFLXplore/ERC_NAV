@@ -28,11 +28,13 @@ motors_obj RoverStbyKinematicModel::run(motors_obj motors_position, _Float64 v_x
     //int speed = norm_speed * (SPEED_ROVER_MAX - SPEED_ROVER_MIN) / (SPEED_CMD_MAX - SPEED_CMD_MIN);
     int speed = v_x * (SPEED_ROVER_MAX - SPEED_ROVER_MIN) / (SPEED_CMD_MAX - SPEED_CMD_MIN);
 
-  
+    _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI);
+    _Float64 conversion_speed = 3600; // for 1m.s
+    float alpha = 1.57 * conversion_angle;
 
 
     // Get the appropriate commands for the motors
-    rotation();
+    rotation(alpha);
     if(check_steering_position_for_rotation(current_motors_position)){
         translation(speed);
     }
@@ -64,12 +66,12 @@ void RoverStbyKinematicModel::translation(_Float64 norm_speed)
 }
 
 
-void RoverStbyKinematicModel::rotation() 
+void RoverStbyKinematicModel::rotation(float alpha) 
 {
-    current_motors_cmds.steer[FRONT_LEFT] = 90;
-    current_motors_cmds.steer[FRONT_RIGHT] = 90; // steering motor mounted in reverse
-    current_motors_cmds.steer[BACK_RIGHT] = 90;
-    current_motors_cmds.steer[BACK_LEFT] = 90;
+    current_motors_cmds.steer[FRONT_LEFT] = alpha;
+    current_motors_cmds.steer[FRONT_RIGHT] = -alpha;
+    current_motors_cmds.steer[BACK_RIGHT] = alpha;
+    current_motors_cmds.steer[BACK_LEFT] = -alpha;
 }
 
 
