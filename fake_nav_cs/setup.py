@@ -19,7 +19,7 @@ setup(
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': ['Fake_cs_nav = fake_nav_cs.fake_cs_node:main'
+        'console_scripts': ['Fake_cs_nav = fake_nav_cs.fake_cs_node:main', "test = fake_nav_cs.test_nav_pub:main"
         ],
     },
 )

@@ -35,6 +35,9 @@ RUN /etc/init.d/udev restart
 
 
 USER $USERNAME
+RUN pip install pygame_gui pygame -U
+RUN pip install transforms3d
+
 
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src

@@ -31,6 +31,8 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model_slow.hpp"
 #include "wheels_control/lateral_kinematic_model.hpp"
+#include "wheels_control/stby_kinematic_model.hpp"
+
 
 
 using namespace std::chrono_literals;
@@ -106,6 +108,9 @@ class DisplacementCmds : public rclcpp::Node
       sub_kinematic_state = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_kinematic", 1, std::bind(&DisplacementCmds::callback_mode_kinematic, this, std::placeholders::_1));
 
+      sub_fake_cs_crab = this->create_subscription<std_msgs::msg::String>(
+        "/ROVER/l_or_r", 1, std::bind(&DisplacementCmds::callback_mode_crab, this, std::placeholders::_1));
+
       destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&DisplacementCmds::destroy_callback, this, std::placeholders::_1));
 
 
@@ -153,10 +158,25 @@ class DisplacementCmds : public rclcpp::Node
         else if (msg->data == "lateral")  
         {
           kinematic_state = LATERAL_KINEMATIC;
+        else if ( msg- >data = "crab" )
+        {
+          kinematic_state = CRAB_KINEMATIC;
         }
 
 
 
+    }
+
+    void set_crab(std_msgs::msg::String::SharedPtr msg) // modifie le msg au type que je veux
+    {
+        if (msg->data == "left")   
+        {
+          stbyKinematicModel.set_sign_neg();
+        }
+        else if (msg->data = "right") 
+        {
+          stbyKinematicModel.set_sign_pos();
+        }
     }
 
 
@@ -178,11 +198,13 @@ class DisplacementCmds : public rclcpp::Node
           RCLCPP_INFO(get_logger(), "current_motors_cmds ");
 
       }
-      
-      else 
+      else if(kinematic_state == BASIC_KINEMATIC)
       {
           // basic_kinematics_manager(v_x, v_y, r_z);
           current_motors_cmds = basicKinematicModel.run(current_motors_position, v_x, v_y, r_z);
+      }else if (kinematic_state == CRAB_KINEMATIC)
+      {
+        current_motors_cmds = stbyKinematicModel.run(current_motors_position, v_x, v_y, r_z);
       }
       
 
@@ -233,7 +255,9 @@ class DisplacementCmds : public rclcpp::Node
 
       if(lateral){                  
         RCLCPP_INFO(get_logger(), "IS LATERAL ");                   
-        kinematic_state = LATERAL_KINEMATIC;
+        //kinematic_state = LATERAL_KINEMATIC;
+        kinematic_state = CRAB_KINEMATIC;
+
       }
       else if (change_state)
       {
