@@ -20,7 +20,7 @@ motors_obj RoverLateralKinematicModel::run(bool left, bool right)
     _Float64 conversion_speed = 3600; // for 1m.s
     float alpha = 1.57 * conversion_angle;
     float v_x = 0;
-    float vel;
+    // float vel;
     if(left == right){
        v_x=0;
     }
@@ -39,16 +39,16 @@ motors_obj RoverLateralKinematicModel::run(bool left, bool right)
     current_motors_cmds.steer[BACK_RIGHT] = alpha;
     current_motors_cmds.steer[BACK_LEFT] = -alpha;
 
-    if(check_steering_position_for_translation(motors_position)){
-        vel=v_x;
-    }
-    else{
-        vel=0;
-    }
-    current_motors_cmds.drive[FRONT_LEFT] = vel;
-    current_motors_cmds.drive[FRONT_RIGHT] = vel;
-    current_motors_cmds.drive[BACK_RIGHT] = vel;
-    current_motors_cmds.drive[BACK_LEFT] = vel;
+    // if(check_steering_position_for_translation(motors_position)){
+    //     vel=v_x;
+    // }
+    // else{
+    //     vel=0;
+    // }
+    current_motors_cmds.drive[FRONT_LEFT] = v_x;
+    current_motors_cmds.drive[FRONT_RIGHT] = v_x;
+    current_motors_cmds.drive[BACK_RIGHT] = v_x;
+    current_motors_cmds.drive[BACK_LEFT] = v_x;
     
     return current_motors_cmds;
 }
