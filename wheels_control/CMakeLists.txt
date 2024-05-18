@@ -46,12 +46,11 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/
 )
 
-
 # # install scripts directory
-# install(DIRECTORY
-#   scripts
-#   DESTINATION share/${PROJECT_NAME}/
-# )
+ install(DIRECTORY
+   scripts
+   DESTINATION share/${PROJECT_NAME}/
+ )
 
 
 # Install Python modules
@@ -84,7 +83,7 @@ add_executable(NAV_displacement_cmds
   src/kinematic_models/normal_kinematic_model_slow.cpp
   src/kinematic_models/lateral_kinematic_model.cpp
   src/kinematic_models/stby_kinematic_model.cpp
-
+  src/kinematic_models/diagonal_kinematic_model.cpp
 )
 
 ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs) 
