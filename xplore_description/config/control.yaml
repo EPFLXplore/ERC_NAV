@@ -1,6 +1,6 @@
 controller_manager:
   ros__parameters:
-    update_rate: 1000 # Hz
+    update_rate: 100 # Hz
 
     position_controller:
       type: position_controllers/JointGroupPositionController
@@ -40,5 +40,5 @@ velocity_controller:
 
 joint_state_broadcaster:
   ros__parameters:
-    publish_rate: 1000.0
+    publish_rate: 100
     use_sim_time: true

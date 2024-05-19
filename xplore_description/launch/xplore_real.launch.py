@@ -42,6 +42,16 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
     ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
+    # ------------- Launch Commands -------------
+    robot_state_launch_cmd = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_share_dir, "launch", "robot_state.launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "false",
+        }.items(),
+    )
+
     # ------------- Launch Nodes -------------
     rviz_node = launch_ros.actions.Node(
         package="rviz2",
@@ -63,25 +73,15 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ],
     )
 
-    # ------------- Import Other Launch Files -------------
-    robot_state_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(pkg_share_dir, "launch", "robot_state.launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": "false",
-        }.items(),
-    )
-
     return [
         # Arguments
         use_rviz_arg,
         rviz_config_arg,
+        # Commands
+        robot_state_launch_cmd,
         # Nodes
         rviz_node,
         robot_localization_node,
-        # Other Launch Files
-        robot_state_launch,
     ]
 
 

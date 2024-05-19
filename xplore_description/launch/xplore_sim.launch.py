@@ -9,7 +9,7 @@ from launch.actions import (
     OpaqueFunction,
     RegisterEventHandler,
 )
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -53,6 +53,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     world_model = LaunchConfiguration(
         "world_model", default=default_world_model
     ).perform(context)
+    use_joint_publisher = "true"
+    if use_gazebo.perform(context) == "true":
+        use_joint_publisher = "false"
 
     # ------------- Setup Paths -------------
     pkg_name = "xplore_description"
@@ -62,7 +65,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
     world_model_path = os.path.join(pkg_share_dir, "worlds", world_model)
-    control_config_path = os.path.join(pkg_share_dir, "config", "control.yaml")
     ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     gazebo_model_path = os.path.join(pkg_share_dir, "models")
@@ -83,6 +85,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ),
         launch_arguments={
             "use_sim_time": "true",
+            "use_joint_publisher": use_joint_publisher,
         }.items(),
     )
 
@@ -117,23 +120,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(use_rviz),
     )
 
-    control_node = launch_ros.actions.Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[control_config_path],
-        output="both",
-        remappings=[
-            ("~/robot_description", "/robot_description"),
-        ],
-        condition=UnlessCondition(use_gazebo),
-    )
-
     joint_state_broadcaster_spawner_node = launch_ros.actions.Node(
         package="controller_manager",
         executable="spawner",
         arguments=[
             "joint_state_broadcaster",
         ],
+        condition=IfCondition(use_gazebo),
     )
 
     position_controller_spawner_node = launch_ros.actions.Node(
@@ -142,6 +135,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         arguments=[
             "position_controller",
         ],
+        condition=IfCondition(use_gazebo),
     )
 
     velocity_controller_spawner_node = launch_ros.actions.Node(
@@ -150,6 +144,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         arguments=[
             "velocity_controller",
         ],
+        condition=IfCondition(use_gazebo),
     )
 
     robot_localization_node = launch_ros.actions.Node(
@@ -161,6 +156,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             ekf_config_path,
             {"use_sim_time": True},
         ],
+        condition=IfCondition(use_gazebo),
     )
 
     # ------------- Delayed Launch Nodes -------------
@@ -171,6 +167,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             on_exit=[rviz_node],
         )
     )
+    if use_joint_publisher == "true":
+        # If joint_state_publisher is used, there is no need to delay rviz_node start
+        delay_rviz_after_joint_state_broadcaster_spawner_node = rviz_node
 
     # Delay robot_localization_node start after joint_state_broadcaster_spawner_node
     delay_robot_localization_after_joint_state_broadcaster_spawner_node = (
@@ -193,7 +192,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         robot_state_launch_cmd,
         # Nodes
         spawn_entity_gazebo_node,
-        control_node,
         joint_state_broadcaster_spawner_node,
         position_controller_spawner_node,
         velocity_controller_spawner_node,
@@ -247,10 +245,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
                 "base_link",
             ],
         ),
-        launch_ros.actions.Node(
-            package="path_planning",
-            executable="speed_pub.py",
-        ),
+        # launch_ros.actions.Node(
+        #     package="path_planning",
+        #     executable="speed_pub.py",
+        # ),
     ]
 
 

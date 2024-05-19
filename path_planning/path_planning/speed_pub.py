@@ -12,7 +12,7 @@ class PublisherVelocity(Node):
        
         controller_name = "velocity_controller"
         wait_sec_between_publish = 0.5
-        self.goals = [10.0, 10.0, 10.0, 10.0]
+        self.goals = [100.0, -100.0, -100.0, 100.0]
 
         publish_topic = "/" + controller_name + "/" + "commands"
 
