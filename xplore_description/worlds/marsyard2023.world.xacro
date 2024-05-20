@@ -2,9 +2,9 @@
 <?xml-model href="http://sdformat.org/schemas/root.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <sdf version="1.7" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <world name="marsyard2023">
-     <gravity>0 0 -98</gravity>
+     <gravity>0 0 -9.8</gravity>
     <physics type="ode">
-      <gravity>0 0 -98</gravity>
+      <gravity>0 0 -9.8</gravity>
       <ode>
         <solver>
           <!-- IMPORTANT for skid steering to properly work -->

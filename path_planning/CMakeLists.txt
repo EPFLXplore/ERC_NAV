@@ -28,7 +28,7 @@ endif()
 ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
-  path_planning/speed_pub.py
+  path_planning/fake_odom_tf_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

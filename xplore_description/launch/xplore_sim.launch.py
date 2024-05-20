@@ -65,7 +65,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     rviz_config_path = os.path.join(pkg_share_dir, "rviz", rviz_config)
     world_model_path = os.path.join(pkg_share_dir, "worlds", world_model)
-    ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     gazebo_model_path = os.path.join(pkg_share_dir, "models")
     os.environ["GAZEBO_MODEL_PATH"] = gazebo_model_path
@@ -147,15 +146,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(use_gazebo),
     )
 
-    robot_localization_node = launch_ros.actions.Node(
-        package="robot_localization",
-        executable="ekf_node",
-        name="ekf_filter_node",
+    ros_control_cmd_bridge_node = launch_ros.actions.Node(
+        package="xplore_description",
+        executable="ros_control_cmd_bridge.py",
+        name="ros_control_cmd_bridge",
         output="screen",
-        parameters=[
-            ekf_config_path,
-            {"use_sim_time": True},
-        ],
         condition=IfCondition(use_gazebo),
     )
 
@@ -170,16 +165,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     if use_joint_publisher == "true":
         # If joint_state_publisher is used, there is no need to delay rviz_node start
         delay_rviz_after_joint_state_broadcaster_spawner_node = rviz_node
-
-    # Delay robot_localization_node start after joint_state_broadcaster_spawner_node
-    delay_robot_localization_after_joint_state_broadcaster_spawner_node = (
-        RegisterEventHandler(
-            event_handler=OnProcessExit(
-                target_action=joint_state_broadcaster_spawner_node,
-                on_exit=[robot_localization_node],
-            )
-        )
-    )
 
     return [
         # Arguments
@@ -196,59 +181,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         position_controller_spawner_node,
         velocity_controller_spawner_node,
         delay_rviz_after_joint_state_broadcaster_spawner_node,
-        delay_robot_localization_after_joint_state_broadcaster_spawner_node,
-        launch_ros.actions.Node(
-            package="tf2_ros",
-            executable="static_transform_publisher",
-            arguments=[
-                "--x",
-                "0",
-                "--y",
-                "0",
-                "--z",
-                "0",
-                "--qx",
-                "0",
-                "--qy",
-                "0",
-                "--qz",
-                "0",
-                "--qw",
-                "1",
-                "--frame-id",
-                "map",
-                "--child-frame-id",
-                "odom",
-            ],
-        ),
-        launch_ros.actions.Node(
-            package="tf2_ros",
-            executable="static_transform_publisher",
-            arguments=[
-                "--x",
-                "0",
-                "--y",
-                "0",
-                "--z",
-                "0",
-                "--qx",
-                "0",
-                "--qy",
-                "0",
-                "--qz",
-                "0",
-                "--qw",
-                "1",
-                "--frame-id",
-                "odom",
-                "--child-frame-id",
-                "base_link",
-            ],
-        ),
-        # launch_ros.actions.Node(
-        #     package="path_planning",
-        #     executable="speed_pub.py",
-        # ),
+        ros_control_cmd_bridge_node,
     ]
 
 

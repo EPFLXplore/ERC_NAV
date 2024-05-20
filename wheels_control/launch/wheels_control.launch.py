@@ -14,14 +14,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use fake CS gamepad",
     )
 
-    default_motor_cmds = "false"
+    default_motor_cmds = "true"
     motor_cmds_arg = DeclareLaunchArgument(
         "motor_cmds",
         default_value=default_motor_cmds,
         description="Use motor commands",
     )
 
-    default_homing = "false"
+    default_homing = "true"
     homing_arg = DeclareLaunchArgument(
         "homing",
         default_value=default_homing,

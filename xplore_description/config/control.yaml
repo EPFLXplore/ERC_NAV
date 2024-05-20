@@ -13,17 +13,17 @@ controller_manager:
 
 position_controller:
   ros__parameters:
-     joints:
+    joints:
       - steering1
       - steering2
       - steering3
       - steering4
-     interface_name: position
-     command_interfaces:
-       - position
-     state_interfaces:
-       - position
-       - velocity
+    interface_name: position
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
 
 velocity_controller:
   ros__parameters:
@@ -40,5 +40,8 @@ velocity_controller:
 
 joint_state_broadcaster:
   ros__parameters:
-    publish_rate: 100
-    use_sim_time: true
+    extra_joints:
+      - right_pivot
+      - left_pivot
+      - chassis_to_caster_axis
+      - caster_axis_to_caster_wheel

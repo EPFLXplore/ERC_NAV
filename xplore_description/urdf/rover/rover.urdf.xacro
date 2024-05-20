@@ -86,7 +86,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/base_link.stl" scale="0.001 0.001 0.001"/>
+        <box size="0.5 0.5 0.1"/>
       </geometry>
     </collision>
   </link>
@@ -105,9 +105,9 @@
       <material name="silver"/>
     </visual>
     <collision>
-      <origin xyz="-0.421384 -0.393882 0.063562" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/steering_1.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.25" radius="0.005"/>
       </geometry>
     </collision>
   </link>
@@ -126,9 +126,9 @@
       <material name="silver"/>
     </visual>
     <collision>
-      <origin xyz="-0.42341 0.353934 0.012408" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/steering_2.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.25" radius="0.005"/>
       </geometry>
     </collision>
   </link>
@@ -147,9 +147,9 @@
       <material name="silver"/>
     </visual>
     <collision>
-      <origin xyz="0.408171 0.353934 0.063562" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/steering_3.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.25" radius="0.005"/>
       </geometry>
     </collision>
   </link>
@@ -168,9 +168,9 @@
       <material name="silver"/>
     </visual>
     <collision>
-      <origin xyz="0.410197 -0.393882 0.012408" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/steering_4.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.25" radius="0.005"/>
       </geometry>
     </collision>
   </link>
@@ -189,9 +189,9 @@
       <material name="pink"/>
     </visual>
     <collision>
-      <origin xyz="0.42733 -0.410572 0.281864" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="1.57 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/wheel3_1.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.13" radius="0.13"/>
       </geometry>
     </collision>
   </link>
@@ -210,9 +210,9 @@
       <material name="pink"/>
     </visual>
     <collision>
-      <origin xyz="-0.404251 -0.410572 0.333019" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="1.57 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/wheel4_1.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.13" radius="0.13"/>
       </geometry>
     </collision>
   </link>
@@ -231,9 +231,9 @@
       <material name="pink"/>
     </visual>
     <collision>
-      <origin xyz="0.391037 0.370625 0.333019" rpy="0 0 0"/>
+     <origin xyz="0 0 0" rpy="1.57 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/wheel2_1.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.13" radius="0.13"/>
       </geometry>
     </collision>
   </link>
@@ -253,9 +253,9 @@
       <material name="pink"/>
     </visual>
     <collision>
-      <origin xyz="-0.440543 0.370625 0.281864" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="1.57 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/wheel1_1.stl" scale="0.001 0.001 0.001"/>
+        <cylinder length="0.13" radius="0.13"/>
       </geometry>
     </collision>
   </link>
@@ -276,9 +276,9 @@
       <material name="black"/>
     </visual>
     <collision>
-      <origin xyz="-0.006607 -0.250474 0.021516" rpy="0 0 0"/>
+      <origin xyz="0 0.1 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/pivot_droit_1.stl" scale="0.001 0.001 0.001"/>
+        <box size="0.8 0.2 0.1"/>
       </geometry>
     </collision>
   </link>
@@ -297,9 +297,9 @@
       <material name="black"/>
     </visual>
     <collision>
-      <origin xyz="-0.006607 0.210526 0.021516" rpy="0 0 0"/>
+      <origin xyz="0 -0.1 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="file://$(find xplore_description)/meshes/rover/pivot_gauche_1.stl" scale="0.001 0.001 0.001"/>
+        <box size="0.8 0.2 0.1"/>
       </geometry>
     </collision>
   </link>
@@ -384,11 +384,54 @@
   </joint>
 
 
+  <joint name="chassis_to_caster_axis" type="continuous">
+    <origin xyz="0.3 0.0 -0.225" rpy="0 -0.6 0"/>
+    <axis xyz="0 0 1"/>
+    <parent link="chassis_link"/>
+    <child link="caster_axis"/>
+  </joint>
+  <link name="caster_axis">
+    <visual>
+      <geometry>
+        <cylinder length="0.45" radius="0.005"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.45" radius="0.005"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.25" length="0.45" radius="0.005">
+      <origin xyz="0 0 0" />
+    </xacro:inertial_cylinder>
+  </link>
 
 
+  <joint name="caster_axis_to_caster_wheel" type="continuous">
+    <origin xyz="0 0 -0.25" rpy="${pi/2} 0 0"/>
+    <parent link="caster_axis"/>
+    <axis xyz="0 0 1"/>
+    <child link="caster_wheel"/>
+  </joint>
+  <link name="caster_wheel">
+    <visual>
+      <geometry>
+        <cylinder length="0.05" radius="0.05"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.05" radius="0.05"/>
+      </geometry>
+    </collision>
+    <xacro:inertial_cylinder mass="0.25" length="0.05" radius="0.05">
+      <origin xyz="0 0 0" />
+    </xacro:inertial_cylinder>
+  </link>
 
 
-  <joint name="right_pivot" type="fixed">
+  <joint name="right_pivot" type="continuous">
     <origin xyz="-0.1 0.250474 -0.021516" rpy="0 0 0"/>
     <parent link="chassis_link"/>
     <child link="right_leg"/>
@@ -397,7 +440,7 @@
 
 
 
-  <joint name="left_pivot" type="fixed">
+  <joint name="left_pivot" type="continuous">
     <origin xyz="-0.1 -0.210526 -0.021516" rpy="0 0 0"/>
     <parent link="chassis_link"/>
     <child link="left_leg"/>
