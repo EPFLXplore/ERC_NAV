@@ -16,7 +16,7 @@
       <body_name>base_link</body_name>
       <topic_name>odom</topic_name>
       <gaussian_noise>0.01</gaussian_noise>
-      <frame_name>map</frame_name>
+      <frame_name>odom</frame_name>
       <xyz_offset>0 0 0</xyz_offset>
       <rpy_offset>0 0 0</rpy_offset>
     </plugin>

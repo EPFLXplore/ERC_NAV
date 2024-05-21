@@ -21,6 +21,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-gazebo-ros2-control \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -29,7 +30,9 @@ RUN apt-get install -y --no-install-recommends \
     iproute2 \
     dnsmasq \
     libgtsam-dev \
-    libgtsam-unstable-dev
+    libgtsam-unstable-dev 
+
+# RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /home/${USERNAME}/.bashrc
 
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules

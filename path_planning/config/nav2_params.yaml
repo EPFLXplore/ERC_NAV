@@ -34,7 +34,7 @@ global_costmap:
       update_frequency: 1.0
       publish_frequency: 1.0
       use_sim_time: True
-      always_send_full_costmap: False
+      always_send_full_costmap: True
       transform_tolerance: 0.3
       initial_transform_timeout: 60
       ## Layers parameters
@@ -56,6 +56,19 @@ global_costmap:
         inflate_around_unknown: False
       ## Filters parameters
       # filter: []
+
+# local_costmap:
+#   local_costmap:
+#     ros__parameters:
+#       update_frequency: 5.0
+#       publish_frequency: 2.0
+#       global_frame: odom
+#       robot_base_frame: base_link
+#       rolling_window: true
+#       width: 3
+#       height: 3
+#       resolution: 0.05
+#       robot_radius: 0.80
 
 # Generate and publish the static map occupancy grid. This occupancy grid is used to generate the global costmap.
 map_server:

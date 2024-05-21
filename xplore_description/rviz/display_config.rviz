@@ -3,9 +3,14 @@ Panels:
     Help Height: 85
     Name: Displays
     Property Tree Widget:
-      Expanded: ~
+      Expanded:
+        - /TF1/Frames1/base_link1
+        - /TF1/Frames1/map1
+        - /TF1/Frames1/odom1
       Splitter Ratio: 0.6075581312179565
-    Tree Height: 761
+    Tree Height: 421
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
 Visualization Manager:
   Class: ""
   Displays:
@@ -205,37 +210,38 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
+        base_link:
+          base_footprint:
+            {}
+          chassis_link:
+            camera_link:
+              camera_link_optical:
+                {}
+            caster_axis:
+              caster_wheel:
+                {}
+            imu_link:
+              {}
+            left_leg:
+              steering1_link:
+                wheel1_link:
+                  {}
+              steering4_link:
+                wheel4_link:
+                  {}
+            lidar_axis:
+              lidar_link:
+                {}
+            right_leg:
+              steering2_link:
+                wheel2_link:
+                  {}
+              steering3_link:
+                wheel3_link:
+                  {}
         map:
           odom:
-            base_link:
-              base_footprint:
-                {}
-              chassis_link:
-                camera_link:
-                  camera_link_optical:
-                    {}
-                caster_axis:
-                  caster_wheel:
-                    {}
-                imu_link:
-                  {}
-                left_leg:
-                  steering1_link:
-                    wheel1_link:
-                      {}
-                  steering4_link:
-                    wheel4_link:
-                      {}
-                lidar_axis:
-                  lidar_link:
-                    {}
-                right_leg:
-                  steering2_link:
-                    wheel2_link:
-                      {}
-                  steering3_link:
-                    wheel3_link:
-                      {}
+            {}
       Update Interval: 0
       Value: true
     - Alpha: 0.699999988079071
@@ -246,14 +252,14 @@ Visualization Manager:
       Name: Global Map
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /global_costmap/costmap
       Update Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /global_costmap/costmap_updates
@@ -280,14 +286,14 @@ Visualization Manager:
       Name: Local Map
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /local_costmap/costmap
       Update Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /local_costmap/costmap_updates
@@ -393,7 +399,7 @@ Visualization Manager:
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 25; 255; 0
-      Enabled: false
+      Enabled: true
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
@@ -416,7 +422,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /transformed_global_plan
-      Value: false
+      Value: true
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -476,7 +482,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: base_link
+    Fixed Frame: map
     Frame Rate: 30
   Name: root
   Tools:
@@ -511,7 +517,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 38.22850799560547
+      Distance: 38.10291290283203
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -526,10 +532,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5647965669631958
+      Pitch: 0.7647968530654907
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.633561611175537
+      Yaw: 5.483556270599365
     Saved: ~
 Window Geometry:
   Displays:
@@ -537,7 +543,9 @@ Window Geometry:
   Height: 1009
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd00000001000000000000015a0000038ffc0200000001fb000000100044006900730070006c00610079007301000000440000038f000000eb00ffffff000005d90000038f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Navigation 2:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000003350000038ffc0200000002fb000000100044006900730070006c00610079007301000000440000023b000000eb00fffffffb00000018004e0061007600690067006100740069006f006e0020003201000002860000014d0000014d00ffffff000003fe0000038f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Width: 1850
   X: 70
   Y: 34

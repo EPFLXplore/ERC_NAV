@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 import rclpy
 from geometry_msgs.msg import TransformStamped
-from rclpy.node import Node
-from tf2_ros import TransformBroadcaster
 from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rosgraph_msgs.msg import Clock
+from tf2_ros import TransformBroadcaster
 
 
 class FakeOdomTfPublisher(Node):
@@ -12,13 +14,23 @@ class FakeOdomTfPublisher(Node):
 
         # Initialize the transform broadcaster
         self.odom_tf_broadcaster = TransformBroadcaster(self)
+        self.clock = None
 
         self.create_subscription(Odometry, "/odom", self.publish_odom_tf, 10)
+        self.create_subscription(
+            Clock,
+            "/clock",
+            self.update_clock,
+            QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT),
+        )
 
     def publish_odom_tf(self, msg):
         t = TransformStamped()
 
-        t.header.stamp = self.get_clock().now().to_msg()
+        if self.clock is None:
+            return
+
+        t.header.stamp = self.clock
         t.header.frame_id = "odom"
         t.child_frame_id = "base_link"
 
@@ -35,6 +47,9 @@ class FakeOdomTfPublisher(Node):
 
         # Send the transformation
         self.odom_tf_broadcaster.sendTransform(t)
+
+    def update_clock(self, msg):
+        self.clock = msg.clock
 
 
 def main():
