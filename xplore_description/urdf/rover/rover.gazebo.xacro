@@ -15,7 +15,7 @@
       <update_rate>100.0</update_rate>
       <body_name>base_link</body_name>
       <topic_name>odom</topic_name>
-      <gaussian_noise>0.01</gaussian_noise>
+      <gaussian_noise>0.0</gaussian_noise>
       <frame_name>odom</frame_name>
       <xyz_offset>0 0 0</xyz_offset>
       <rpy_offset>0 0 0</rpy_offset>
@@ -54,26 +54,26 @@
 
   <gazebo reference="wheel3_link">
     <material>${body_color}</material>
-    <mu1>0.2</mu1>
-    <mu2>0.2</mu2>
+    <mu1>0.9</mu1>
+    <mu2>0.9</mu2>
   </gazebo>
 
   <gazebo reference="wheel4_link">
     <material>${body_color}</material>
-    <mu1>0.2</mu1>
-    <mu2>0.2</mu2>
+    <mu1>0.9</mu1>
+    <mu2>0.9</mu2>
   </gazebo>
 
   <gazebo reference="wheel2_link">
     <material>${body_color}</material>
-    <mu1>0.2</mu1>
-    <mu2>0.2</mu2>
+    <mu1>0.9</mu1>
+    <mu2>0.9</mu2>
   </gazebo>
 
   <gazebo reference="wheel1_link">
     <material>${body_color}</material>
-    <mu1>0.2</mu1>
-    <mu2>0.2</mu2>
+    <mu1>0.9</mu1>
+    <mu2>0.9</mu2>
   </gazebo>
 
   <gazebo reference="lidar_axis">

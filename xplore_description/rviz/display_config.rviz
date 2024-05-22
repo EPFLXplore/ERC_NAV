@@ -3,11 +3,8 @@ Panels:
     Help Height: 85
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /TF1/Frames1/base_link1
-        - /TF1/Frames1/map1
-        - /TF1/Frames1/odom1
-      Splitter Ratio: 0.6075581312179565
+      Expanded: ~
+      Splitter Ratio: 0.5333333611488342
     Tree Height: 421
   - Class: nav2_rviz_plugins/Navigation 2
     Name: Navigation 2
@@ -210,38 +207,37 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        base_link:
-          base_footprint:
-            {}
-          chassis_link:
-            camera_link:
-              camera_link_optical:
-                {}
-            caster_axis:
-              caster_wheel:
-                {}
-            imu_link:
-              {}
-            left_leg:
-              steering1_link:
-                wheel1_link:
-                  {}
-              steering4_link:
-                wheel4_link:
-                  {}
-            lidar_axis:
-              lidar_link:
-                {}
-            right_leg:
-              steering2_link:
-                wheel2_link:
-                  {}
-              steering3_link:
-                wheel3_link:
-                  {}
         map:
           odom:
-            {}
+            base_link:
+              base_footprint:
+                {}
+              chassis_link:
+                camera_link:
+                  camera_link_optical:
+                    {}
+                caster_axis:
+                  caster_wheel:
+                    {}
+                imu_link:
+                  {}
+                left_leg:
+                  steering1_link:
+                    wheel1_link:
+                      {}
+                  steering4_link:
+                    wheel4_link:
+                      {}
+                lidar_axis:
+                  lidar_link:
+                    {}
+                right_leg:
+                  steering2_link:
+                    wheel2_link:
+                      {}
+                  steering3_link:
+                    wheel3_link:
+                      {}
       Update Interval: 0
       Value: true
     - Alpha: 0.699999988079071
@@ -545,7 +541,7 @@ Window Geometry:
   Hide Right Dock: false
   Navigation 2:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000003350000038ffc0200000002fb000000100044006900730070006c00610079007301000000440000023b000000eb00fffffffb00000018004e0061007600690067006100740069006f006e0020003201000002860000014d0000014d00ffffff000003fe0000038f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001b50000038ffc0200000002fb000000100044006900730070006c00610079007301000000440000023b000000eb00fffffffb00000018004e0061007600690067006100740069006f006e0020003201000002860000014d0000014d00ffffff0000057e0000038f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Width: 1850
   X: 70
   Y: 34

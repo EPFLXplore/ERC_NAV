@@ -6,7 +6,7 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 
-METERS_PER_PIXEL = 0.2
+METERS_PER_PIXEL = 50 / 256  # [m/pixel]
 MAX_SLOPE_ANGLE = 40  # [deg]
 
 

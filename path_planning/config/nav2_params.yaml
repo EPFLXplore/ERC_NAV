@@ -17,7 +17,7 @@ global_costmap:
       width: 50
       origin_x: -25.0
       origin_y: -25.0
-      resolution: 0.2
+      resolution: 0.1953125
       track_unknown_space: True
       rolling_window: False
       ## Cost parameters
@@ -50,8 +50,8 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.40
+        cost_scaling_factor: 0.0
+        inflation_radius: 0.70
         inflate_unknown: False
         inflate_around_unknown: False
       ## Filters parameters
@@ -149,6 +149,8 @@ controller_server:
     ## Server parameters
     use_sim_time: True
     controller_frequency: 1.0
+    odom_topic: "odom"
+    # Min velocities to 
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
@@ -164,30 +166,34 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.5
+      yaw_goal_tolerance: 0.5
     ## Planner parameters
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
+      # Speeds
       min_vel_x: 0.0
+      max_vel_x: 0.3
       min_vel_y: 0.0
-      max_vel_x: 0.26
       max_vel_y: 0.0
+      min_speed_theta: -1.0
       max_vel_theta: 1.0
       min_speed_xy: 0.0
-      max_speed_xy: 0.26
-      min_speed_theta: 0.0
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
+      max_speed_xy: 0.3
+      # Accelerations
+      decel_lim_x: -1.0
+      acc_lim_x: 1.0
       decel_lim_y: 0.0
-      decel_lim_theta: -3.2
+      acc_lim_y: 0.0
+      decel_lim_theta: -3.0
+      acc_lim_theta: 3.0
+      # Velocity samples
       vx_samples: 20
       vy_samples: 5
       vtheta_samples: 20
+      # Time to simulate ahead
       sim_time: 1.7
       linear_granularity: 0.05
       angular_granularity: 0.025
@@ -206,7 +212,7 @@ controller_server:
           "PathDist",
           "GoalDist",
         ]
-      BaseObstacle.scale: 0.02
+      BaseObstacle.scale: 30.0
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
