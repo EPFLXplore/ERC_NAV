@@ -1,3 +1,8 @@
+amcl:
+  ros__parameters:
+    use_sim_time: False
+    tf_broadcast: False
+
 # Generate and publish the global costmap with values between 0 and 255, where 0 is free space, 254 is
 # lethal space, and 255 is unknown space. This costmap is computed from all the published occupancy grids that
 # have values between 0 and 100.
@@ -33,7 +38,7 @@ global_costmap:
       map_topic: /map
       update_frequency: 1.0
       publish_frequency: 1.0
-      use_sim_time: True
+      use_sim_time: False
       always_send_full_costmap: True
       transform_tolerance: 0.3
       initial_transform_timeout: 60
@@ -73,14 +78,23 @@ global_costmap:
 # Generate and publish the static map occupancy grid. This occupancy grid is used to generate the global costmap.
 map_server:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
     topic_name: "map"
     frame_id: "map"
     yaml_filename: "map_server_params.yaml"
 
+# Save the map to a file if neededm when the map is received from the map server.
+map_saver:
+  ros__parameters:
+    use_sim_time: False
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: True
+
 bt_navigator:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /odom
@@ -124,11 +138,12 @@ bt_navigator:
 
 bt_navigator_rclcpp_node:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
 
 planner_server:
   ros__parameters:
     ## Server parameters
+    use_sim_time: False
     expected_planner_frequency: 1.0
     action_server_result_timeout: 10
     ## Plugins parameters
@@ -142,15 +157,15 @@ planner_server:
 
 planner_server_rclcpp_node:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
 
 controller_server:
   ros__parameters:
     ## Server parameters
-    use_sim_time: True
+    use_sim_time: False
     controller_frequency: 1.0
     odom_topic: "odom"
-    # Min velocities to 
+    # Min velocities to ignore
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
@@ -225,8 +240,8 @@ controller_server:
 
 controller_server_rclcpp_node:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False
 
 robot_state_publisher:
   ros__parameters:
-    use_sim_time: True
+    use_sim_time: False

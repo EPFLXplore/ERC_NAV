@@ -15,17 +15,14 @@ from launch.substitutions import LaunchConfiguration
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     # ------------- Launch Arguments -------------
-    default_use_sim_time = "true"
-    use_sim_time_arg = DeclareLaunchArgument(
-        "use_sim_time",
-        default_value=default_use_sim_time,
-        description="Use sim time if true",
+    default_use_fake_odom = "true"
+    use_fake_odom_arg = DeclareLaunchArgument(
+        "use_fake_odom",
+        default_value=default_use_fake_odom,
+        description="Use fake odometry",
     )
 
-    use_sim_time = LaunchConfiguration("use_sim_time", default=default_use_sim_time)
-    motor_cmds = "true"
-    if use_sim_time.perform(context) == "true":
-        motor_cmds = "false"
+    use_fake_odom = LaunchConfiguration("use_fake_odom", default=default_use_fake_odom)
 
     # ------------- Setup Paths -------------
     pkg_name = "path_planning"
@@ -37,7 +34,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     map_server_params_config_path = os.path.join(
         pkg_share_dir, "config", "map_server_params.yaml"
     )
-    nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params.yaml")
+    nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params_sim.yaml")
     ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
 
     # ------------- Launch Commands -------------
@@ -46,7 +43,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(nav2_ros_share_dir, "launch", "bringup_launch.py")
         ),
         launch_arguments={
-            "use_sim_time": use_sim_time,
+            "use_sim_time": "true",
             "autostart": "true",
             "params_file": nav2_params_config_path,
             "map": map_server_params_config_path,
@@ -58,7 +55,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(wheels_control_share_dir, "launch", "wheels_control.launch.py")
         ),
         launch_arguments={
-            "motor_cmds": motor_cmds,
+            "motor_cmds": "false",
         }.items(),
     )
 
@@ -72,7 +69,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             ekf_config_path,
             {"use_sim_time": True},
         ],
-        condition=UnlessCondition(use_sim_time),
+        condition=UnlessCondition(use_fake_odom),
     )
 
     fake_map_tf_publisher_node = launch_ros.actions.Node(
@@ -98,7 +95,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             "--child-frame-id",
             "odom",
         ],
-        condition=IfCondition(use_sim_time),
     )
 
     fake_odom_tf_publisher_node = launch_ros.actions.Node(
@@ -106,12 +102,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable="fake_odom_tf_publisher.py",
         name="fake_odom_tf_publisher",
         output="screen",
-        condition=IfCondition(use_sim_time),
+        condition=IfCondition(use_fake_odom),
     )
 
     return [
         # Arguments
-        use_sim_time_arg,
+        use_fake_odom_arg,
         # Commands
         start_nav2_cmd,
         start_wheels_control_cmd,

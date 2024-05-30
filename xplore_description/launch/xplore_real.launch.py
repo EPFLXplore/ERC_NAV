@@ -48,6 +48,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ),
         launch_arguments={
             "use_sim_time": "false",
+            "use_joint_publisher": "true",
         }.items(),
     )
 
