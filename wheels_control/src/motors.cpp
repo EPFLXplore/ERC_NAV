@@ -380,7 +380,7 @@ bool NAV_Motor::set_velocity_ref(long vel)
     if ((op_mode != OMD_VELOCITY_MODE) &&
         !this->set_operational_mode(OMD_PROFILE_VELOCITY_MODE))
         return false;
-
+    
     VCS_MoveWithVelocity(gateway, id, vel, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return !error_code;

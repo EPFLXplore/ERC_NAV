@@ -38,6 +38,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     if (std::abs(v_x) > 0.5)
     {
         v_x = (v_x / std::abs(v_x)) * 0.5;
+
     }
 
     // if (std::abs(omega_z) > 0.5)
