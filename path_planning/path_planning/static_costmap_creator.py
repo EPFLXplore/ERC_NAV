@@ -6,7 +6,8 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 
-METERS_PER_PIXEL = 50 / 256  # [m/pixel]
+# METERS_PER_PIXEL = 50 / 256  # [m/pixel]
+METERS_PER_PIXEL = 0.20  # [m/pixel]
 MAX_SLOPE_ANGLE = 40  # [deg]
 
 
@@ -21,13 +22,21 @@ class StaticCostMapCreator:
             "xplore_description",
         )
 
+        # static_map_path = os.path.join(
+        #     xplore_description_dir,
+        #     "models",
+        #     "marsyard2022_terrain",
+        #     "dem",
+        #     "marsyard2022_terrain_hm.tif",
+        # )
+
         static_map_path = os.path.join(
-            xplore_description_dir,
-            "models",
-            "marsyard2022_terrain",
-            "dem",
-            "marsyard2022_terrain_hm.tif",
+            self.current_file_dir,
+            os.pardir,
+            "saved_maps",
+            "static_map.tif",
         )
+
         self.static_map = cv.imread(static_map_path, cv.IMREAD_UNCHANGED)
 
     def plot_all_maps(self):

@@ -64,6 +64,10 @@ RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
+RUN pip install open3d --no-cache-dir
+# Fix numpy version
+RUN pip uninstall numpy -y
+RUN pip install numpy==1.22.4 --no-cache-dir
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
