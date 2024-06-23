@@ -6,9 +6,9 @@ import open3d as o3d
 LIDAR_INITIAL_FLOOR_HEIGHT = 1.0  # [m]
 
 if __name__ == "__main__":
-    box1 = o3d.geometry.TriangleMesh.create_box(depth=2)
-    box2 = o3d.geometry.TriangleMesh.create_box(depth=2)
-    box3 = o3d.geometry.TriangleMesh.create_box(depth=2)
+    box1 = o3d.geometry.TriangleMesh.create_box(depth=5)
+    box2 = o3d.geometry.TriangleMesh.create_box(depth=5)
+    box3 = o3d.geometry.TriangleMesh.create_box(depth=5)
     plane = o3d.geometry.TriangleMesh.create_box(width=6, height=6, depth=0.0001)
     rotated_plane = o3d.geometry.TriangleMesh.create_box(
         width=6, height=3, depth=0.0001

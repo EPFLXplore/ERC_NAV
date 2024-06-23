@@ -10,9 +10,8 @@ import open3d as o3d
 METERS_PER_PIXEL = 0.20  # [m/pixel]
 # Lidar height from the ground with respect to the initial floor height.
 LIDAR_INITIAL_FLOOR_HEIGHT = 1.0  # [m]
-# Maximum and minimum height values for the heightmap with respect to the initial floor height.
+# Maximum height values for the heightmap with respect to the initial floor height.
 Z_MAX = 3.0  # [m]
-Z_MIN = 0.0  # [m]
 
 
 class StaticMapPcdToTifConverter:
@@ -56,8 +55,10 @@ class StaticMapPcdToTifConverter:
                     & (static_map_np[:, 1] < Y_val[j] + METERS_PER_PIXEL / 2)
                 )[0]
                 if len(idx) > 0:
-                    height = np.mean(static_map_np[idx, 2]) + LIDAR_INITIAL_FLOOR_HEIGHT
-                    if height <= Z_MAX and height >= Z_MIN:
+                    heights = static_map_np[idx, 2] + LIDAR_INITIAL_FLOOR_HEIGHT
+                    heights = heights[heights <= Z_MAX]
+                    if len(heights) > 0:
+                        height = np.mean(heights)
                         Z[j, i] = height
 
         # Save the heightmap as a .tif file
