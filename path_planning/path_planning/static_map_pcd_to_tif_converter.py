@@ -78,7 +78,10 @@ class StaticMapPcdToTifConverter:
         ax.set_zlabel("Height [m]")
         plt.show()
 
-        o3d.visualization.draw_geometries([self.static_map_pcd])
+        mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=0.6, origin=[0, 0, 0]
+        )
+        o3d.visualization.draw_geometries([self.static_map_pcd, mesh_frame])
 
 
 if __name__ == "__main__":
