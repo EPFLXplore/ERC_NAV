@@ -31,7 +31,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'talker = imu_pub.publish_sensor:main',
+            'talker = src.publish_sensor:main',
         ],
     },
 )

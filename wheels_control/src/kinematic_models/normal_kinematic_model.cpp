@@ -31,7 +31,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 alpha_ext = 0.0;
     _Float64 alpha_int = 0.0;
 
-    _Float64 conversion_speed = 3600; // for 1m.s
+    _Float64 conversion_speed = 1800;//3600; // for 1m.s
     _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI);
 
     

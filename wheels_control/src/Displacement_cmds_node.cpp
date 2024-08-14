@@ -253,7 +253,7 @@ class DisplacementCmds : public rclcpp::Node
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
-      RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]); 
+     // RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]); 
                         
       bool change_state = msg->buttons[8];
       bool lateral = (msg->buttons[3] || msg->buttons[4]);

@@ -113,7 +113,7 @@ class GamepadInterface : public rclcpp::Node
       else
         v_x = -msg->axes[2];
 
-      RCLCPP_INFO(this->get_logger(), "RECEIVED JOY");
+     // RCLCPP_INFO(this->get_logger(), "RECEIVED JOY");
 
       // if (r_z != 0)
       //   r_z = r_z * 2 -1; // to be between -1 and 1
