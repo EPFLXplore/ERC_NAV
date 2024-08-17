@@ -95,13 +95,11 @@ class DisplacementCmds : public rclcpp::Node
       sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
         "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
-      
       sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_status", 1, std::bind(&DisplacementCmds::callback_abort, this, std::placeholders::_1));
 
       sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
-
 
       sub_kinematic_state = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_kinematic", 1, std::bind(&DisplacementCmds::callback_mode_kinematic, this, std::placeholders::_1));
@@ -294,7 +292,6 @@ class DisplacementCmds : public rclcpp::Node
     RoverBasicKinematicModel basicKinematicModel;
     RoverNormalKinematicModel normalKinematicModel;
     RoverLateralKinematicModel lateralKinematicModel;
-    //RoverSlowNormalKinematicModel slownormalKinematicModel;
     
     rclcpp::Publisher<custom_msg::msg::Motorcmds>::SharedPtr pub_kinematic;         
     size_t count_;

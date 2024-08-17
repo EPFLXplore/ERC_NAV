@@ -96,7 +96,9 @@ class MinimalPublisher(Node):
                     # Set orientation
                     imu_msg.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
 
-                imu_msg.orientation_covariance = [0.0] * 9
+                imu_msg.orientation_covariance = [-1., 0., 0.,
+                                                    0., 0. ,0.,
+                                                     0., 0. ,0.]
 
 
                 self.publisher_.publish(imu_msg)
