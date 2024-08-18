@@ -33,6 +33,8 @@ setup(
         'console_scripts': [
             'imu_node = src.publish_sensor:main',
             'av_imu_node = src.av_imu_node:main',
+            'old_imu_node = src.old_publish_sensor:main',
+
 
         ],
     },

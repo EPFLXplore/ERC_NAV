@@ -35,17 +35,14 @@ class MinimalPublisher(Node):
         imu_msg = Imu()
         header  = Header(stamp = self.get_clock().now().to_msg(), frame_id = "av_imu")
         orientation_quat = Quaternion()
-        
+
         if(msg_raw[0].lower() == b'imu'):
-            #accelerometer
             self.acc_x = float(msg_raw[1])
             self.acc_y = float(msg_raw[2])
             self.acc_z = float(msg_raw[3])
-            #gyro
             self.pitch = float(msg_raw[4])
             self.yaw = float(msg_raw[5])
             self.roll = float(msg_raw[6])
-            #magnetometer
             self.mag_x = float(msg_raw[7])
             self.mag_y = float(msg_raw[8])
             self.mag_z = float(msg_raw[9]) 
@@ -100,6 +97,7 @@ class MinimalPublisher(Node):
         imu_msg.linear_acceleration = linear_acc
         imu_msg.linear_acceleration_covariance = np.zeros(9, dtype=np.float64)
         
+
         self.publisher_.publish(imu_msg)
         self.i += 1
 

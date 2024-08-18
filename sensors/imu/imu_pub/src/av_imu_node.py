@@ -50,11 +50,9 @@ class ImuPublisher(Node):
                     gyro_data = line[2].split('\t')[0].split()
                     quat_data = line[3].split()
 
-                    self.get_logger().info(f"acc:{float(acc_data[0].strip('['))}")
-                    self.get_logger().info(f"gyro:{gyro_data}")
-                    self.get_logger().info(f"quat:{quat_data}")
-
-
+                    # self.get_logger().info(f"acc:{float(acc_data[0].strip('['))}")
+                    # self.get_logger().info(f"gyro:{gyro_data}")
+                    # self.get_logger().info(f"quat:{quat_data}")
 
                     with self.lock:
                         self.last_acc = Vector3(x=float(acc_data[0].strip('[')), y=float(acc_data[1]), z=float(acc_data[2].strip(']')))
