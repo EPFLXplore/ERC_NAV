@@ -16,6 +16,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
+    ros-${ROS_DISTRO}-foxglove-bridge \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -29,6 +30,9 @@ RUN apt-get install -y --no-install-recommends \
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
 RUN /etc/init.d/udev restart
+
+# Add Lidar Host
+RUN echo "169.254.55.220  os-122140001125.local" >> /etc/hosts
 
 USER $USERNAME
 
