@@ -80,7 +80,6 @@ add_executable(NAV_displacement_cmds
   src/Displacement_cmds_node.cpp
   src/kinematic_models/basic_kinematic_model.cpp
   src/kinematic_models/normal_kinematic_model.cpp
-  src/kinematic_models/normal_kinematic_model_slow.cpp
   src/kinematic_models/lateral_kinematic_model.cpp
 
 )

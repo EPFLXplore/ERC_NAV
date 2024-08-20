@@ -58,6 +58,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_displacement_cmds",
         name="NAV_displacement_cmds",
+        parameters=[{"motor_cmds": motor_cmds}],
     )
 
     motor_cmds_node = launch_ros.actions.Node(

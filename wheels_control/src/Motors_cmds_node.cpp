@@ -90,7 +90,7 @@ class MotorCmds : public rclcpp::Node
         int i = 0;
         bool homing;
 
-        // this->declare_parameter("homing");
+        this->declare_parameter("homing", true);
 
         if (this->get_parameter("homing", homing)) {
             RCLCPP_INFO(this->get_logger(), "Got homing_param: %s", homing ? "true" : "false");
