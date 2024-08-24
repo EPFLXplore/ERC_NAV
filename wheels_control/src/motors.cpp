@@ -282,22 +282,18 @@ bool NAV_Motor::fault_state()
     VCS_GetFaultState(gateway, id, &fault, &error_code);
     return fault;
 }
+
+bool NAV_Motor::fault_state(unsigned int *error_code)
+{
+    int fault = false;
+    VCS_GetFaultState(gateway, id, &fault, error_code);
+    return fault;
+}
+
 bool NAV_Motor::calibrated()
 {
     return is_calibrated;
 }
-// bool NAV_Motor::set_position_ref(long pos) {
-//     CONNECTION_CHECK;
-
-//     unsigned int    error_code  = 0;
-//     if ((op_mode != OMD_POSITION_MODE) &&
-//         !this->set_operational_mode(OMD_POSITION_MODE))
-//         return false;
-
-//     VCS_SetPositionMust(gateway, id, pos + pos_ref, &error_code);
-//     print_VCS_error(error_code, __FUNCTION__);
-//     return !error_code;
-// }
 
 bool NAV_Motor::set_position_ref(long pos)
 {
