@@ -24,7 +24,8 @@ RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /et
 RUN /etc/init.d/udev restart
 
 # Add Lidar Host
-RUN echo "169.254.55.220  os-122140001125.local" >> /etc/hosts
+# RUN echo "169.254.55.220  os-122140001125.local" >> /etc/hosts
+# Can be replaced with the --add-host argument https://docs.docker.com/reference/cli/docker/container/run/#add-host
 
 USER $USERNAME
 
