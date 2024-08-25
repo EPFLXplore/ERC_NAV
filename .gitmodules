@@ -7,3 +7,6 @@
 [submodule "xplore_description"]
 	path = xplore_description
 	url = git@github.com:EPFLXplore/ERC_DESCRIPTION.git
+[submodule "custom_msg"]
+	path = custom_msg
+	url = git@github.com:EPFLXplore/ERC_SE_CustomMessages.git
