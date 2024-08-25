@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavFeedback.msg"
   "msg/Wheelstatus.msg"
   "msg/Statussteering.msg"
+  "msg/Motorstatus.msg"
 )
 
 if(BUILD_TESTING)

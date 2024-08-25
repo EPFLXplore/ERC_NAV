@@ -144,7 +144,7 @@
 
   <link name="ouster/imu" />
 
-  <link name="ouster/lidar" />
+  <link name="lidar_link" />
 
   <!-- 9-axis IMU -->
 
@@ -197,7 +197,7 @@
     <child link="leg_rear_left"/>
     <origin xyz="0 0.25 0" rpy="0 0 0"/>
   </joint>
-
+  <!-- oak_right_camera_optical_frame -->
   <!-- <joint name="chassis_to_plate_rear_joint" type="fixed">
     <parent link="chassis_link"/>
     <child link="plate_rear"/>
@@ -266,7 +266,7 @@
 
   <joint name="os_sensor_lidar_link_joint" type="fixed">
     <parent link="ouster"/>
-    <child link="ouster/lidar"/>
+    <child link="lidar_link"/>
     <origin xyz="0.0 0.0 0.03618" rpy="0.0 0.0 0.0"/> 
     <!-- <origin xyz="0.0 0.0 0.03618" rpy="0 0 3.1415926"/>  -->
   </joint>

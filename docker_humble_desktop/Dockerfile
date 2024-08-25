@@ -11,11 +11,17 @@ RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-navigation2 \
     ros-${ROS_DISTRO}-nav2-bringup \
+    ros-${ROS_DISTRO}-robot-localization \
     ros-${ROS_DISTRO}-slam-toolbox \
     ros-${ROS_DISTRO}-test-msgs \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
+    ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-ros2-control \
+    ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-gazebo-ros2-control \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -24,7 +30,9 @@ RUN apt-get install -y --no-install-recommends \
     iproute2 \
     dnsmasq \
     libgtsam-dev \
-    libgtsam-unstable-dev
+    libgtsam-unstable-dev 
+
+# RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /home/${USERNAME}/.bashrc
 
 RUN apt-get install libtins-dev -y
 RUN apt install net-tools -y
@@ -68,6 +76,10 @@ RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
+RUN pip install open3d --no-cache-dir
+# Fix numpy version
+RUN pip uninstall numpy -y
+RUN pip install numpy==1.22.4 --no-cache-dir
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
