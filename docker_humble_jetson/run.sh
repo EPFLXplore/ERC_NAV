@@ -36,8 +36,6 @@ USERNAME=xplore
 docker run -it \
     --name nav_humble_jetson \
     --rm \
-    --runtime=nvidia \
-    --gpus all \
     --privileged \
     --net=host \
     -e DISPLAY=unix$DISPLAY \
@@ -49,6 +47,6 @@ docker run -it \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_jetson_home_volume:/home/xplore \
-    -add-host=os-122140001125.local:169.254.55.220 \
+    --add-host=os-122140001125.local:169.254.55.220 \
     ghcr.io/epflxplore/nav:humble-jetson \
     /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"
