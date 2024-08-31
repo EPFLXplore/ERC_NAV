@@ -65,7 +65,7 @@ class ImuPublisher(Node):
 
     def timer_callback(self):
         # start_time = time.time()
-        header  = Header(stamp = self.get_clock().now().to_msg(), frame_id = "av_imu")
+        header  = Header(stamp = self.get_clock().now().to_msg(), frame_id = "lidar_link")
         self.imu_msg.header = header
 
         with self.lock:

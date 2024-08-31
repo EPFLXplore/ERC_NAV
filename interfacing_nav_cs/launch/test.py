@@ -1,0 +1,1 @@
+ros2 action send_goal /forwarded_action interfacing_nav_cs/action/ForwardAction "{action_goal: 'Start task'}" --ros-args --remap /forwarded_action/send_goal:=/original_action/send_goal --remap /forwarded_action/feedback:=/original_action/feedback --remap /forwarded_action/get_result:=/original_action/get_result

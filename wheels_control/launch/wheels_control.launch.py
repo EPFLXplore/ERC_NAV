@@ -21,7 +21,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use motor commands",
     )
 
-    default_homing = "true"
+    default_homing = "false"
     homing_arg = DeclareLaunchArgument(
         "homing",
         default_value=default_homing,

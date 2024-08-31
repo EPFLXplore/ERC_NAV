@@ -25,7 +25,6 @@ class MinimalPublisher(Node):
 
     def __init__(self):
         super().__init__('minimal_publisher')
-
        
         self.serial_port = serial.Serial('/dev/ttyACM0', 115200, timeout=1)
         self.serial_port.flush()
@@ -46,7 +45,11 @@ class MinimalPublisher(Node):
         self.last_acc = Vector3(x=0.0, y=0.0, z=0.0)
         self.last_gyro = Vector3(x=0.0, y=0.0, z=0.0)
         self.last_quat = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-
+        
+        self.lock = threading.Lock()
+        self.read_thread = threading.Thread(target=self.serial_reading_task)
+        self.read_thread.daemon = True  # Daemonize the thread so it exits when the main program exits
+        self.read_thread.start()
 
     def parse_data(self, data):
         parts = data.strip().split(', ')
@@ -58,69 +61,56 @@ class MinimalPublisher(Node):
         euler = list(map(float, parts[6:9]))
 
         return {'acc': acc, 'gyro': gyro, 'euler': euler}
-         
+        
 
+    def serial_reading_task(self):
+        """Thread function to continuously read data from the serial port."""
+        while rclpy.ok():
 
+            # Read the IMU data
+            if  self.serial_port.in_waiting > 0:
+                line = self.serial_port.readline().decode('utf-8').strip()
 
+                try:
+                    data = self.parse_data(line)
+                    
+                    # Accelerometer
+                    acc_x = data['acc'][0]
+                    acc_y = data['acc'][1]
+                    acc_z = data['acc'][2]
+                    # Gryoscope
+                    gyro_x = data['gyro'][0]
+                    gyro_y = data['gyro'][1]
+                    gyro_z = data['gyro'][2]
+                    # Orientation (euler)
+                    roll = data['euler'][0] * DEG_TO_RAD
+                    pitch = data['euler'][1] * DEG_TO_RAD
+                    yaw = data['euler'][2] * DEG_TO_RAD
 
-    def timer_callback(self):
-        # start_time= time.time()
-        # Initialize message
-        imu_msg = Imu()
-        header  = Header(stamp = self.get_clock().now().to_msg(), frame_id = "lidar_link")
-        imu_msg.header = header
-
-
-        # line = []
-
-        # while True:
-        #     if self.serial_port.in_waiting > 0:
-        #         line = self.serial_port.read(self.serial_port.in_waiting)
-        #         if b'\n' in line:
-        #             line = line.decode('utf-8').strip()
-        #             self.get_logger().info(f"Line: {line}")
-        #             break
-        # # Read the IMU data
-        if  self.serial_port.in_waiting > 0:
-            line = self.serial_port.readline()
-            line= line.decode('utf-8').strip()
-            # self.get_logger().info(f"Raw data : {line}")
-
-            try:
-                data = self.parse_data(line)
-                
-                # Accelerometer
-                acc_x = data['acc'][0]
-                acc_y = data['acc'][1]
-                acc_z = data['acc'][2]
-                # Gryoscope
-                gyro_x = data['gyro'][0]
-                gyro_y = data['gyro'][1]
-                gyro_z = data['gyro'][2]
-                # Orientation (euler)
-                roll = data['euler'][0] * DEG_TO_RAD
-                pitch = data['euler'][1] * DEG_TO_RAD
-                yaw = data['euler'][2] * DEG_TO_RAD
-
-                quat = get_quaternion_from_euler(roll, pitch, yaw)
-
-                imu_msg.linear_acceleration = Vector3(x=acc_x, y=acc_y, z=acc_z)
-                imu_msg.angular_velocity = Vector3(x=gyro_x, y=gyro_y, z=gyro_z)
-                imu_msg.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
-
-
-                self.publisher_.publish(imu_msg)
-                self.i += 1
-
-            except (IndexError, ValueError):
+                    quat = get_quaternion_from_euler(roll, pitch, yaw)
+    
+                    with self.lock:
+                        self.last_acc = Vector3(x=acc_x, y=acc_y, z=acc_z)
+                        self.last_gyro = Vector3(x=gyro_x, y=gyro_y, z=gyro_z)
+                        self.last_quat = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+                    
+                except (IndexError, ValueError):
                     self.get_logger().warn("Failed to parse IMU data.")
                     return 
-            
-            # end_time= time.time()
-            # self.get_logger().info(f"Read line: {end_time_1 - start_time} seconds")
-            # self.get_logger().info(f"decode and strip: {end_time_2 - end_time_1} seconds")
+                
 
+    def timer_callback(self):
+        # start_time = time.time()
+        header  = Header(stamp = self.get_clock().now().to_msg(), frame_id = "lidar_link")
+        self.imu_msg.header = header
 
+        with self.lock:
+            self.imu_msg.linear_acceleration = self.last_acc
+            self.imu_msg.angular_velocity = self.last_gyro
+            self.imu_msg.orientation = self.last_quat
+
+        self.publisher_.publish(self.imu_msg)
+        self.i += 1
 
 
 

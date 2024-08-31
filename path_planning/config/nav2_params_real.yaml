@@ -1,8 +1,3 @@
-amcl:
-  ros__parameters:
-    use_sim_time: False
-    tf_broadcast: False
-
 # Generate and publish the global costmap with values between 0 and 255, where 0 is free space, 254 is
 # lethal space, and 255 is unknown space. This costmap is computed from all the published occupancy grids that
 # have values between 0 and 100.
@@ -13,7 +8,8 @@ global_costmap:
       ## Robot parameters
       global_frame: map
       robot_base_frame: base_link
-      robot_radius: 0.80
+      # robot_radius: 0.80
+      footprint: "[ [-0.7, 0.6], [0.7, 0.6], [0.7, -0.6], [-0.7, -0.6] ]"   
       # footprint_padding: 0.01
       # footprint: []
       # observation_sources: []
@@ -22,7 +18,7 @@ global_costmap:
       width: 50
       origin_x: -25.0
       origin_y: -25.0
-      resolution: 0.1953125
+      # resolution: 0.1953125
       track_unknown_space: True
       rolling_window: False
       ## Cost parameters
@@ -35,7 +31,7 @@ global_costmap:
       trinary_costmap: False
       use_maximum: False
       ## Topic parameters
-      map_topic: /map
+      # map_topic: /lio_sam/map
       update_frequency: 1.0
       publish_frequency: 1.0
       use_sim_time: False
@@ -43,24 +39,94 @@ global_costmap:
       transform_tolerance: 0.3
       initial_transform_timeout: 60
       ## Layers parameters
-      plugins: ["static_layer", "inflation_layer"]
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        enabled: True
-        footprint_clearing_enabled: False
-        map_topic: /map
-        subscribe_to_updates: True
-        map_subscribe_transient_local: True
-        transform_tolerance: 0.0
+      plugins: [ "inflation_layer", "obstacle_layer"]
+      # static_layer:
+      #   plugin: "nav2_costmap_2d::StaticLayer"
+      #   enabled: True
+      #   footprint_clearing_enabled: False
+      #   map_topic: /lio_sam/map
+      #   subscribe_to_updates: True
+      #   map_subscribe_transient_local: True
+      #   transform_tolerance: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
-        cost_scaling_factor: 0.0
-        inflation_radius: 0.70
+        cost_scaling_factor: 1.0
+        inflation_radius: 0.7
         inflate_unknown: False
         inflate_around_unknown: False
       ## Filters parameters
       # filter: []
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources:  lidar_filtered_pcd  
+        lidar_filtered_pcd:
+          topic: /lidar_filter/filtered_points
+          sensor_frame: lidar_link
+          data_type: "PointCloud2"
+          max_obstacle_height: 4.0
+          min_obstacle_height: -2.0
+          obstacle_max_range: 30.0
+          obstacle_min_range: 0.0
+          clearing: True
+          marking: True
+
+      always_send_full_costmap: True
+
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0 
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: False
+      rolling_window: True
+      width: 6
+      height: 6
+      resolution: 0.1
+      # robot_radius: 0.05 # 1.0
+      footprint: "[ [-0.7, 0.6], [0.7, 0.6], [0.7, -0.6], [-0.7, -0.6] ]"   
+      plugins: ["obstacle_layer","inflation_layer"]
+      lethal_cost_threshold: 70
+
+     
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        combination_method: 1
+        inf_is_valid: False
+        observation_sources:   pcd 
+
+        pcd:
+          topic: /lidar_filter/filtered_points
+          sensor_frame: lidar_link
+          data_type: "PointCloud2"
+          max_obstacle_height: 4.0
+          min_obstacle_height: -2.0
+          # raytrace_min_range: 0.0
+          # raytrace_max_range: 11.0
+          # obstacle_max_range: 10.0 #100.0
+          obstacle_min_range: 0.0
+          # raytrace_range: 11.0
+          obstacle_range: 30.0
+          clearing: False
+          marking: True
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 1.0
+        inflation_radius:  0.5
+
+      always_send_full_costmap: True
+  local_costmap_client:
+    ros__parameters:
+      use_sim_time: False
+  local_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: False
 
 # local_costmap:
 #   local_costmap:
@@ -76,29 +142,30 @@ global_costmap:
 #       robot_radius: 0.80
 
 # Generate and publish the static map occupancy grid. This occupancy grid is used to generate the global costmap.
-map_server:
-  ros__parameters:
-    use_sim_time: False
-    topic_name: "map"
-    frame_id: "map"
-    yaml_filename: "map_server_params.yaml"
+# map_server:
+#   ros__parameters:
+#     use_sim_time: False
+#     topic_name: "map"
+#     frame_id: "map"
+#     yaml_filename: "map_server_params.yaml"
 
 # Save the map to a file if neededm when the map is received from the map server.
-map_saver:
-  ros__parameters:
-    use_sim_time: False
-    save_map_timeout: 5.0
-    free_thresh_default: 0.25
-    occupied_thresh_default: 0.65
-    map_subscribe_transient_local: True
+# map_saver:
+#   ros__parameters:
+#     use_sim_time: False
+#     save_map_timeout: 5.0
+#     free_thresh_default: 0.25
+#     occupied_thresh_default: 0.65
+#     map_subscribe_transient_local: True
 
 bt_navigator:
   ros__parameters:
     use_sim_time: False
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /odom
+    odom_topic: /lio_sam/mapping/odometry
     bt_loop_duration: 10
+    bt_ticker_tick_rate: 10.0 
     default_server_timeout: 20
     enable_groot_monitoring: True
     groot_zmq_publisher_port: 1666
@@ -139,6 +206,7 @@ bt_navigator:
 bt_navigator_rclcpp_node:
   ros__parameters:
     use_sim_time: False
+    hz: 1.0
 
 planner_server:
   ros__parameters:
@@ -164,25 +232,25 @@ controller_server:
     ## Server parameters
     use_sim_time: False
     controller_frequency: 1.0
-    odom_topic: "odom"
+    odom_topic: "/lio_sam/mapping/odometry"
     # Min velocities to ignore
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker"]
+    goal_checker_plugin: "goal_checker"
     ## Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
       movement_time_allowance: 10.0
     ## Goal checker parameters
-    general_goal_checker:
-      stateful: True
+    goal_checker:
+      # stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.5
-      yaw_goal_tolerance: 0.5
+      # xy_goal_tolerance: 0.5
+      # yaw_goal_tolerance: 0.5
     ## Planner parameters
     controller_plugins: ["FollowPath"]
     FollowPath:
@@ -194,7 +262,7 @@ controller_server:
       min_vel_y: 0.0
       max_vel_y: 0.0
       min_speed_theta: -1.0
-      max_vel_theta: 1.0
+      max_vel_theta: 0.5
       min_speed_xy: 0.0
       max_speed_xy: 0.3
       # Accelerations

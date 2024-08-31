@@ -48,7 +48,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     return [
         # Commands
         start_nav2_cmd,
-        start_wheels_control_cmd,
+        # start_wheels_control_cmd,
         # Nodes
         # TODO
     ]

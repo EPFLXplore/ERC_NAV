@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<robot name="cameras" xmlns:xacro="http://ros.org/wiki/xacro">
+
+    <link name="base_link"></link>
+
+    <!-- OakD on the left-->
+    <joint name="oak_camera_joint" type="fixed">
+        <origin xyz="0.0 0.1 0.0" rpy="0 0 0"/> 
+        <parent link="base_link"/>
+        <child link="oak-d-base-frame"/>
+    </joint>
+
+
+    <link name="oak-d-base-frame"></link>
+
+    <!-- Intel on the right-->
+    <joint name="intel_camera_joint" type="fixed">
+    <origin xyz="0.0 -0.1 0.0" rpy="0 0 0"/> 
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    </joint>
+
+    <link name="camera_link"></link>
+
+
+
+</robot>

@@ -17,6 +17,8 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
+    ros-${ROS_DISTRO}-librealsense2*\
+    ros-${ROS_DISTRO}-realsense2-*\
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
@@ -32,12 +34,6 @@ RUN apt-get install -y --no-install-recommends \
     libgtsam-dev \
     libgtsam-unstable-dev 
 
-# Install rosidl to fix issue with compilation of custom actions (error rosidl_generator)
-WORKDIR /home/$USERNAME/rosidl_ws/src
-WORKDIR /home/$USERNAME/rosidl_ws
-RUN git clone https://github.com/ros2/rosidl.git --branch 3.1.5 ./src/rosidl
-RUN rosdep update && rosdep install -y --from-paths ./src --ignore-src
-RUN colcon build --symlink-install
 
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
@@ -65,6 +61,8 @@ RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /ho
 
 # Install additional Python packages
 RUN pip install opencv-python --no-cache-dir
+# For Aruco
+RUN pip install opencv-contrib-python==4.6.0.66 
 RUN pip install depthai --no-cache-dir
 RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir

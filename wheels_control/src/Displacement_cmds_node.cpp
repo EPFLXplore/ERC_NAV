@@ -147,7 +147,8 @@ private:
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     float r_z = msg->angular.z;
-    float v_x = 3 * msg->linear.x;
+    // float v_x = 3 * msg->linear.x;
+    float v_x = msg->linear.x;
     float v_y = msg->linear.y;
 
     // RCLCPP_INFO(get_logger(), "STATE KINEMATIC callback cmdvel '%s'",  kinematic_state.c_str());

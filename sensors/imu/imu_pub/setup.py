@@ -32,8 +32,9 @@ setup(
     entry_points={
         'console_scripts': [
             'imu_node = src.publish_sensor:main',
+            'new_imu_node = src.publish_sensor_2:main',
+            'fast_imu_node = src.publish_sensor_high_freq:main',
             'av_imu_node = src.av_imu_node:main',
-            'old_imu_node = src.old_publish_sensor:main',
 
 
         ],

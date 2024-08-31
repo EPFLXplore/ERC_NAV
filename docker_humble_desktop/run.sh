@@ -49,5 +49,6 @@ docker run -it \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_desktop_home_volume:/home/xplore \
+    --add-host=os-122140001125.local:169.254.55.220 \
     ghcr.io/epflxplore/nav:humble-desktop \
     /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"

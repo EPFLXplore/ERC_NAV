@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(ptcl_fusion)
+project(ros2_aruco_interfaces)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -15,40 +15,22 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-
-
-
-
+# find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(pcl_conversions REQUIRED)
-
-# add_executable(ptcl_concat src/ptcl_concat.cpp)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 
-include_directories(
-  include
-  ${PCL_CONVERSIONS_INCLUDE_DIRS}
-  ${PCL_INCLUDE_DIRS}
-  
-)
+find_package(rosidl_default_generators REQUIRED)
+# uncomment the following section in order to fill in
+# further dependencies manually.
+# find_package(<dependency> REQUIRED)
 
-# target_link_libraries(ptcl_concat
-#   ${PCL_CONVERSIONS_LIBRARIES}
-#   ${PCL_LIBRARIES}
-# )
-
-# ament_target_dependencies(ptcl_concat
-#   pcl_conversions
-#   rclcpp
-#   sensor_msgs
-#   tf2
-#   tf2_ros
-# )
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ArucoMarkers.msg"
+  DEPENDENCIES geometry_msgs
+  DEPENDENCIES std_msgs
+ )
 
 
 if(BUILD_TESTING)
@@ -61,10 +43,5 @@ if(BUILD_TESTING)
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
-
-# install(TARGETS
-  # ptcl_concat
-  # DESTINATION lib/${PROJECT_NAME})
-ament_export_include_directories(include)
 
 ament_package()
