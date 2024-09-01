@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 MAX_SLOPE_ANGLE = 40  # [deg]
-METERS_PER_PIXEL = 0.013  # [m/pixel]
+METERS_PER_PIXEL = 0.013 * 15  # [m/pixel]
+HEIGHT_FACTOR = 5.0e-5  # [m]
 
 
 class StaticCostMapCreator:
@@ -29,9 +30,9 @@ class StaticCostMapCreator:
         )
 
         self.static_map = cv.imread(static_map_path, cv.IMREAD_UNCHANGED)
+        self.static_map = cv.resize(self.static_map, (0, 0), fx=1 / 15, fy=1 / 15)
 
-        height_factor = 0.01
-        self.static_map = self.static_map * height_factor
+        self.static_map = self.static_map * HEIGHT_FACTOR
 
     def plot_all_maps(self):
         H, W = self.static_map.shape
@@ -139,7 +140,9 @@ class StaticCostMapCreator:
         static_costmap = np.zeros_like(slope_angle)
         static_costmap[slope_angle >= MAX_SLOPE_ANGLE] = 0
         static_costmap[slope_angle < MAX_SLOPE_ANGLE] = (
-            255 * (MAX_SLOPE_ANGLE - slope_angle[slope_angle < MAX_SLOPE_ANGLE]) / MAX_SLOPE_ANGLE
+            255
+            * (MAX_SLOPE_ANGLE - slope_angle[slope_angle < MAX_SLOPE_ANGLE])
+            / MAX_SLOPE_ANGLE
         )
         static_costmap = static_costmap.astype(np.uint8)
 

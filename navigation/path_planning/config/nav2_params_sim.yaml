@@ -18,11 +18,11 @@ global_costmap:
       # footprint: []
       # observation_sources: []
       ## Map parameters
-      height: 50
-      width: 50
-      origin_x: -25.0
-      origin_y: -25.0
-      resolution: 0.1953125
+      height: 144
+      width: 256
+      origin_x: -9.5
+      origin_y: -17.5
+      resolution: 0.195
       track_unknown_space: True
       rolling_window: False
       ## Cost parameters
@@ -56,7 +56,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
         cost_scaling_factor: 0.0
-        inflation_radius: 0.70
+        inflation_radius: 0.2
         inflate_unknown: False
         inflate_around_unknown: False
       ## Filters parameters
