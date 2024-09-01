@@ -27,7 +27,7 @@ class MinimalPublisher(Node):
         super().__init__('minimal_publisher')
 
        
-        self.serial_port = serial.Serial('/dev/ttyACM0', 115200, timeout=1)
+        self.serial_port = serial.Serial('/dev/ttyACM0', 115200, timeout=0.0)
         self.serial_port.flush()
 
         self.publisher_ = self.create_publisher(Imu, 'Imu', 10)
@@ -59,9 +59,6 @@ class MinimalPublisher(Node):
 
         return {'acc': acc, 'gyro': gyro, 'euler': euler}
          
-
-
-
 
     def timer_callback(self):
         # start_time= time.time()

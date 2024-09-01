@@ -1,0 +1,9 @@
+<class_libraries>
+    <library path="rotation_controller">
+        <class type="rotation_controller::RotationController" base_class_type="nav2_core::Controller">
+            <description>
+                rotation_controller
+            </description>
+        </class>
+    </library>
+</class_libraries>

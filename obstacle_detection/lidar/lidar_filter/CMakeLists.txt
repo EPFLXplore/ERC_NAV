@@ -21,6 +21,7 @@ find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
+find_package(pcl_conversions REQUIRED)
 # find_package(stereo_msgs REQUIRED)
 
 # find_package(std_msgs REQUIRED)
