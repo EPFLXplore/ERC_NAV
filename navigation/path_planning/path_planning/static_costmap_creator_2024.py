@@ -8,7 +8,7 @@ import numpy as np
 
 MAX_SLOPE_ANGLE = 40  # [deg]
 METERS_PER_PIXEL = 0.013 * 15  # [m/pixel]
-HEIGHT_FACTOR = 5.0e-5  # [m]
+HEIGHT_FACTOR = 3.5e-5  # [m]
 
 
 class StaticCostMapCreator:
@@ -29,7 +29,7 @@ class StaticCostMapCreator:
             "static_map_2024.tif",
         )
 
-        self.static_map = cv.imread(static_map_path, cv.IMREAD_UNCHANGED)
+        self.static_map = cv.imread(static_map_path, cv.IMREAD_UNCHANGED).astype(np.float64)
         self.static_map = cv.resize(self.static_map, (0, 0), fx=1 / 15, fy=1 / 15)
 
         self.static_map = self.static_map * HEIGHT_FACTOR

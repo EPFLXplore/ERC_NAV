@@ -56,7 +56,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
         cost_scaling_factor: 0.0
-        inflation_radius: 0.2
+        inflation_radius: 0.20
         inflate_unknown: False
         inflate_around_unknown: False
       ## Filters parameters
