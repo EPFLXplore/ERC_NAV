@@ -28,13 +28,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='map_to_base_link',
-            arguments=['0', '0', '0', '0', '0', '0', 'map', 'base_link'],
-            output="screen"
-        ),
 
         Node(
             package='ros2_aruco',
@@ -71,14 +64,14 @@ def generate_launch_description():
             condition=IfCondition(rviz)
         ),
 
-        Node(
-            package='robot_state_publisher',
-            executable='robot_state_publisher',
-            name='robot_state_publisher',
-            output='screen',
-            parameters=[{'robot_description': open(urdf_file_path).read()}],
-            condition=IfCondition(description)
-        ),
+        # Node(
+        #     package='robot_state_publisher',
+        #     executable='robot_state_publisher',
+        #     name='robot_state_publisher',
+        #     output='screen',
+        #     parameters=[{'robot_description': open(urdf_file_path).read()}],
+        #     condition=IfCondition(description)
+        # ),
 
     ])
 

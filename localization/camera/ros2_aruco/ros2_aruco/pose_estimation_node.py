@@ -1,10 +1,8 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Point
 from ros2_aruco_interfaces.msg import ArucoMarkers
-from geometry_msgs.msg import PoseWithCovarianceStamped
-from geometry_msgs.msg import PoseArray
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion, Point
+from nav_msgs.msg import Odometry
 import math
 from scipy.optimize import least_squares
 
@@ -41,32 +39,27 @@ class PoseEstimatorNode(Node):
         x = self.get_parameter('x').get_parameter_value().double_value 
         y = self.get_parameter('y').get_parameter_value().double_value 
 
+        self.x_estimate = 0.0
+        self.y_estimate = 0.0
 
         self.subscription = self.create_subscription(
             ArucoMarkers,
             '/aruco_markers',
             self.listener_callback,
             10)
-        self.publisher_ = self.create_publisher(PoseWithCovarianceStamped, 'aruco_rover_pose_estimate', 10)
+        self.publisher_ = self.create_publisher(Odometry, 'aruco_odom', 10)
         self.sim = sim
         self.subscription 
+
+        timer_period = 2.0  # seconds
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.count = 0.0
 
         # Initial guess for optimization
         if initial_pose == 'start':
             self.initial_estimate = np.array([0.0, 0.0])
         elif initial_pose == 'known':
             self.initial_estimate = np.array([x, y])
-        # TODO guess => initial estimate = aruco with closest distance
-        elif initial_pose == 'guess':
-            self.initial_estimate = np.array([0.0, 0.0])
-            # min_distance  = float('inf')
-            # closest_location = None
-            # for member in data:
-            #     # A new closest point!
-            #     if member['distance'] < min_distance:
-            #         min_distance = member['distance']
-            #         closest_location = member['location']
-            # initial_location = closest_location
         else: # by default
             self.initial_estimate = np.array([0.0, 0.0])
 
@@ -91,22 +84,35 @@ class PoseEstimatorNode(Node):
                 ]
             
         else: 
-            # slides
             self.landmark_poses=[(63., 21.33), 
                     (63., -2.37),
                     (63., -21.33)]
 
 
-            # DLL set up
-            # self.landmark_poses=[(1.66, 0),
-            #                     (3.06, -0.22),
-            #                     (2.64, -1.42),
-            #                     (2.53, -2.46)]
+    def timer_callback(self):
 
+        odom_msg = Odometry()
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        # odom_msg.pose.pose.position = Point(self.x_estimate, self.y_estimate, 0.0)
+        odom_msg.pose.pose.position = Point(x=self.count, y=self.count, z=0.0)
+        odom_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        odom_msg.pose.covariance = [0.0] * 36  
+
+        # Twist
+        odom_msg.child_frame_id = 'base_link'
+        odom_msg.twist.twist.linear.x = 0.0
+        odom_msg.twist.twist.linear.y = 0.0
+        odom_msg.twist.twist.linear.z = 0.0
+        odom_msg.twist.twist.angular.x = 0.0
+        odom_msg.twist.twist.angular.y = 0.0
+        odom_msg.twist.twist.angular.z = 0.0
+        odom_msg.twist.covariance = [0.0] * 36  
+
+        # Publish the message
+        self.publisher_.publish(odom_msg)
+        self.count += 0.1
 
         
-
-
     def listener_callback(self, msg):
         
         marker_ids = list(msg.marker_ids)
@@ -122,36 +128,14 @@ class PoseEstimatorNode(Node):
 
             distance_estimates = [np.linalg.norm([pose.position.x, pose.position.y]) for pose in msg.poses]
             landmarks_ordered = [self.landmark_poses[i] for i in marker_ids]
-            # self.get_logger().info('landmarks: %s' % landmarks_ordered )
-            # self.get_logger().info('estimate: %s' % distance_estimates )
 
-            # ArucoMarkers is already transformed in base_link frame, no transformation needed
             base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'lm', args=(landmarks_ordered, distance_estimates))
 
             self.initial_estimate = base_estimate.x
 
             # Only care about x and y
-            base_pose_msg.pose.pose.position.x = base_estimate.x[0] 
-            base_pose_msg.pose.pose.position.y = base_estimate.x[1]
-
-            base_pose_msg.pose.pose.position.z = 0.0
-            base_pose_msg.pose.pose.orientation.x = 0.0
-            base_pose_msg.pose.pose.orientation.y = 0.0
-            base_pose_msg.pose.pose.orientation.z = 0.0
-            base_pose_msg.pose.pose.orientation.w = 1.0
-
-            # TODO add covariance
-            covariance = np.zeros((6, 6))
-            covariance[0, 0] = 0.5  # Variance in x
-            covariance[1, 1] = 0.5  # Variance in y
-            
-            covariance[2, 2] = 0.1  # Variance in z
-            covariance[3, 3] = 0.1  # Variance in roll
-            covariance[4, 4] = 0.1  # Variance in pitch
-            covariance[5, 5] = 0.1  # Variance in yaw
-
-            base_pose_msg.pose.covariance = covariance.flatten().tolist()
-            self.publisher_.publish(base_pose_msg)
+            self.x_estimate = base_estimate.x[0] 
+            self.y_estimate = base_estimate.x[1]
 
             
         else:
