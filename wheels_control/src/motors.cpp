@@ -1,24 +1,21 @@
 /*
 pkg:    wheels_commands
 node:   NAV_motors_debugging_node
-topics: 
-        publish:    
-        subscribe:  
+topics:
+        publish:
+        subscribe:
 
-description:  
+description:
         variables:  MAX_STEER_VEL : set the speed of rotation in the controller
 
 
-        reduction:  
+        reduction:
                     Kerby: 2e(-16) for one tour
-                    Astra: 
+                    Astra:
 
 */
 
-
-
 #include "wheels_control/motors.hpp"
-
 
 // ---------- namespaces ----------
 
@@ -29,15 +26,15 @@ using namespace std;
 
 #define MAX_DRIVE_ACCEL 900   // [rpm/S] // default :   900
 #define MAX_DRIVE_DECEL 3000  // [rpm/s] // default :  3000
-#define MAX_STEER_VEL 20000    // [rpm]   // default : 10000
+#define MAX_STEER_VEL 20000   // [rpm]   // default : 10000
 #define MAX_STEER_ACCEL 10000 // [rpm/s] // default : 10000
 
 #ifndef ROSCPP_ROS_H
-#define CONNECTION_CHECK                                      \
-    if (!is_connected)                                        \
-    {                                                         \
+#define CONNECTION_CHECK                                                   \
+    if (!is_connected)                                                     \
+    {                                                                      \
         cerr << "[motors.cpp] Node " << id << " is not connected" << endl; \
-        return false;                                         \
+        return false;                                                      \
     }
 #else
 #define CONNECTION_CHECK                                        \
@@ -92,7 +89,7 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
     is_calibrated = false;
 
     VCS_GetMotorType(gateway, id, &motor_type, &error_code);
-    cout << "motors.cpp] motor id : "<< id << endl;
+    cout << "motors.cpp] motor id : " << id << endl;
     is_connected = (error_code) ? false : true; // SDO TIMEOUT  == 0x5040000
 
     if (is_connected)
@@ -104,7 +101,7 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
                                                                                                                                                     : "EC block motor"));
 #else
             cerr << "[motors.cpp] NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                            : "EC block motor")
+                                                                                                                                                         : "EC block motor")
                  << endl;
 #endif
             // throw 0;
@@ -113,14 +110,14 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
         {
 #ifdef ROSCPP_ROS_H
             ROS_DEBUG_STREAM("NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                                    : "EC block motor"));
+                                                                                                                                                     : "EC block motor"));
 #else
             cout << "[motors.cpp] NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                            : "EC block motor")
+                                                                                                                                                         : "EC block motor")
                  << endl;
 #endif
         }
-        if (homing && ( mode == OMD_PROFILE_POSITION_MODE))
+        if (homing && (mode == OMD_PROFILE_POSITION_MODE))
         {
             int pos;
             VCS_GetPositionIs(gateway, id, &pos, &error_code);
@@ -182,11 +179,13 @@ void NAV_Motor::disconnect()
     is_connected = false;
 }
 
-int NAV_Motor::get_encoder_pulse(){
+int NAV_Motor::get_encoder_pulse()
+{
     unsigned int encoder_pulse_nb;
     int InvertedPolarity;
     unsigned int ErrorCode;
-    VCS_GetIncEncoderParameter (gateway, id, &encoder_pulse_nb,&InvertedPolarity, &ErrorCode);
+    VCS_GetIncEncoderParameter(gateway, id, &encoder_pulse_nb, &InvertedPolarity, &ErrorCode);
+    print_VCS_error(ErrorCode, __FUNCTION__);
     return encoder_pulse_nb;
 }
 
@@ -222,8 +221,6 @@ bool NAV_Motor::set_output_state(bool output_active)
 
     return !error_code;
 }
-
-
 
 bool NAV_Motor::is_faulty(bool verbose)
 {
@@ -280,8 +277,17 @@ bool NAV_Motor::fault_state()
     unsigned int error_code = 0;
     int fault = false;
     VCS_GetFaultState(gateway, id, &fault, &error_code);
+    print_VCS_error(error_code, __FUNCTION__);
     return fault;
 }
+
+bool NAV_Motor::fault_state(unsigned int *error_code)
+{
+    int fault = false;
+    VCS_GetFaultState(gateway, id, &fault, error_code);
+    return fault;
+}
+
 bool NAV_Motor::calibrated()
 {
     return is_calibrated;
@@ -302,8 +308,8 @@ bool NAV_Motor::calibrated()
 bool NAV_Motor::set_position_ref(long pos)
 {
     CONNECTION_CHECK;
-    
-    unsigned int error_code = 0;    
+
+    unsigned int error_code = 0;
     if ((op_mode != OMD_PROFILE_POSITION_MODE) &&
         !this->set_operational_mode(OMD_PROFILE_POSITION_MODE))
         return false;
@@ -311,7 +317,6 @@ bool NAV_Motor::set_position_ref(long pos)
     VCS_MoveToPosition(gateway, id, pos, true, true, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return !error_code;
-    
 }
 
 void NAV_Motor::homing()
@@ -358,7 +363,6 @@ bool NAV_Motor::has_reached()
     return reached;
 }
 
-
 // bool NAV_Motor::fcity_ref(long vel) {
 //     CONNECTION_CHECK;
 
@@ -380,7 +384,7 @@ bool NAV_Motor::set_velocity_ref(long vel)
     if ((op_mode != OMD_VELOCITY_MODE) &&
         !this->set_operational_mode(OMD_PROFILE_VELOCITY_MODE))
         return false;
-    
+
     VCS_MoveWithVelocity(gateway, id, vel, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return !error_code;

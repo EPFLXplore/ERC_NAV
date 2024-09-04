@@ -17,6 +17,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -86,8 +87,8 @@ add_executable(NAV_displacement_cmds
 
 ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs) 
 
-add_executable(NAV_motor_cmds src/Motors_cmds_node.cpp src/motors.cpp)
-ament_target_dependencies(NAV_motor_cmds rclcpp custom_msg std_msgs)
+add_executable(NAV_motor_cmds src/Motors_cmds_node_lifecycle.cpp src/motors.cpp)
+ament_target_dependencies(NAV_motor_cmds rclcpp_lifecycle rclcpp custom_msg std_msgs)
 
 install(
   DIRECTORY include/
