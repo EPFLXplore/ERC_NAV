@@ -159,6 +159,7 @@ protected:
   bool path_updated_;
   bool rotation_active_;
   nav_msgs::msg::Path current_path_;
+  nav_msgs::msg::Path temp_path_;
   double forward_sampling_distance_, angular_dist_threshold_;
   double rotate_to_heading_angular_vel_, max_angular_accel_;
   double control_duration_, simulate_ahead_time_;

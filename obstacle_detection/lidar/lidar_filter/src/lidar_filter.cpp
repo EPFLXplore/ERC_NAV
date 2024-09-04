@@ -48,7 +48,7 @@ class LidarFilterNode : public rclcpp::Node
     bool sim;
     float voxel_leaf_size;
     int n_clusters;
-
+    
     protected:
 
     // Publisher
@@ -70,9 +70,10 @@ class LidarFilterNode : public rclcpp::Node
         this->declare_parameter("voxel_leaf_size", 0.05);
         this->declare_parameter("n_clusters", 50);
         this->declare_parameter("sim", false);
-
+        
         
         sim = this->get_parameter("sim").as_bool();
+
 
         auto profile = sim ? sim_profile : real_profile;
         auto qos = rclcpp::QoS(
@@ -110,9 +111,8 @@ class LidarFilterNode : public rclcpp::Node
         min_dist = this->get_parameter("min_distance").as_double();
         slope_threshold = this->get_parameter("slope_threshold").as_double();
         voxel_leaf_size = this->get_parameter("voxel_leaf_size").as_double();
-        voxel_leaf_size = this->get_parameter("voxel_leaf_size").as_double();
         n_clusters = this->get_parameter("n_clusters").as_int();
-
+        
 
 
         
@@ -167,6 +167,9 @@ class LidarFilterNode : public rclcpp::Node
         // pass.setFilterFieldName("z");
         // pass.setFilterLimits(0.0, 1.0);
         // pass.filter(*cloud_filtered);
+
+        
+
 
         sensor_msgs::msg::PointCloud2::SharedPtr output(new sensor_msgs::msg::PointCloud2);
 

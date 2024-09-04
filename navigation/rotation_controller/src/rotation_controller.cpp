@@ -16,8 +16,7 @@ namespace rotation_controller
 RotationController::RotationController()
 : lp_loader_("nav2_core", "nav2_core::Controller"),
   primary_controller_(nullptr),
-  path_updated_(false),
-  rotation_active_(false)
+  path_updated_(false)
 {
 }
 
@@ -90,7 +89,7 @@ void RotationController::activate()
   RCLCPP_INFO(
     logger_,
     "Activating controller: %s of type "
-    "rotation_controller::RotationController",
+    "nav2_rotation_shim_controller::RotationController",
     plugin_name_.c_str());
 
   primary_controller_->activate();
@@ -107,7 +106,7 @@ void RotationController::deactivate()
   RCLCPP_INFO(
     logger_,
     "Deactivating controller: %s of type "
-    "rotation_controller::RotationController",
+    "nav2_rotation_shim_controller::RotationController",
     plugin_name_.c_str());
 
   primary_controller_->deactivate();
@@ -120,7 +119,7 @@ void RotationController::cleanup()
   RCLCPP_INFO(
     logger_,
     "Cleaning up controller: %s of type "
-    "rotation_controller::RotationController",
+    "nav2_rotation_shim_controller::RotationController",
     plugin_name_.c_str());
 
   primary_controller_->cleanup();
@@ -161,27 +160,9 @@ geometry_msgs::msg::TwistStamped RotationController::computeVelocityCommands(
     } catch (const std::runtime_error & e) {
       RCLCPP_INFO(
         logger_,
-        "Rotation Controller was unable to find a goal point,"
+        "Rotation Shim Controller was unable to find a goal point,"
         " a rotational collision was detected, or TF failed to transform"
         " into base frame! what(): %s", e.what());
-    }
-  }
-
-  if (rotation_active_) {
-    double pose_yaw = tf2::getYaw(pose.pose.orientation);
-    double angular_distance_to_heading = angles::shortest_angular_distance(pose_yaw, initial_rotation_goal_yaw_);
-
-    if (fabs(angular_distance_to_heading) > angular_dist_threshold_) {
-      RCLCPP_DEBUG(
-        logger_,
-        "Rotation in progress, ignoring path updates until rotation is complete...");
-      return computeRotateToHeadingCommand(angular_distance_to_heading, pose, velocity);
-    } else {
-      RCLCPP_DEBUG(
-        logger_,
-        "Rotation complete, resuming path tracking...");
-      rotation_active_ = false;
-      path_updated_ = false;
     }
   }
 
@@ -199,8 +180,6 @@ geometry_msgs::msg::TwistStamped RotationController::computeVelocityCommands(
         RCLCPP_DEBUG(
           logger_,
           "Robot is not within the new path's rough heading, rotating to heading...");
-        initial_rotation_goal_yaw_ = tf2::getYaw(sampled_pt_base.orientation);
-        rotation_active_ = true;
         return computeRotateToHeadingCommand(angular_distance_to_heading, pose, velocity);
       } else {
         RCLCPP_DEBUG(
@@ -211,7 +190,7 @@ geometry_msgs::msg::TwistStamped RotationController::computeVelocityCommands(
     } catch (const std::runtime_error & e) {
       RCLCPP_DEBUG(
         logger_,
-        "Rotation Controller was unable to find a sampling point,"
+        "Rotation Shim Controller was unable to find a sampling point,"
         " a rotational collision was detected, or TF failed to transform"
         " into base frame! what(): %s", e.what());
       path_updated_ = false;
@@ -236,55 +215,104 @@ geometry_msgs::msg::PoseStamped RotationController::getSampledPathPt()
   for (unsigned int i = 1; i != current_path_.poses.size(); i++) {
     dx = current_path_.poses[i].pose.position.x - start.position.x;
     dy = current_path_.poses[i].pose.position.y - start.position.y;
-
-    if (hypot(dx, dy) > forward_sampling_distance_) {
+    if (hypot(dx, dy) >= forward_sampling_distance_) {
+      current_path_.poses[i].header.frame_id = current_path_.header.frame_id;
+      current_path_.poses[i].header.stamp = clock_->now();  // Get current time transformation
       return current_path_.poses[i];
     }
   }
 
-  // If all points are closer than required sampling distance,
-  // use last point
-  return current_path_.poses.back();
+  throw nav2_core::PlannerException(
+          std::string(
+            "Unable to find a sampling point at least %0.2f from the robot,"
+            "passing off to primary controller plugin.", forward_sampling_distance_));
 }
 
 geometry_msgs::msg::PoseStamped RotationController::getSampledPathGoal()
 {
   if (current_path_.poses.empty()) {
-    throw nav2_core::PlannerException("Path is too short to find a valid goal point.");
+    throw std::runtime_error("Path is empty - cannot find a goal point");
   }
 
-  return current_path_.poses.back();
+  auto goal = current_path_.poses.back();
+  goal.header.stamp = clock_->now();
+  return goal;
 }
 
-geometry_msgs::msg::Pose RotationController::transformPoseToBaseFrame(
-  const geometry_msgs::msg::PoseStamped & pt)
+geometry_msgs::msg::Pose
+RotationController::transformPoseToBaseFrame(const geometry_msgs::msg::PoseStamped & pt)
 {
-  geometry_msgs::msg::PoseStamped pt_tf;
-  nav2_util::transformPoseInTargetFrame(pt, pt_tf, *tf_, costmap_ros_->getBaseFrameID());
-
-  return pt_tf.pose;
+  geometry_msgs::msg::PoseStamped pt_base;
+  if (!nav2_util::transformPoseInTargetFrame(pt, pt_base, *tf_, costmap_ros_->getBaseFrameID())) {
+    throw nav2_core::PlannerException("Failed to transform pose to base frame!");
+  }
+  return pt_base.pose;
 }
 
-geometry_msgs::msg::TwistStamped RotationController::computeRotateToHeadingCommand(
+geometry_msgs::msg::TwistStamped
+RotationController::computeRotateToHeadingCommand(
   const double & angular_distance_to_heading,
-  const geometry_msgs::msg::PoseStamped & /*pose*/,
-  const geometry_msgs::msg::Twist & /*velocity*/)
+  const geometry_msgs::msg::PoseStamped & pose,
+  const geometry_msgs::msg::Twist & velocity)
 {
-  double desired_ang_velocity = sqrt(2 * max_angular_accel_ * fabs(angular_distance_to_heading));
-  desired_ang_velocity = std::min(rotate_to_heading_angular_vel_, desired_ang_velocity);
-
   geometry_msgs::msg::TwistStamped cmd_vel;
-  cmd_vel.header.stamp = clock_->now();
-  cmd_vel.header.frame_id = costmap_ros_->getBaseFrameID();
-  cmd_vel.twist.angular.z = desired_ang_velocity * (angular_distance_to_heading > 0 ? 1.0 : -1.0);
+  cmd_vel.header = pose.header;
+  const double sign = angular_distance_to_heading > 0.0 ? 1.0 : -1.0;
+  const double angular_vel = sign * rotate_to_heading_angular_vel_;
+  const double & dt = control_duration_;
+  const double min_feasible_angular_speed = velocity.angular.z - max_angular_accel_ * dt;
+  const double max_feasible_angular_speed = velocity.angular.z + max_angular_accel_ * dt;
+  cmd_vel.twist.angular.z =
+    std::clamp(angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
 
+  isCollisionFree(cmd_vel, angular_distance_to_heading, pose);
   return cmd_vel;
+}
+
+void RotationController::isCollisionFree(
+  const geometry_msgs::msg::TwistStamped & cmd_vel,
+  const double & angular_distance_to_heading,
+  const geometry_msgs::msg::PoseStamped & pose)
+{
+  // Simulate rotation ahead by time in control frequency increments
+  double simulated_time = 0.0;
+  double initial_yaw = tf2::getYaw(pose.pose.orientation);
+  double yaw = 0.0;
+  double footprint_cost = 0.0;
+  double remaining_rotation_before_thresh =
+    fabs(angular_distance_to_heading) - angular_dist_threshold_;
+
+  while (simulated_time < simulate_ahead_time_) {
+    simulated_time += control_duration_;
+    yaw = initial_yaw + cmd_vel.twist.angular.z * simulated_time;
+
+    // Stop simulating past the point it would be passed onto the primary controller
+    if (angles::shortest_angular_distance(yaw, initial_yaw) >= remaining_rotation_before_thresh) {
+      break;
+    }
+
+    using namespace nav2_costmap_2d;  // NOLINT
+    footprint_cost = collision_checker_->footprintCostAtPose(
+      pose.pose.position.x, pose.pose.position.y,
+      yaw, costmap_ros_->getRobotFootprint());
+
+    if (footprint_cost == static_cast<double>(NO_INFORMATION) &&
+      costmap_ros_->getLayeredCostmap()->isTrackingUnknown())
+    {
+      throw std::runtime_error("RotationController detected a potential collision ahead!");
+    }
+
+    if (footprint_cost >= static_cast<double>(LETHAL_OBSTACLE)) {
+      throw std::runtime_error("RotationController detected collision ahead!");
+    }
+  }
 }
 
 void RotationController::setPlan(const nav_msgs::msg::Path & path)
 {
-  current_path_ = path;
   path_updated_ = true;
+  current_path_ = path;
+  primary_controller_->setPlan(path);
 }
 
 void RotationController::setSpeedLimit(const double & speed_limit, const bool & percentage)
@@ -295,63 +323,39 @@ void RotationController::setSpeedLimit(const double & speed_limit, const bool & 
 rcl_interfaces::msg::SetParametersResult
 RotationController::dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters)
 {
-  auto node = node_.lock();
   rcl_interfaces::msg::SetParametersResult result;
+  std::lock_guard<std::mutex> lock_reinit(mutex_);
 
-  if (!node) {
-    result.successful = false;
-    return result;
+  for (auto parameter : parameters) {
+    const auto & type = parameter.get_type();
+    const auto & name = parameter.get_name();
+
+    if (type == ParameterType::PARAMETER_DOUBLE) {
+      if (name == plugin_name_ + ".angular_dist_threshold") {
+        angular_dist_threshold_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".forward_sampling_distance") {
+        forward_sampling_distance_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".rotate_to_heading_angular_vel") {
+        rotate_to_heading_angular_vel_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".max_angular_accel") {
+        max_angular_accel_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".simulate_ahead_time") {
+        simulate_ahead_time_ = parameter.as_double();
+      }
+    } else if (type == ParameterType::PARAMETER_BOOL) {
+      if (name == plugin_name_ + ".rotate_to_goal_heading") {
+        rotate_to_goal_heading_ = parameter.as_bool();
+      }
+    }
   }
 
   result.successful = true;
-  for (auto & param : parameters) {
-    RCLCPP_INFO(
-      logger_,
-      "Dynamic reconfigure: Setting %s to %s",
-      param.get_name().c_str(), param.value_to_string().c_str());
-
-    if (param.get_name() == plugin_name_ + ".angular_dist_threshold" &&
-      param.get_type() == ParameterType::PARAMETER_DOUBLE)
-    {
-      angular_dist_threshold_ = param.as_double();
-    }
-
-    if (param.get_name() == plugin_name_ + ".forward_sampling_distance" &&
-      param.get_type() == ParameterType::PARAMETER_DOUBLE)
-    {
-      forward_sampling_distance_ = param.as_double();
-    }
-
-    if (param.get_name() == plugin_name_ + ".rotate_to_heading_angular_vel" &&
-      param.get_type() == ParameterType::PARAMETER_DOUBLE)
-    {
-      rotate_to_heading_angular_vel_ = param.as_double();
-    }
-
-    if (param.get_name() == plugin_name_ + ".max_angular_accel" &&
-      param.get_type() == ParameterType::PARAMETER_DOUBLE)
-    {
-      max_angular_accel_ = param.as_double();
-    }
-
-    if (param.get_name() == plugin_name_ + ".simulate_ahead_time" &&
-      param.get_type() == ParameterType::PARAMETER_DOUBLE)
-    {
-      simulate_ahead_time_ = param.as_double();
-    }
-
-    if (param.get_name() == plugin_name_ + ".rotate_to_goal_heading" &&
-      param.get_type() == ParameterType::PARAMETER_BOOL)
-    {
-      rotate_to_goal_heading_ = param.as_bool();
-    }
-  }
-
   return result;
 }
 
-}  // namespace rotation_controller
+}  // namespace nav2_rotation_shim_controller
 
-#include "pluginlib/class_list_macros.hpp"
-
-PLUGINLIB_EXPORT_CLASS(rotation_controller::RotationController, nav2_core::Controller)
+// Register this controller as a nav2_core plugin
+PLUGINLIB_EXPORT_CLASS(
+  rotation_controller::RotationController,
+  nav2_core::Controller)
