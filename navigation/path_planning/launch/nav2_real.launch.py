@@ -18,7 +18,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     map_server_params_config_path = os.path.join(
         pkg_share_dir, "config", "map_server_params.yaml"
     )
-    nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params_real.yaml")
+    nav2_params_config_path = os.path.join(
+        pkg_share_dir, "config", "nav2_params_real.yaml"
+    )
+    local_ekf_config_path = os.path.join(pkg_share_dir, "config", "local_ekf_real.yaml")
+    global_ekf_config_path = os.path.join(
+        pkg_share_dir, "config", "global_ekf_real.yaml"
+    )
 
     # ------------- Launch Commands -------------
     start_nav2_cmd = IncludeLaunchDescription(
@@ -43,14 +49,35 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
     # ------------- Launch Nodes -------------
-    # TODO
+    local_robot_localization_node = launch_ros.actions.Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="local_ekf_filter_node",
+        output="screen",
+        parameters=[
+            local_ekf_config_path,
+            {"use_sim_time": True},
+        ],
+    )
+
+    global_robot_localization_node = launch_ros.actions.Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="global_ekf_filter_node",
+        output="screen",
+        parameters=[
+            global_ekf_config_path,
+            {"use_sim_time": True},
+        ],
+    )
 
     return [
         # Commands
         start_nav2_cmd,
-        # start_wheels_control_cmd,
+        start_wheels_control_cmd,
         # Nodes
-        # TODO
+        local_robot_localization_node,
+        global_robot_localization_node,
     ]
 
 

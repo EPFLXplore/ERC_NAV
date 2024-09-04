@@ -23,7 +23,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-gazebo-ros2-control \
-    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-rqt-tf-tree \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \

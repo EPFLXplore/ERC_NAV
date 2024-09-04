@@ -113,3 +113,5 @@ latex/
 *.tag
 
 *.Dockerfile.swp
+
+*.tif

@@ -15,14 +15,14 @@ from launch.substitutions import LaunchConfiguration
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     # ------------- Launch Arguments -------------
-    default_use_fake_odom = "true"
-    use_fake_odom_arg = DeclareLaunchArgument(
-        "use_fake_odom",
-        default_value=default_use_fake_odom,
-        description="Use fake odometry",
+    default_use_fake_tf = "false"
+    use_fake_tf_arg = DeclareLaunchArgument(
+        "use_fake_tf",
+        default_value=default_use_fake_tf,
+        description="Use fake odom and map tf",
     )
 
-    use_fake_odom = LaunchConfiguration("use_fake_odom", default=default_use_fake_odom)
+    use_fake_tf = LaunchConfiguration("use_fake_tf", default=default_use_fake_tf)
 
     # ------------- Setup Paths -------------
     pkg_name = "path_planning"
@@ -34,8 +34,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     map_server_params_config_path = os.path.join(
         pkg_share_dir, "config", "map_server_params.yaml"
     )
-    nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params_sim.yaml")
-    ekf_config_path = os.path.join(pkg_share_dir, "config", "ekf.yaml")
+    nav2_params_config_path = os.path.join(
+        pkg_share_dir, "config", "nav2_params_sim.yaml"
+    )
+    local_ekf_config_path = os.path.join(pkg_share_dir, "config", "local_ekf_sim.yaml")
+    global_ekf_config_path = os.path.join(
+        pkg_share_dir, "config", "global_ekf_sim.yaml"
+    )
 
     # ------------- Launch Commands -------------
     start_nav2_cmd = IncludeLaunchDescription(
@@ -60,16 +65,44 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
     # ------------- Launch Nodes -------------
-    robot_localization_node = launch_ros.actions.Node(
+    local_robot_localization_node = launch_ros.actions.Node(
         package="robot_localization",
         executable="ekf_node",
-        name="ekf_filter_node",
+        name="local_ekf_filter_node",
         output="screen",
         parameters=[
-            ekf_config_path,
+            local_ekf_config_path,
             {"use_sim_time": True},
         ],
-        condition=UnlessCondition(use_fake_odom),
+        condition=UnlessCondition(use_fake_tf),
+    )
+
+    global_robot_localization_node = launch_ros.actions.Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="global_ekf_filter_node",
+        output="screen",
+        parameters=[
+            global_ekf_config_path,
+            {"use_sim_time": True},
+        ],
+        condition=UnlessCondition(use_fake_tf),
+    )
+
+    sim_map_publisher_node = launch_ros.actions.Node(
+        package="path_planning",
+        executable="sim_map_publisher.py",
+        name="sim_map_publisher",
+        output="screen",
+        condition=UnlessCondition(use_fake_tf),
+    )
+
+    sim_odom_publisher_node = launch_ros.actions.Node(
+        package="path_planning",
+        executable="sim_odom_publisher.py",
+        name="sim_odom_publisher",
+        output="screen",
+        condition=UnlessCondition(use_fake_tf),
     )
 
     fake_map_tf_publisher_node = launch_ros.actions.Node(
@@ -95,6 +128,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             "--child-frame-id",
             "odom",
         ],
+        condition=IfCondition(use_fake_tf),
     )
 
     fake_odom_tf_publisher_node = launch_ros.actions.Node(
@@ -102,17 +136,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable="fake_odom_tf_publisher.py",
         name="fake_odom_tf_publisher",
         output="screen",
-        condition=IfCondition(use_fake_odom),
+        condition=IfCondition(use_fake_tf),
     )
 
     return [
         # Arguments
-        use_fake_odom_arg,
+        use_fake_tf_arg,
         # Commands
         start_nav2_cmd,
         start_wheels_control_cmd,
         # Nodes
-        robot_localization_node,
+        local_robot_localization_node,
+        global_robot_localization_node,
+        sim_map_publisher_node,
+        sim_odom_publisher_node,
         fake_map_tf_publisher_node,
         fake_odom_tf_publisher_node,
     ]
