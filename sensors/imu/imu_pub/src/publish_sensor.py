@@ -26,8 +26,7 @@ class MinimalPublisher(Node):
     def __init__(self):
         super().__init__('minimal_publisher')
 
-       
-        self.serial_port = serial.Serial('/dev/ttyACM0', 115200, timeout=0.0)
+        self.serial_port = serial.Serial('/dev/ttyACM0', 115200, timeout=0.1)
         self.serial_port.flush()
 
         self.publisher_ = self.create_publisher(Imu, 'Imu', 10)
@@ -109,7 +108,7 @@ class MinimalPublisher(Node):
                 self.publisher_.publish(imu_msg)
                 self.i += 1
 
-            except (IndexError, ValueError):
+            except (IndexError, ValueError, TypeError):
                     self.get_logger().warn("Failed to parse IMU data.")
                     return 
             
