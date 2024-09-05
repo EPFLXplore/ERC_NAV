@@ -5,7 +5,7 @@
 image: static_costmap.png
 resolution: 0.195
 origin: [-9.5, -17.5, 0.0]
-occupied_thresh: 0.99
-free_thresh: 0
+occupied_thresh: 1.0
+free_thresh: 1.0
 negate: 0
 mode: scale

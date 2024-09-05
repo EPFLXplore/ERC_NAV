@@ -56,7 +56,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen",
         parameters=[
             local_ekf_config_path,
-            {"use_sim_time": True},
+            {"use_sim_time": False},
         ],
     )
 
@@ -67,17 +67,25 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen",
         parameters=[
             global_ekf_config_path,
-            {"use_sim_time": True},
+            {"use_sim_time": False},
         ],
+    )
+
+    odom_offset_node = launch_ros.actions.Node(
+        package="path_planning",
+        executable="odom_offset_node.py",
+        name="odom_offset_node",
+        output="screen",
     )
 
     return [
         # Commands
-        start_nav2_cmd,
-        start_wheels_control_cmd,
+        # start_nav2_cmd,
+        # start_wheels_control_cmd,
         # Nodes
         local_robot_localization_node,
         global_robot_localization_node,
+        odom_offset_node
     ]
 
 

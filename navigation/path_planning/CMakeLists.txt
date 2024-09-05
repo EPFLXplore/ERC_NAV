@@ -31,6 +31,7 @@ install(PROGRAMS
   path_planning/fake_odom_tf_publisher.py
   path_planning/sim_map_publisher.py
   path_planning/sim_odom_publisher.py
+  path_planning/odom_offset_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

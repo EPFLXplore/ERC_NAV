@@ -93,6 +93,7 @@ class PoseEstimatorNode(Node):
 
         odom_msg = Odometry()
         odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.frame_id = 'map'
         # odom_msg.pose.pose.position = Point(self.x_estimate, self.y_estimate, 0.0)
         odom_msg.pose.pose.position = Point(x=self.count, y=self.count, z=0.0)
         odom_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
