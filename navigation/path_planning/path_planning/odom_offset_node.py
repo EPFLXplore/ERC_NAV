@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from nav_msgs.msg import Odometry
 import numpy as np
 # import tf_transformations
@@ -26,7 +27,7 @@ class OdometryOffsetNode(Node):
         #     self.offset_orientation = self.get_parameter('orientation_offset').get_parameter_value().double_array_value
 
         self.odom_subscriber = self.create_subscription(
-            Odometry, "/lio_sam/mapping/odometry", self.odom_callback, 10
+            Odometry, "/lio_sam/mapping/odometry", self.odom_callback, QoSProfile(depth=10, reliability = ReliabilityPolicy.BEST_EFFORT)
         )
         self.odom_publisher = self.create_publisher(Odometry, "/odom_with_offset", 10)
 
@@ -40,10 +41,10 @@ class OdometryOffsetNode(Node):
         return position_offset, orientation_offset
 
     def odom_callback(self, msg):
-        msg.header.frame_id = "odom"
-        msg.pose.pose.position.x += self.offset_position[0]
-        msg.pose.pose.position.y += self.offset_position[1]
-        msg.pose.pose.position.z += self.offset_position[2]
+        # msg.header.frame_id = "odom"
+        # msg.pose.pose.position.x += 0.0
+        # msg.pose.pose.position.y += 
+        # msg.pose.pose.position.z += self.offset_position[2]
 
         current_orientation = [
             msg.pose.pose.orientation.x,
@@ -51,7 +52,7 @@ class OdometryOffsetNode(Node):
             msg.pose.pose.orientation.z,
             msg.pose.pose.orientation.w,
         ]
-        offset_quaternion = self.offset_orientation
+        # offset_quaternion = self.offset_orientation
 
         # new_orientation = tf_transformations.quaternion_multiply(
         #     current_orientation, offset_quaternion
