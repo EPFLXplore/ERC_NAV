@@ -19,6 +19,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-librealsense2*\
     ros-${ROS_DISTRO}-realsense2-*\
     ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-tf-transformations \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \

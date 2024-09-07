@@ -52,7 +52,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
         cost_scaling_factor: 0.0
-        inflation_radius: 0.20
+        inflation_radius: 0.2
         inflate_unknown: False
         inflate_around_unknown: False
       obstacle_layer:
@@ -64,7 +64,7 @@ global_costmap:
           sensor_frame: lidar_link
           data_type: "PointCloud2"
           max_obstacle_height: 4.0
-          min_obstacle_height: -2.0
+          min_obstacle_height: 0.5
           obstacle_max_range: 60.0
           obstacle_min_range: 1.0
           clearing: True
@@ -108,7 +108,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 0.8
-        inflation_radius:  0.6
+        inflation_radius:  0.3
 
       always_send_full_costmap: True
   local_costmap_client:

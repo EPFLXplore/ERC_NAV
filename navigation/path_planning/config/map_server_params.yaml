@@ -1,11 +1,19 @@
 # Generate and publish the static map occupancy grid from the static_costmap image.
 # The pixels in the image have values between 0 and 255 with 0 being an obstacle and 255 being free space.
 # Then the values are scaled to values between 0 and 100 to create the occupancy grid, where 0 is free space 
-# and 100 is occupied space.
+# # and 100 is occupied space.
 image: static_costmap.png
 resolution: 0.195
 origin: [-9.5, -17.5, 0.0]
-occupied_thresh: 1.0
-free_thresh: 1.0
+occupied_thresh: 0.99
+free_thresh: 0
 negate: 0
 mode: scale
+# and 100 is occupied space.
+# image: static_costmap.png
+# resolution: 0.195
+# origin: [-9.5, -17.5, 0.0]
+# occupied_thresh: 1.0
+# free_thresh: 1.0
+# negate: 0
+# mode: scale

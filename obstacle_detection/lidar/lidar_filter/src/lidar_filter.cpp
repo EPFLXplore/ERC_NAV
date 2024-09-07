@@ -24,6 +24,17 @@ rmw_qos_profile_t real_profile = {
     RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
     false
 };
+rmw_qos_profile_t pub_profile = {
+    RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+    5,
+    RMW_QOS_POLICY_RELIABILITY_RELIABLE,
+    RMW_QOS_POLICY_DURABILITY_VOLATILE,
+    RMW_QOS_DEADLINE_DEFAULT,
+    RMW_QOS_LIFESPAN_DEFAULT,
+    RMW_QOS_POLICY_LIVELINESS_AUTOMATIC,
+    RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
+    false
+};
 rmw_qos_profile_t sim_profile = {
     RMW_QOS_POLICY_HISTORY_KEEP_LAST,
     5,
@@ -65,7 +76,7 @@ class LidarFilterNode : public rclcpp::Node
         RCLCPP_INFO(this->get_logger(), "Lidar Filter Node Started");
 
         this->declare_parameter("min_distance", 0.8);
-        this->declare_parameter("slope_threshold", 0.4);    //100% is 45 degrees to horizontal
+        this->declare_parameter("slope_threshold", 1.0);    //100% is 45 degrees to horizontal
         this->declare_parameter("filter", true);
         this->declare_parameter("voxel_leaf_size", 0.05);
         this->declare_parameter("n_clusters", 50);
@@ -83,12 +94,19 @@ class LidarFilterNode : public rclcpp::Node
             ),
             profile
         );
+        auto qos_pub = rclcpp::QoS(
+            rclcpp::QoSInitialization(
+                pub_profile.history,
+                pub_profile.depth
+            ),
+            pub_profile
+        );
 
-        std::string topic_name = sim ? "/ouster/points" : "/points";
+        std::string topic_name = "/points";
         
         // Create a publisher
-        pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar_filter/filtered_points", qos);
-        pub_floor = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar_filter/floor_points", qos);
+        pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar_filter/filtered_points", qos_pub);
+        pub_floor = this->create_publisher<sensor_msgs::msg::PointCloud2>("/lidar_filter/floor_points", qos_pub);
 
         // Create subscribers lidar points and NAV_status (to destroy node)
         sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(topic_name, qos, std::bind(&LidarFilterNode::callback, this, std::placeholders::_1));

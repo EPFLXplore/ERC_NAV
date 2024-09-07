@@ -81,11 +81,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     return [
         # Commands
         start_nav2_cmd,
-        # start_wheels_control_cmd,
+        start_wheels_control_cmd,
         # Nodes
         # local_robot_localization_node,
-        global_robot_localization_node,
-        odom_offset_node
+        # global_robot_localization_node,
+        # odom_offset_node
     ]
 
 

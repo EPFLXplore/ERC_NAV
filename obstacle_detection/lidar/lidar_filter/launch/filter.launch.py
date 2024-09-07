@@ -6,7 +6,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('sim', default_value = 'false'),
-        DeclareLaunchArgument('slope_threshold', default_value = '0.4', description = '1 => 45 °'),
+        DeclareLaunchArgument('slope_threshold', default_value = '1.0', description = '1 => 45 °'),
         DeclareLaunchArgument('min_distance', default_value = '0.8'),
         DeclareLaunchArgument('n_clusters', default_value = '50'),
 
