@@ -59,6 +59,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             {"use_sim_time": False},
         ],
     )
+    
+    
+
 
     global_robot_localization_node = launch_ros.actions.Node(
         package="robot_localization",
@@ -81,11 +84,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     return [
         # Commands
         start_nav2_cmd,
-        start_wheels_control_cmd,
+        # start_wheels_control_cmd,
         # Nodes
         # local_robot_localization_node,
         # global_robot_localization_node,
         # odom_offset_node
+        map,
+        
     ]
 
 

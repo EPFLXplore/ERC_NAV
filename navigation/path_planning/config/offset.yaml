@@ -1,10 +1,10 @@
 position_offset:
-  - 17.228  # was 11 
-  - -11.549 # was 17
+  - 0.0  # was 11 
+  - 0.0 # was 17
   - 0.0  
 
 orientation_offset:
   - 0.0  
   - 0.0  
-  - 0.7071
-  - 0.7071
+  - 0.0
+  - 0.0

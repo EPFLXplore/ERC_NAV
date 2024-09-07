@@ -108,7 +108,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 0.8
-        inflation_radius:  0.3
+        inflation_radius: 0.3
 
       always_send_full_costmap: True
   local_costmap_client:
@@ -140,7 +140,7 @@ bt_navigator:
     use_sim_time: False
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /odom_with_offset
+    odom_topic: /lio_sam/mapping/odometry
     bt_loop_duration: 10
     default_server_timeout: 20
     enable_groot_monitoring: True
@@ -233,7 +233,7 @@ controller_server:
     ## Server parameters
     use_sim_time: False
     controller_frequency: 1.0
-    odom_topic: "odom_with_offset"
+    odom_topic: "lio_sam/mapping/odometry"
     # Min velocities to ignore
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
