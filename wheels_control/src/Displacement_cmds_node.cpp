@@ -94,17 +94,12 @@ public:
     sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
         "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
-    sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
-        "/ROVER/NAV_status", 1, std::bind(&DisplacementCmds::callback_abort, this, std::placeholders::_1));
-
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
-
+    /*
     sub_kinematic_state = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_kinematic", 1, std::bind(&DisplacementCmds::callback_mode_kinematic, this, std::placeholders::_1));
-
-    destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&DisplacementCmds::destroy_callback, this, std::placeholders::_1));
-
+    */
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
 
@@ -119,14 +114,6 @@ public:
 private:
   bool go_left = false;
   bool go_right = false;
-
-  void callback_abort(std_msgs::msg::String::SharedPtr msg)
-  {
-    if (msg->data == "abort")
-    {
-      throw std::runtime_error("Shutdown requested");
-    }
-  }
 
   void callback_mode_kinematic(std_msgs::msg::String::SharedPtr msg)
   {
@@ -236,12 +223,6 @@ private:
     }
   }
 
-  void destroy_callback(const std_msgs::msg::String::SharedPtr msg)
-  {
-    if (msg->data == "abort")
-      rclcpp::shutdown();
-  }
-
   void callback_absolute_encoders(const custom_msg::msg::Wheelstatus::SharedPtr msg)
   {
     /*Update the motors position*/
@@ -277,7 +258,6 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_kinematic_state;
-  rclcpp::Subscription<custom_msg::msg::Wheelstatus>::SharedPtr sub_topic_absolute_encoders;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
 };
 
