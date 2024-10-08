@@ -25,7 +25,6 @@ class Fake_cs_nav(Node):
         self.driving_wheel_state = [0,0,0,0]
 
         self.create_subscription(Odometry,         '/lio_sam/odom',                self.nav_odometry  , 10)
-        self.create_subscription(Wheelstatus,      '/NAV/absolute_encoders',       self.nav_wheel, 10)
         self.create_subscription(Motorcmds,        '/NAV/displacement',            self.nav_displacement, 10)
         self.display_ui()
 
@@ -33,25 +32,6 @@ class Fake_cs_nav(Node):
     def nav_displacement(self, displacement):
         self.navigation.displacement_mode = displacement.modedeplacement
         self.navigation.info = displacement.info
-
-        
-    def nav_wheel(self, msg):
-        """
-        FRONT_LEFT_DRIVE = 0
-        FRONT_RIGHT_DRIVE = 1
-        BACK_RIGHT_DRIVE = 2
-        BACK_LEFT_DRIVE = 3
-        FRONT_LEFT_STEER = 4
-        FRONT_RIGHT_STEER = 5
-        BACK_RIGHT_STEER = 6
-        BACK_LEFT_STEER = 7
-        """
-        print(msg.state)
-        #self.navigation.wheels_ang = []
-        self.navigation.steering_wheel_ang = [float(i/65536 * 360) for i in msg.data[0:4]]
-        self.navigation.driving_wheel_ang = [float(i/65536 * 360) for i in msg.data[4:8]]
-        self.navigation.steering_wheel_state = msg.state[0:4]
-        self.navigation.driving_wheel_state = msg.state[4:8]
     
 
     def nav_odometry(self, odometry):

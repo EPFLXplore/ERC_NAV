@@ -1,22 +1,3 @@
-/*
-pkg:    wheels_commands
-node:   NAV_motor_cmds
-topics: 
-        publish:    /NAV/absolute_encoders 
-        subscribe:  /CS/nav_shutdown_cmds - /NAV/displacement  
-
-description:    Check that all the motors are connected
-                Send the commands of speed or position to one motors 
-                Motors steering: control in position
-                Motors driving: control in velocity
-
-Function used from motors.hpp:  - connected()
-                                - get_position_is() 
-                                - set_velocity_ref() 
-                                - set_position_ref() 
-*/
-
-
 #include <chrono>
 #include <cmath>
 #include <functional> 
@@ -26,10 +7,7 @@ Function used from motors.hpp:  - connected()
 #include <map>
 #include <unordered_set>
 
-
-// #include "EposCmd.h"
 #include "wheels_control/definition.hpp"
-
 
 #include "wheels_control/motors.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -39,6 +17,7 @@ Function used from motors.hpp:  - connected()
 #include "custom_msg/msg/wheelstatus.hpp"
 #include "custom_msg/msg/statussteering.hpp"
 #include "custom_msg/msg/motorstatus.hpp"
+#include "custom_msg/msg/motornavstatus.hpp"
 
 using namespace std::chrono_literals;
 
@@ -50,7 +29,6 @@ const _Float64 limit_variation_angle(0);
 const _Float64 limit_variation_drive(0);
 
 
-// int mode_deplacement =  0;
 std::string mode_deplacement = "";
 bool depassement_courrant = 0;
 bool fault_state = false;
@@ -86,7 +64,6 @@ class MotorCmds : public rclcpp::Node
     MotorCmds()
     : Node("NAV_motor_cmds"), count_(0)
     { 
-        // add all motors
         int i = 0;
         bool homing;
 
@@ -95,17 +72,13 @@ class MotorCmds : public rclcpp::Node
         if (this->get_parameter("homing", homing)) {
             RCLCPP_INFO(this->get_logger(), "Got homing_param: %s", homing ? "true" : "false");
         } else {
-            RCLCPP_ERROR(this->get_logger(), "Failed to get homing_param");
+            RCLCPP_ERROR(this->get_logger(), "No homing parameter");
         }
 
         connect_motors(get_logger(), get_clock(), homing);
 
-    
-        pub_absolute_encoders = this->create_publisher<custom_msg::msg::Wheelstatus>(
-            "/NAV/absolute_encoders", 1);
-
-        pub_motor_status = this->create_publisher<custom_msg::msg::Motorstatus>(
-            "/NAV/motor_status", 1);
+        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorNavStatus>(
+            "/NAV/motor_nav_status", 1);
             
         timer_=this->create_wall_timer(
             100ms, std::bind(&MotorCmds::motors_param_callback, this));
@@ -122,13 +95,9 @@ class MotorCmds : public rclcpp::Node
 
 
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
-        // Get the size of the vector
         std::size_t size = motors.size();
 
-        // Print the size
-        // std::cout << "[NAV_motors_debugging_node] The size of the motors vector is: " << size << std::endl;
-        RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%d'", size);
-      
+        RCLCPP_INFO(get_logger(), "Number of Motors Connected:'%d'/8", size);
     }
     
     // destructeur
@@ -305,35 +274,29 @@ class MotorCmds : public rclcpp::Node
 
     void motors_param_callback()
     {
-
-        auto message = custom_msg::msg::Wheelstatus();
-        auto motor_status = custom_msg::msg::Motorstatus();
+        auto message_nav = custom_msg::msg::MotorNavStatus();
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
             if (motor->connected())
             {                
-                message.state[id-1] = motor->fault_state();
-                message.current[id-1] = motor->get_current_is();
-                
+                message_nav.state[id-1] = motor->fault_state();
+                message_nav.current[id-1] = motor->get_current_is();
+                message_nav.average_current[id-1] = motor->get_current_is_averaged();
 
+                // IDs [0,1,2,3] are the nodes for the driving
+                // IDs [4,5,6,7] are the nodes for the steering
                 if (id >4)
                 {
-                    message.data[id-5] = motor->get_position_is();
-
+                    message_nav.position[id-5] = motor->get_position_is();
                 }
                 else{
-                    motor_status.driving_vel[id-1] = motor->get_velocity_is();
-                    motor_status.driving_curr[id-1] = motor->get_current_is();
-
+                    message_nav.velocity[id-1] = motor->get_velocity_is();
                 }
             }
+        }    
 
-        }        
-
-        pub_absolute_encoders->publish(message);
-        pub_motor_status->publish(motor_status);
-
+        pub_motor_nav_status.publish(message_nav);
     }
 
     bool connect_motors(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, bool homing) const
@@ -469,11 +432,9 @@ class MotorCmds : public rclcpp::Node
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
+    rclcpp::Subscription<custom_msg::msg::MotorNavStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;
-    // rclcpp::WallTimer<timer_callback<void()>> timer2_;
-
-
 };
 
 

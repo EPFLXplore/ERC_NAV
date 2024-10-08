@@ -24,6 +24,7 @@ description:  - Take the rover velocity and compute the position of the steering
 
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
+#include "custom_msg/msg/motornavstatus.hpp"
 
 #include "wheels_control/definition.hpp"
 #include "wheels_control/basic_kinematic_model.hpp"
@@ -91,8 +92,8 @@ public:
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 1, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
 
-    sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
-        "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
+    sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorNavStatus>(
+        "/NAV/motor_nav_status", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
@@ -225,26 +226,15 @@ private:
 
   void callback_absolute_encoders(const custom_msg::msg::Wheelstatus::SharedPtr msg)
   {
-    /*Update the motors position*/
-    // current_motors_position.drive[FRONT_LEFT] =  msg->data[FRONT_LEFT_DRIVE - 1];
-    // current_motors_position.drive[FRONT_RIGHT] =  msg->data[FRONT_RIGHT_DRIVE - 1];
-    // current_motors_position.drive[BACK_RIGHT] =  msg->data[BACK_RIGHT_DRIVE - 1];
-    // current_motors_position.drive[BACK_LEFT] = msg->data[BACK_LEFT_DRIVE - 1];
-
-    // current_motors_position.steer[FRONT_LEFT] = msg->data[FRONT_LEFT_STEER - 1];
-    // current_motors_position.steer[FRONT_RIGHT] = msg->data[FRONT_RIGHT_STEER - 1];
-    // current_motors_position.steer[BACK_RIGHT] = msg->data[BACK_RIGHT_STEER - 1];
-    // current_motors_position.steer[BACK_LEFT] = msg->data[BACK_LEFT_STEER - 1];
-
     current_motors_position.drive[FRONT_LEFT] = 0;
     current_motors_position.drive[FRONT_RIGHT] = 0;
     current_motors_position.drive[BACK_RIGHT] = 0;
     current_motors_position.drive[BACK_LEFT] = 0;
 
-    current_motors_position.steer[FRONT_LEFT] = msg->data[FRONT_LEFT];
-    current_motors_position.steer[FRONT_RIGHT] = msg->data[FRONT_RIGHT];
-    current_motors_position.steer[BACK_RIGHT] = msg->data[BACK_RIGHT];
-    current_motors_position.steer[BACK_LEFT] = msg->data[BACK_LEFT];
+    current_motors_position.steer[FRONT_LEFT] = msg->position[FRONT_LEFT];
+    current_motors_position.steer[FRONT_RIGHT] = msg->position[FRONT_RIGHT];
+    current_motors_position.steer[BACK_RIGHT] = msg->position[BACK_RIGHT];
+    current_motors_position.steer[BACK_LEFT] = msg->position[BACK_LEFT];
   }
 
   RoverBasicKinematicModel basicKinematicModel;
@@ -259,6 +249,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_kinematic_state;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
+  rclcpp::Subscription<custom_msg::msg::MotorNavStatus>::SharedPtr sub_topic_absolute_encoders;
 };
 
 int main(int argc, char *argv[])

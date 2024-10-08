@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <math.h>
+#include <tuple>
 /*
 #ifndef TESTING
 #include "ros/ros.h"
@@ -113,10 +114,20 @@ public:
      */
     int get_current_is();
 
+    /* get_current_is_averaged
+     * brief :  get the averaged current current in [mA]
+     */
+    int get_current_is_averaged();
+
     /* get_efficiency
      * brief :  get the current efficiency in %
      */
     int get_efficiency();
+
+    /* get_current_informations
+       brief :  get Maximal peak current and max continuous current
+    */
+    std::tuple<int, int> get_current_informations(unsigned int* max_peek_current, unsigned, int* max_continuous_current);
 };
 
 /* open_gateway
