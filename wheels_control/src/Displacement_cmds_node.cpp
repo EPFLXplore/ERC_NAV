@@ -91,8 +91,8 @@ public:
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 1, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
 
-    // sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
-    //     "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
+    sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
+        "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
      
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
