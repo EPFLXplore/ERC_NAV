@@ -93,7 +93,7 @@ public:
 
     // sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::Wheelstatus>(
     //     "/NAV/absolute_encoders", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
-
+    //testestydgfhgfjhgfk 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
     /*
