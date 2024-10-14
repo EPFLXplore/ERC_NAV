@@ -1,0 +1,15 @@
+# Service to launch the wheels control. Copy this file: sudo cp ~/Desktop/ERC_NAV/wheels_control.service /etc/systemd/system/wheels_control.service and run sudo systemctl enable wheels_control.service to enable the service.
+
+
+[Unit]
+Description=Wheels Control Node Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+ExecStart=/bin/bash /home/brokkoly/Desktop/ERC_NAV/start_wheels.sh
+ExecStop=/bin/bash /home/brokkoly/Desktop/ERC_NAV/stop_wheels.sh
+
+[Install]
+WantedBy=default.target
