@@ -1,6 +1,3 @@
-[submodule "localization/lidar/LIO-SAM"]
-	path = localization/lidar/LIO-SAM
-	url = https://github.com/EPFLXplore/LIO-SAM-Xplore.git
 [submodule "sensors/lidar/ros2_ouster_drivers"]
 	path = sensors/lidar/ros2_ouster_drivers
 	url = https://github.com/EPFLXplore/ros2_ouster_drivers_Xplore.git
