@@ -71,11 +71,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     return [
         # Arguments
-        fake_cs_gamepad_arg,
+        #fake_cs_gamepad_arg,
         motor_cmds_arg,
         homing_arg,
         # Nodes
-        fake_cs_gamepad_node,
+        #fake_cs_gamepad_node,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,

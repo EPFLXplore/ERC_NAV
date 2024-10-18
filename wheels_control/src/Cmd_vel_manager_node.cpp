@@ -45,8 +45,9 @@ class CmdvelManager : public rclcpp::Node
   public:
     CmdvelManager() : Node("NAV_cmd_vel_manager"), count_(0)
     {
-      this->declare_parameter("autonomous_navigation", true);
+      this->declare_parameter("autonomous_navigation", false);
       autonomous_navigation = this->get_parameter("autonomous_navigation").as_bool();
+      autonomous_navigation = false;
 
       pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", 10); 
       

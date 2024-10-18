@@ -338,6 +338,7 @@ class MotorCmds : public rclcpp::Node
 
     bool connect_motors(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, bool homing) const
     {
+        RCLCPP_INFO(get_logger(), "OPENING GATEWAY");
         void *gateway = open_gateway();
         rclcpp::Rate reconnect_rate(0.5);
         while (safemode && !gateway)
