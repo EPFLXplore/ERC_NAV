@@ -32,8 +32,8 @@ class NavCSInterface(Node):
         self.mode = 'Off'
 
         # Change Mode
-        self.cs_request = self.create_service(ChangeModeSystem, '/ROVER/NAV_mode', self.execute_service)
-        #self.mode_publisher = self.create_publisher(String, '/NAV/mode', 1)
+        self.cs_request = self.create_service(ChangeModeSystem, '/ROVER/change_NAV_mode', self.execute_service)
+        self.mode_publisher = self.create_publisher(String, '/ROVER/NAV_mode', 1)
 
         # Nav 2
         self.path_nav2_launch_file = '/dev_ws/src/path_planning/launch/nav2_real.launch.py'
@@ -48,16 +48,6 @@ class NavCSInterface(Node):
                                                       '/NAV_motor_cmds/change_state')
         self.motor_check_service = self.create_client(GetState, 
                                                       '/NAV_motor_cmds/get_state')
-        
-        # gamepad
-        self.recieve_gamepad = self.create_subscription(Joy, '/CS/NAV_gamepad', self.process_gamepad, 10)
-    
-    # ----------------------------------------------------------
-    # GAMEPAD
-
-    def process_gamepad(self, msg):
-        if self.mode != 'Manual': return
-        print(msg)
 
     # ----------------------------------------------------------
     # SERVICE

@@ -1,6 +1,6 @@
 [submodule "sensors/lidar/ros2_ouster_drivers"]
 	path = sensors/lidar/ros2_ouster_drivers
-	url = https://github.com/EPFLXplore/ros2_ouster_drivers_Xplore.git
+	url = git@github.com:EPFLXplore/ros2_ouster_drivers_Xplore.git
 [submodule "xplore_description"]
 	path = xplore_description
 	url = git@github.com:EPFLXplore/ERC_DESCRIPTION.git

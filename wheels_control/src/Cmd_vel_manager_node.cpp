@@ -55,37 +55,18 @@ class CmdvelManager : public rclcpp::Node
       sub_cmd_vel_manual = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_manual", 10, std::bind(&CmdvelManager::callback_cmd_vel_manual, this, std::placeholders::_1));
 
-
       sub_cmd_vel_auto = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10, std::bind(&CmdvelManager::callback_cmd_vel_auto, this, std::placeholders::_1));
-
-      
-      sub_cmd_shutdown = this->create_subscription<std_msgs::msg::String>(
-        "CS/nav_shutdown_cmds", 1, std::bind(&CmdvelManager::callback_shutdown, this, std::placeholders::_1));
-        
 
       sub_nav_nodes_state = this->create_subscription<std_msgs::msg::String>(
         "NAV/nav_auto_state", 1, std::bind(&CmdvelManager::callback_nav_auto_state, this, std::placeholders::_1));
 
-
       sub_mode_nav = this->create_subscription<std_msgs::msg::String>(
         "/ROVER/NAV_mode", 1, std::bind(&CmdvelManager::callback_mode_nav, this, std::placeholders::_1));
-
-      destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&CmdvelManager::destroy_callback, this, std::placeholders::_1));
-
-
     }
 
 
   private:
-    void callback_shutdown(std_msgs::msg::String::SharedPtr msg)
-    {
-        if (msg->data == "NAV_SHUTDOWN")   
-        {
-            throw std::runtime_error("Shutdown requested");
-        }          
-    }
-
 
     void callback_mode_nav(std_msgs::msg::String::SharedPtr msg)
     {
@@ -144,11 +125,6 @@ class CmdvelManager : public rclcpp::Node
         pub_cmd_vel->publish(message);
 
       }
-    }
-
-      void destroy_callback(const std_msgs::msg::String::SharedPtr msg)
-    {
-        if(msg->data == "abort") rclcpp::shutdown();
     }
 
     void callback_cmd_vel_auto(const geometry_msgs::msg::Twist::SharedPtr msg)
