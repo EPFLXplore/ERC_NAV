@@ -3,7 +3,7 @@ pkg:    wheels_commands
 node:   NAV_displacement_cmds
 topics:
         publish:    /NAV/displacement
-        subscribe:  /CS/NAV_gamepad  - /NAV/absolute_encoders - /NAV/cmd_vel_final - /ROVER/NAV_status -
+        subscribe:  /CS/NAV_gamepad  - /NAV/absolute_encoders - /NAV/cmd_vel_final  -
 
 description:  - Take the rover velocity and compute the position of the steering and the velocity of the driving
               - published the motors commands every delta time (500ms)
@@ -41,8 +41,8 @@ int wheels_angle_for_rotation = 0; //  encoder intern = 2900000/8 = 362 500 unit
 int wheels_angle_for_rotation_with_translation = 0;
 
 // int kinematics_state = 0; // 0 rotation or translation - 1 rotation and translation
-// string kinematic_state = BASIC_KINEMATIC;
-string kinematic_state = NORMAL_KINEMATIC;
+string kinematic_state = BASIC_KINEMATIC;
+//string kinematic_state = NORMAL_KINEMATIC;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -94,6 +94,7 @@ public:
 
     sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorNavStatus>(
         "/NAV/motor_nav_status", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
+
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
@@ -197,6 +198,8 @@ private:
 
     go_left = msg->buttons[3];
     go_right = msg->buttons[4];
+    
+    change_state = false;
 
     if (lateral)
     {
