@@ -88,11 +88,9 @@ class MotorCmds : public rclcpp::Node
             "NAV/displacement", 1, std::bind(&MotorCmds::motor_cmds_callback, this, std::placeholders::_1));
 
 
-        sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
-            "CS/nav_shutdown_cmds", 1, std::bind(&MotorCmds::callback_shutdown, this, std::placeholders::_1));
+        // sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
+        //     "CS/nav_shutdown_cmds", 1, std::bind(&MotorCmds::callback_shutdown, this, std::placeholders::_1));
         
-        destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&MotorCmds::destroy_callback, this, std::placeholders::_1));
-
 
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
         std::size_t size = motors.size();
@@ -114,16 +112,16 @@ class MotorCmds : public rclcpp::Node
     
 
   private:
-    void callback_shutdown(std_msgs::msg::String::SharedPtr msg)
-    {
-        RCLCPP_INFO(get_logger(), "Read :'%s'", msg->data);
+    // void callback_shutdown(std_msgs::msg::String::SharedPtr msg)
+    // {
+    //     RCLCPP_INFO(get_logger(), "Read :'%s'", msg->data);
         
-        if (msg->data == "NAV_SHUTDOWN")   
-        {
-            throw std::runtime_error("Shutdown requested");
-        }          
+    //     if (msg->data == "NAV_SHUTDOWN")   
+    //     {
+    //         throw std::runtime_error("Shutdown requested");
+    //     }          
 
-    }
+    // }
                  
 
 
@@ -417,11 +415,6 @@ class MotorCmds : public rclcpp::Node
 
         }
     
-    }
-
-      void destroy_callback(const std_msgs::msg::String::SharedPtr msg)
-    {
-        if(msg->data == "abort") rclcpp::shutdown();
     }
 
 

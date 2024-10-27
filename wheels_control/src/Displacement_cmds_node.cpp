@@ -113,6 +113,7 @@ public:
     // slownormalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
   }
 
+
 private:
   bool go_left = false;
   bool go_right = false;

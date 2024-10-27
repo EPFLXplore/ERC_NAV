@@ -52,12 +52,6 @@ class GamepadInterface : public rclcpp::Node
       sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 10, std::bind(&GamepadInterface::callback_gamepad, this, std::placeholders::_1));
 
-      
-      sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
-        "CS/nav_shutdown_cmds", 1, std::bind(&GamepadInterface::callback_shutdown, this, std::placeholders::_1));
-
-      destroy_sub_ = this->create_subscription<std_msgs::msg::String>("ROVER/NAV_status", rclcpp::QoS(rclcpp::KeepLast(1)), std::bind(&GamepadInterface::destroy_callback, this, std::placeholders::_1));
-
 
     }
 
@@ -90,10 +84,7 @@ class GamepadInterface : public rclcpp::Node
 
     }
 
-     void destroy_callback(const std_msgs::msg::String::SharedPtr msg)
-    {
-        if(msg->data == "abort") rclcpp::shutdown();
-    }
+
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
