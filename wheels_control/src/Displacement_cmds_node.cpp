@@ -199,9 +199,7 @@ private:
 
     go_left = msg->buttons[3];
     go_right = msg->buttons[4];
-    
-    change_state = false;
-
+    change_state = 0;
     if (lateral)
     {
       RCLCPP_INFO(get_logger(), "IS LATERAL ");
@@ -224,7 +222,7 @@ private:
     else
     {
       kinematic_state = NORMAL_KINEMATIC;
-      // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
+      //RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
     }
   }
 
