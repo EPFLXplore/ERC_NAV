@@ -43,6 +43,14 @@ void loop()
       IMU.readGyroscope(gyr_x,gyr_y,gyr_z); //reads gyroscope accels in dps (degrees per second)
     }
 
+    float gyr_off_x = 0.1191326105;
+    float gyr_off_y = 0.0049374478;
+    float gyr_off_z = -0.3535112593;
+
+    gyr_x = gyr_x - gyr_off_x;
+    gyr_y = gyr_y - gyr_off_y;
+    gyr_z = gyr_z - gyr_off_z;
+
     Xm_off = x_mag - b_acc[0];
     Ym_off = y_mag - b_acc[1];
     Zm_off = z_mag - b_acc[2];
