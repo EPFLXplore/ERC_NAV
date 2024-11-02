@@ -12,6 +12,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(imu_filter_madgwick REQUIRED) # Add imu_filter_madgwick as a dependency
 
 # Manually add include directories if LibSerial is installed in /usr/include/libserial
 include_directories(/usr/include)
@@ -26,6 +27,11 @@ ament_target_dependencies(imu_pub_raw rclcpp sensor_msgs)
 # Install the executable
 install(TARGETS imu_pub_raw
   DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install the config and launch directories
+install(DIRECTORY config launch
+  DESTINATION share/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
