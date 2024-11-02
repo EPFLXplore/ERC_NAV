@@ -1,9 +1,11 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/magnetic_field.hpp>
 #include <libserial/SerialStream.h>
 #include <cstdlib>
 #include <iostream>
 #include <unistd.h>
+#include <Matrix3x3.h>
 
 using namespace LibSerial;
 
@@ -62,6 +64,10 @@ private:
                 imu_msg.angular_velocity.x = gyr_x * M_PI / 180.0;
                 imu_msg.angular_velocity.y = gyr_y * M_PI / 180.0;
                 imu_msg.angular_velocity.z = gyr_z * M_PI / 180.0;
+
+                //imu orientation in the form of quaternions
+                //need Magdwick filter to get orientation
+
 
                 imu_pub_->publish(imu_msg);
             } else {
