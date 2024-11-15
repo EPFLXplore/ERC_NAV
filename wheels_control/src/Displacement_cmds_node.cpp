@@ -24,7 +24,8 @@ description:  - Take the rover velocity and compute the position of the steering
 
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
-#include "custom_msg/msg/motornavstatus.hpp"
+#include "custom_msg/msg/motor_nav_status.hpp"
+
 
 #include "wheels_control/definition.hpp"
 #include "wheels_control/basic_kinematic_model.hpp"
@@ -37,7 +38,7 @@ using namespace std::chrono_literals;
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 
-int wheels_angle_for_rotation = 0; //  encoder intern = 2900000/8 = 362 500 unit: increment
+int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
 
 // int kinematics_state = 0; // 0 rotation or translation - 1 rotation and translation
@@ -226,7 +227,7 @@ private:
     }
   }
 
-  void callback_absolute_encoders(const custom_msg::msg::Wheelstatus::SharedPtr msg)
+  void callback_absolute_encoders(const custom_msg::msg::MotorNavStatus::SharedPtr msg)
   {
     current_motors_position.drive[FRONT_LEFT] = 0;
     current_motors_position.drive[FRONT_RIGHT] = 0;

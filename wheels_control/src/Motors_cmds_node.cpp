@@ -17,7 +17,7 @@
 #include "custom_msg/msg/wheelstatus.hpp"
 #include "custom_msg/msg/statussteering.hpp"
 #include "custom_msg/msg/motorstatus.hpp"
-#include "custom_msg/msg/motornavstatus.hpp"
+#include "custom_msg/msg/motor_nav_status.hpp"
 
 using namespace std::chrono_literals;
 
@@ -77,8 +77,7 @@ class MotorCmds : public rclcpp::Node
 
         connect_motors(get_logger(), get_clock(), homing);
 
-        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorNavStatus>(
-            "/NAV/motor_nav_status", 1);
+        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorNavStatus>("/NAV/motor_nav_status", 10);
             
         timer_=this->create_wall_timer(
             100ms, std::bind(&MotorCmds::motors_param_callback, this));
@@ -278,23 +277,24 @@ class MotorCmds : public rclcpp::Node
             int id = motor->get_id();
             if (motor->connected())
             {                
-                message_nav.state[id-1] = motor->fault_state();
+                message_nav.state[id-1] = motor->connected();
                 message_nav.current[id-1] = motor->get_current_is();
                 message_nav.average_current[id-1] = motor->get_current_is_averaged();
 
                 // IDs [0,1,2,3] are the nodes for the driving
                 // IDs [4,5,6,7] are the nodes for the steering
-                if (id >4)
+                if (id > 4)
                 {
                     message_nav.position[id-5] = motor->get_position_is();
                 }
                 else{
-                    message_nav.velocity[id-1] = motor->get_velocity_is();
+                    float rpm_to_ms = 2*3.1415*13.5*0.01/60.0;
+                    message_nav.velocity[id-1] = (motor->get_velocity_is())*rpm_to_ms;
                 }
             }
         }    
 
-        pub_motor_nav_status.publish(message_nav);
+        pub_motor_nav_status->publish(message_nav);
     }
 
     bool connect_motors(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, bool homing) const
@@ -420,13 +420,11 @@ class MotorCmds : public rclcpp::Node
 
 
 
-    rclcpp::TimerBase::SharedPtr timer_; 
-    rclcpp::Publisher<custom_msg::msg::Wheelstatus>::SharedPtr pub_absolute_encoders;
-    rclcpp::Publisher<custom_msg::msg::Motorstatus>::SharedPtr pub_motor_status;        
+    rclcpp::TimerBase::SharedPtr timer_;     
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
-    rclcpp::Subscription<custom_msg::msg::MotorNavStatus>::SharedPtr pub_motor_nav_status;
+    rclcpp::Publisher<custom_msg::msg::MotorNavStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;
 };
