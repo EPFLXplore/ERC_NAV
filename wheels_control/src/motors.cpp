@@ -416,31 +416,18 @@ int NAV_Motor::get_efficiency()
     return (int)(100. / (1. + fabs((WINDING_RES * cur) / (SPEED_CONSTANT * vel))));
 }
 
-std::tuple<int, int> NAV_Motor::get_current_informations(unsigned int* max_peek_current, unsigned, int* max_continuous_current)
+/*
+std::tuple<int, int> NAV_Motor::get_current_informations()
 {
-    //PARAMETERS AREN'T USED
+    unsigned int max_continuous_current = 0;
+    unsigned int max_peek_current = 0;
+    unsigned int termal_time_constant = 0;
+    unsigned int error_code = 0;
 
-    //CONNECTION_CHECK;
+    VCS_GetEcMotorParameter(gateway, id, &max_continuous_current, 
+    &max_peek_current, &termal_time_constant, &error_code);
+    print_VCS_error(error_code, __FUNCTION__);
 
-    unsigned short read_max_continuous_current = 0;
-    unsigned short read_max_peek_current = 0;
-    unsigned short termal_time_constant = 0;
-    unsigned int read_error_code = 0;
-    unsigned char read_nbr_pole_pairs;
-
-    int get_tmp = 0;
-
-    get_tmp = VCS_GetEcMotorParameter(gateway, id, &read_max_continuous_current, 
-    &read_max_peek_current, &termal_time_constant, &read_nbr_pole_pairs, &read_error_code);
-    //GetEcMotorParameters has params:
-    // void *KeyHandle, 
-    // unsigned short NodeId
-    // unsigned short *pNominalCurrent
-    // unsigned short *pMaxOutputCurrent
-    // unsigned short *pThermalTimeConstant
-    // unsigned char *pNbOfPolePairs
-    // unsigned int *pErrorCode
-    print_VCS_error(read_error_code, __FUNCTION__);
-
-    return std::make_tuple(read_max_continuous_current, read_max_peek_current);
+    return std::make_tuple(max_continuous_current, max_peek_current);
 }
+*/

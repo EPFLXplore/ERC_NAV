@@ -1,1 +1,0 @@
-docker exec -it nav_humble_jetson bash

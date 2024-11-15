@@ -15,9 +15,7 @@
 #include "std_msgs/msg/string.hpp"
 #include "custom_msg/msg/motorcmds.hpp" 
 #include "custom_msg/msg/wheelstatus.hpp"
-#include "custom_msg/msg/statussteering.hpp"
-#include "custom_msg/msg/motorstatus.hpp"
-#include "custom_msg/msg/motor_nav_status.hpp"
+#include "custom_msg/msg/motor_status.hpp"
 
 using namespace std::chrono_literals;
 
@@ -77,7 +75,8 @@ class MotorCmds : public rclcpp::Node
 
         connect_motors(get_logger(), get_clock(), homing);
 
-        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorNavStatus>("/NAV/motor_nav_status", 10);
+        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
+            "/NAV/motor_nav_status", 1);
             
         timer_=this->create_wall_timer(
             100ms, std::bind(&MotorCmds::motors_param_callback, this));
@@ -85,10 +84,6 @@ class MotorCmds : public rclcpp::Node
        
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
             "NAV/displacement", 1, std::bind(&MotorCmds::motor_cmds_callback, this, std::placeholders::_1));
-
-
-        // sub_cmds_shutdown = this->create_subscription<std_msgs::msg::String>(
-        //     "CS/nav_shutdown_cmds", 1, std::bind(&MotorCmds::callback_shutdown, this, std::placeholders::_1));
         
 
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
@@ -271,7 +266,7 @@ class MotorCmds : public rclcpp::Node
 
     void motors_param_callback()
     {
-        auto message_nav = custom_msg::msg::MotorNavStatus();
+        auto message_nav = custom_msg::msg::MotorStatus();
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
@@ -419,12 +414,12 @@ class MotorCmds : public rclcpp::Node
     }
 
 
-
-    rclcpp::TimerBase::SharedPtr timer_;     
+    rclcpp::TimerBase::SharedPtr timer_; 
+    rclcpp::Publisher<custom_msg::msg::Wheelstatus>::SharedPtr pub_absolute_encoders;
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
-    rclcpp::Publisher<custom_msg::msg::MotorNavStatus>::SharedPtr pub_motor_nav_status;
+    rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;
 };
