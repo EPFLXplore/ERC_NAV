@@ -127,7 +127,7 @@ public:
     /* get_current_informations
        brief :  get Maximal peak current and max continuous current
     */
-    std::tuple<int, int> get_current_informations(unsigned int* max_peek_current, unsigned, int* max_continuous_current);
+    //std::tuple<int, int> get_current_informations();
 };
 
 /* open_gateway

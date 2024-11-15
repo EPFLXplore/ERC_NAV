@@ -34,7 +34,7 @@ Function used from motors.hpp:  - connected()
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
 #include "custom_msg/msg/statussteering.hpp"
-#include "custom_msg/msg/motorstatus.hpp"
+#include "custom_msg/msg/motor_status.hpp"
 
 using namespace std::chrono_literals;
 
@@ -120,17 +120,11 @@ public:
 
         this->homing = false;
 
-        // pub_absolute_encoders = this->create_publisher<custom_msg::msg::Wheelstatus>(
-        //     "/NAV/absolute_encoders", 1);
-
         timer_ = this->create_wall_timer(
             100ms, std::bind(&MotorCmdsLifecycle::motors_param_callback, this));
 
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
             "NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
-
-        pub_motor_status = this->create_publisher<custom_msg::msg::Motorstatus>(
-            "/NAV/motor_status", 1);
 
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
 
@@ -269,46 +263,8 @@ public:
         } while (fault_state);
     }
 
-    // void motors_param_callback()
-    // {
-    //     auto message = custom_msg::msg::Wheelstatus();
-    //     auto motor_status = custom_msg::msg::Motorstatus();
-    //     for (auto motor = motors.begin(); motor != motors.end(); motor++)
-    //     {
-    //         int id = motor->get_id();
-    //         if (motor->connected())
-    //         {
-    //             unsigned int error_code = 0;
-    //             message.state[id - 1] = motor->fault_state(&error_code);
-    //             message.current[id - 1] = motor->get_current_is();
-
-    //             if (error_code != 0)
-    //             {
-    //                 RCLCPP_ERROR(get_logger(), "Error Navigation Motors Detected");
-    //                 this->cleanup();
-    //                 return;
-    //             }
-
-    //             if (id > 4)
-    //             {
-    //                 message.data[id - 5] = motor->get_position_is();
-    //             }
-    //             else
-    //             {
-    //                 motor_status.driving_vel[id - 1] = motor->get_velocity_is();
-    //                 motor_status.driving_curr[id - 1] = motor->get_current_is();
-    //             }
-    //         }
-    //     }
-
-    //     pub_absolute_encoders->publish(message);
-    //     pub_motor_status->publish(motor_status);
-    // }
-
     static void interrupt_handler(int s)
     {
-        // RCLCPP_ERROR(get_logger(), "NAV_motor_cmds: Caught signal %d\n", s);
-        // rclcpp::shutdown();
         exit(1);
     }
 
@@ -452,7 +408,6 @@ public:
 
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<custom_msg::msg::Wheelstatus>::SharedPtr pub_absolute_encoders;
-    rclcpp::Publisher<custom_msg::msg::Motorstatus>::SharedPtr pub_motor_status;
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;

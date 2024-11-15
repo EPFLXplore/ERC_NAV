@@ -400,8 +400,8 @@ int NAV_Motor::get_current_is_averaged()
     CONNECTION_CHECK;
 
     unsigned int error_code = 0;
-    long current_averaged;
-    VCS_GetVelocityIsAveraged(gateway, id, &cur, &error_code);
+    int current_averaged;
+    VCS_GetVelocityIsAveraged(gateway, id, &current_averaged, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return current_averaged;
 }
@@ -416,10 +416,9 @@ int NAV_Motor::get_efficiency()
     return (int)(100. / (1. + fabs((WINDING_RES * cur) / (SPEED_CONSTANT * vel))));
 }
 
+/*
 std::tuple<int, int> NAV_Motor::get_current_informations()
 {
-    CONNECTION_CHECK;
-
     unsigned int max_continuous_current = 0;
     unsigned int max_peek_current = 0;
     unsigned int termal_time_constant = 0;
@@ -431,3 +430,4 @@ std::tuple<int, int> NAV_Motor::get_current_informations()
 
     return std::make_tuple(max_continuous_current, max_peek_current);
 }
+*/
