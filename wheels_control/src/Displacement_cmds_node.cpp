@@ -25,7 +25,6 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "custom_msg/msg/motor_status.hpp"
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
-#include "custom_msg/msg/motor_status.hpp"
 
 
 #include "wheels_control/definition.hpp"
@@ -228,7 +227,7 @@ private:
     }
   }
 
-  void callback_absolute_encoders(const custom_msg::msg::MotorNavStatus::SharedPtr msg)
+  void callback_absolute_encoders(const custom_msg::msg::MotorStatus::SharedPtr msg)
   {
     current_motors_position.drive[FRONT_LEFT] = 0;
     current_motors_position.drive[FRONT_RIGHT] = 0;

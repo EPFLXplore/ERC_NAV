@@ -76,7 +76,7 @@ class MotorCmds : public rclcpp::Node
         connect_motors(get_logger(), get_clock(), homing);
 
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
-            "/NAV/motor_nav_status", 1);
+            "/NAV/motor_nav_status", 10);
             
         timer_=this->create_wall_timer(
             100ms, std::bind(&MotorCmds::motors_param_callback, this));
@@ -419,7 +419,7 @@ class MotorCmds : public rclcpp::Node
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
-    rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr pub_motor_nav_status;
+    rclcpp::Publisher<custom_msg::msg::MotorStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;
 };
