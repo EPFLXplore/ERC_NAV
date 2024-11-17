@@ -10,3 +10,6 @@
 [submodule "localization/lidar/liorf_erc"]
 	path = localization/lidar/liorf_erc
 	url = https://github.com/EPFLXplore/liorf_erc
+[submodule "localization/lidar/liorf"]
+	path = localization/lidar/liorf
+	url = https://github.com/EPFLXplore/liorf
