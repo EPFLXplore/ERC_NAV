@@ -43,7 +43,6 @@
 #define RADIUS_MAX  1
 #define RADIUS_MIN 0.5
 
-#define BASIC_KINEMATIC "basic"
 #define NORMAL_KINEMATIC "normal"
 #define NORMAL_KINEMATIC_SLOW "normal_slow"
 #define LATERAL_KINEMATIC "lateral"

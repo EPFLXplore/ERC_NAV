@@ -28,7 +28,6 @@ description:  - Take the rover velocity and compute the position of the steering
 
 
 #include "wheels_control/definition.hpp"
-#include "wheels_control/basic_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model_slow.hpp"
 #include "wheels_control/lateral_kinematic_model.hpp"
@@ -41,9 +40,7 @@ motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
 
-// int kinematics_state = 0; // 0 rotation or translation - 1 rotation and translation
-string kinematic_state = BASIC_KINEMATIC;
-//string kinematic_state = NORMAL_KINEMATIC;
+string kinematic_state = NORMAL_KINEMATIC;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -74,7 +71,6 @@ class DisplacementCmds : public rclcpp::Node
 public:
   DisplacementCmds() : Node("NAV_displacement_cmds"), count_(0)
   {
-    // RCLCPP_INFO(get_logger(), "STATE KINEMATIC INIT '%s'",  kinematic_state.c_str());
     bool motor_cmds;
     this->declare_parameter("motor_cmds", true);
     if (this->get_parameter("motor_cmds", motor_cmds))
@@ -99,17 +95,13 @@ public:
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
-    /*
-    sub_kinematic_state = this->create_subscription<std_msgs::msg::String>(
-        "/ROVER/NAV_kinematic", 1, std::bind(&DisplacementCmds::callback_mode_kinematic, this, std::placeholders::_1));
-    */
+    
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
 
     RCLCPP_INFO(get_logger(), "ANGLE OF ROTATION INCREMENT '%d'", wheels_angle_for_rotation);
     RCLCPP_INFO(get_logger(), "ANGLE OF ROTATION WITH TRANSLATION INCREMENT '%d'", wheels_angle_for_rotation_with_translation);
 
-    basicKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
     normalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
     // slownormalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
   }
@@ -119,22 +111,7 @@ private:
   bool go_left = false;
   bool go_right = false;
 
-  void callback_mode_kinematic(std_msgs::msg::String::SharedPtr msg)
-  {
-    if (msg->data == "normal")
-    {
-      kinematic_state = NORMAL_KINEMATIC;
-    }
-    else if (msg->data == "basic")
-    {
-      kinematic_state = BASIC_KINEMATIC;
-    }
-    // else if (msg->data == "lateral")
-    // {
-    //   kinematic_state = LATERAL_KINEMATIC;
-    // }
-  }
-
+  
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     float r_z = msg->angular.z;
@@ -142,23 +119,15 @@ private:
     float v_x = msg->linear.x;
     float v_y = msg->linear.y;
 
-    // RCLCPP_INFO(get_logger(), "STATE KINEMATIC callback cmdvel '%s'",  kinematic_state.c_str());
-
     /*Run the kinematics manager to compute the motion*/
-    if (kinematic_state == NORMAL_KINEMATIC)
+    if (kinematic_state == NORMAL_KINEMATIC) {
       // normal_kinematics_manager(v_x, v_y, r_z);
-      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
-    else if (kinematic_state == LATERAL_KINEMATIC)
-    {
+      RCLCPP_INFO(get_logger(), "VX: %f, VY: %f, OZ: %f", v_x, v_y, r_z);
 
+      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
+     } else {
       current_motors_cmds = lateralKinematicModel.run(go_left, go_right);
       RCLCPP_INFO(get_logger(), "current_motors_cmds ");
-    }
-
-    else
-    {
-      // basic_kinematics_manager(v_x, v_y, r_z);
-      current_motors_cmds = basicKinematicModel.run(current_motors_position, v_x, v_y, r_z);
     }
 
     send_kinematic_msg();
@@ -198,32 +167,17 @@ private:
     bool change_state = msg->buttons[8];
     bool lateral = (msg->buttons[3] || msg->buttons[4]);
 
-    go_left = msg->buttons[3];
-    go_right = msg->buttons[4];
+    //go_left = msg->buttons[3];
+    //go_right = msg->buttons[4];
     change_state = 0;
     if (lateral)
     {
       RCLCPP_INFO(get_logger(), "IS LATERAL ");
       kinematic_state = LATERAL_KINEMATIC;
     }
-    else if (change_state)
-    {
-      RCLCPP_INFO(get_logger(), "CHANGE STATE", change_state);
-      if (kinematic_state == BASIC_KINEMATIC)
-      {
-        kinematic_state = NORMAL_KINEMATIC;
-        // RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
-      }
-      else
-      {
-        kinematic_state = BASIC_KINEMATIC;
-        // RCLCPP_INFO(get_logger(), "STATE ROTATION OR TRANSLATION",  kinematic_state);
-      }
-    }
     else
     {
       kinematic_state = NORMAL_KINEMATIC;
-      //RCLCPP_INFO(get_logger(), "STATE ROTATION WITH TRANSLATION",  kinematic_state);
     }
   }
 
@@ -240,7 +194,6 @@ private:
     current_motors_position.steer[BACK_LEFT] = msg->position[BACK_LEFT];
   }
 
-  RoverBasicKinematicModel basicKinematicModel;
   RoverNormalKinematicModel normalKinematicModel;
   RoverLateralKinematicModel lateralKinematicModel;
 

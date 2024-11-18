@@ -79,7 +79,6 @@ ament_target_dependencies(NAV_cmd_vel_manager rclcpp custom_msg geometry_msgs se
 
 add_executable(NAV_displacement_cmds 
   src/Displacement_cmds_node.cpp
-  src/kinematic_models/basic_kinematic_model.cpp
   src/kinematic_models/normal_kinematic_model.cpp
   src/kinematic_models/lateral_kinematic_model.cpp
 

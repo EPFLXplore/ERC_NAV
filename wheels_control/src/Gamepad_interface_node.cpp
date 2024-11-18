@@ -46,8 +46,6 @@ class GamepadInterface : public rclcpp::Node
     {
       pub_cmd_vel_manual = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_manual", 10); 
       pub_nav_auto_state = this->create_publisher<std_msgs::msg::String>("/NAV/nav_auto_state", 10); 
-      
-
 
       sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 10, std::bind(&GamepadInterface::callback_gamepad, this, std::placeholders::_1));
@@ -105,20 +103,6 @@ class GamepadInterface : public rclcpp::Node
       else
         v_x = -msg->axes[2];
 
-     // RCLCPP_INFO(this->get_logger(), "RECEIVED JOY");
-
-      // if (r_z != 0)
-      //   r_z = r_z * 2 -1; // to be between -1 and 1
-
-      // RCLCPP_INFO(this->get_logger(), "Publishing: '%f'", v_x);
-
-
-      // if (r_z != 0)
-      //   r_z = r_z * 2 -1; // to be between -1 and 1
-
-      // RCLCPP_INFO(this->get_logger(), "Publishing: '%f'", r_z);
-
-
       if (auto_state == 1)
       {
         nav_message = "NAV_AUTONOMOUS_START";
@@ -139,12 +123,7 @@ class GamepadInterface : public rclcpp::Node
 
       message.angular.z = -filter(r_z, buffer_z);
 
-      cout<< -r_z << endl;
-
-      // RCLCPP_INFO(this->get_logger(), "Publishing: '%f'", r_z);
-
       pub_cmd_vel_manual->publish(message);
-
 
       auto msg_nav_auto_state = std_msgs::msg::String(); 
       msg_nav_auto_state.data = nav_message;
