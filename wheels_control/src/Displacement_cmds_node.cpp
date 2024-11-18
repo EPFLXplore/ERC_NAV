@@ -24,7 +24,7 @@ description:  - Take the rover velocity and compute the position of the steering
 
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
-#include "custom_msg/msg/motor_nav_status.hpp"
+#include "custom_msg/msg/motor_status.hpp"
 
 
 #include "wheels_control/definition.hpp"
@@ -93,7 +93,7 @@ public:
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 1, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
 
-    sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorNavStatus>(
+    sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorStatus>(
         "/NAV/motor_nav_status", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
 
@@ -227,7 +227,7 @@ private:
     }
   }
 
-  void callback_absolute_encoders(const custom_msg::msg::MotorNavStatus::SharedPtr msg)
+  void callback_absolute_encoders(const custom_msg::msg::MotorStatus::SharedPtr msg)
   {
     current_motors_position.drive[FRONT_LEFT] = 0;
     current_motors_position.drive[FRONT_RIGHT] = 0;
@@ -252,7 +252,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_kinematic_state;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
-  rclcpp::Subscription<custom_msg::msg::MotorNavStatus>::SharedPtr sub_topic_absolute_encoders;
+  rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr sub_topic_absolute_encoders;
 };
 
 int main(int argc, char *argv[])
