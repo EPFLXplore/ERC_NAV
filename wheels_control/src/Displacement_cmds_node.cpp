@@ -122,7 +122,7 @@ private:
     /*Run the kinematics manager to compute the motion*/
     if (kinematic_state == NORMAL_KINEMATIC) {
       // normal_kinematics_manager(v_x, v_y, r_z);
-      RCLCPP_INFO(get_logger(), "VX: %f, VY: %f, OZ: %f", v_x, v_y, r_z);
+      //RCLCPP_INFO(get_logger(), "VX: %f, VY: %f, OZ: %f", v_x, v_y, r_z);
 
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
      } else {

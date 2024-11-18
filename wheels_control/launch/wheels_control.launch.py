@@ -54,6 +54,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_cmd_vel_manager",
     )
 
+    cs_interface = launch_ros.actions.Node(
+        package="interfacing_nav_cs",
+        executable="interface",
+        name="NavCSInterfacing",
+    )
+
     displacement_cmds_node = launch_ros.actions.Node(
         package="wheels_control",
         executable="NAV_displacement_cmds",
@@ -71,11 +77,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     return [
         # Arguments
-        #fake_cs_gamepad_arg,
         motor_cmds_arg,
         homing_arg,
         # Nodes
-        #fake_cs_gamepad_node,
+        cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,

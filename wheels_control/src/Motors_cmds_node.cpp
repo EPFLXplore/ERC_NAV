@@ -106,26 +106,10 @@ class MotorCmds : public rclcpp::Node
     
 
   private:
-    // void callback_shutdown(std_msgs::msg::String::SharedPtr msg)
-    // {
-    //     RCLCPP_INFO(get_logger(), "Read :'%s'", msg->data);
-        
-    //     if (msg->data == "NAV_SHUTDOWN")   
-    //     {
-    //         throw std::runtime_error("Shutdown requested");
-    //     }          
-
-    // }
-                 
-
-
-
+     
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)   
     {
         /*Manage the communication with the controllers to execute the desire speed*/
-
-        // RCLCPP_INFO(get_logger(), " motor_cmds_callback", 4);
-        
         
         mode_deplacement = msg->modedeplacement;
 
