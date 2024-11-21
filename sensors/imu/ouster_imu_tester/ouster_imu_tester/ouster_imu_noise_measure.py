@@ -19,16 +19,15 @@ class IMUNoiseCalculatorNode(Node):
         # Subscription to IMU data
         self.subscription = self.create_subscription(
             Imu,
-            '/ouster_imu',
+            '/ouster_imu_lowpass',
             self.imu_callback,
             qos_profile
         )
 
-        # Variables to store IMU data
         self.acc_data = {'x': [], 'y': [], 'z': []}
         self.gyr_data = {'x': [], 'y': [], 'z': []}
         self.sample_count = 0
-        self.max_samples = 600  # Number of samples to collect
+        self.max_samples = 2000  # Number of samples to collect
 
         self.get_logger().info("IMU Noise Calculator Node initialized. Waiting for data...")
 
@@ -57,6 +56,17 @@ class IMUNoiseCalculatorNode(Node):
         gyr_y = np.array(self.gyr_data['y'])
         gyr_z = np.array(self.gyr_data['z'])
 
+        self.get_logger().info("------------  Mean IMU Values  ----------")
+        self.get_logger().info(f"Mean Accelerometer X: {np.mean(acc_x)}")
+        self.get_logger().info(f"Mean Accelerometer Y: {np.mean(acc_y)}")
+        self.get_logger().info(f"Mean Accelerometer Z: {np.mean(acc_z)}")
+        self.get_logger().info(f"Mean Gyroscope X: {np.mean(gyr_x)}")
+        self.get_logger().info(f"Mean Gyroscope Y: {np.mean(gyr_y)}")
+        self.get_logger().info(f"Mean Gyroscope Z: {np.mean(gyr_z)}")
+
+        self.get_logger().info("------------  IMU Noise  ----------")
+
+
         # Calculate standard deviations for accelerometer and gyroscope
         imu_acc_noise = np.mean([np.std(acc_x), np.std(acc_y), np.std(acc_z)])
         imu_gyr_noise = np.mean([np.std(gyr_x), np.std(gyr_y), np.std(gyr_z)])
@@ -69,14 +79,14 @@ class IMUNoiseCalculatorNode(Node):
         acc_magnitude = np.sqrt(acc_x**2 + acc_y**2 + acc_z**2)
         imu_gravity = np.mean(acc_magnitude)
 
-        # Print calculated values
         self.get_logger().info(f"Accelerometer Noise (imuAccNoise): {imu_acc_noise:.6e} m/s^2")
         self.get_logger().info(f"Gyroscope Noise (imuGyrNoise): {imu_gyr_noise:.6e} rad/s")
         self.get_logger().info(f"Accelerometer Bias Noise (imuAccBiasN): {imu_acc_bias_n:.6e} m/s^2/s")
         self.get_logger().info(f"Gyroscope Bias Noise (imuGyrBiasN): {imu_gyr_bias_n:.6e} rad/s/s")
         self.get_logger().info(f"Gravity (imuGravity): {imu_gravity:.6f} m/s^2")
 
-        # Stop the node after calculation
+        self.get_logger().info("---------------------")
+
         self.get_logger().info("IMU Noise Calculation Complete. Shutting down node.")
         rclpy.shutdown()
 
@@ -90,7 +100,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
 
-    # Shutdown the node
     node.destroy_node()
     rclpy.shutdown()
 
