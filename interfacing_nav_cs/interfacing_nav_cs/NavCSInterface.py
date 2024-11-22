@@ -1,4 +1,4 @@
-import os, launch, time, rclpy
+import os, launch, time, rclpy, yaml
 from custom_msg.srv import ChangeModeSystem
 from rclpy.node import Node
 from ament_index_python.packages import get_package_share_directory
@@ -7,7 +7,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from lifecycle_msgs.srv import ChangeState, GetState
 from lifecycle_msgs.msg import Transition, State
 from std_msgs.msg import String
-from sensor_msgs.msg import Joy
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
 """
 INTERFACING NAV-CS 2024
@@ -24,19 +24,35 @@ Mode = {
     2: "Auto"
 }
 
+Mode_to_CS = {
+    "Off": 0,
+    "Manual": 1,
+    "Auto": 2
+}
+
 class NavCSInterface(Node):
 
     def __init__(self):
         super().__init__("NavCSInterfacing")
 
+        with open('/home/xplore/dev_ws/src/custom_msg/config/nav_interface_names.yaml', 'r') as file:
+            self.nav_names = yaml.safe_load(file)["/**"]["ros__parameters"]
+
+        with open('/home/xplore/dev_ws/src/custom_msg/config/rover_interface_names.yaml', 'r') as file:
+            self.rover_names = yaml.safe_load(file)["/**"]["ros__parameters"]
+
         # Since it's NAV2 that handles the actions for NAV, we don't have any informations on the action
         # that are running right now. 
 
         self.mode = 'Off'
+        self.transitioning_state = False
+
+        group = ReentrantCallbackGroup()
 
         # Change Mode
-        self.cs_request = self.create_service(ChangeModeSystem, '/ROVER/change_NAV_mode', self.execute_service)
-        self.mode_publisher = self.create_publisher(String, '/ROVER/NAV_mode', 1)
+        self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group)
+        self.mode_publisher = self.create_publisher(String, self.nav_names['system_status'], 1)
+        self.timer_mode = self.create_timer(2.0, self.pub_state)
 
         # Nav 2
         self.path_nav2_launch_file = '/dev_ws/src/path_planning/launch/nav2_real.launch.py'
@@ -45,12 +61,18 @@ class NavCSInterface(Node):
         self.launch_service = None
 
         # Motor Health
-        self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURE
-        self.check_motor_health = self.create_timer(0.1, self.get_state_motor_control)
+        self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURED
+        #self.check_motor_health = self.create_timer(2.0, self.get_state_motor_control)
         self.motor_change_service = self.create_client(ChangeState, 
-                                                      '/NAV_motor_cmds/change_state')
+                                                      '/NAV_motor_cmds/change_state', callback_group=group)
         self.motor_check_service = self.create_client(GetState, 
                                                       '/NAV_motor_cmds/get_state')
+
+
+    def pub_state(self):
+        m = String()
+        m.data = self.mode
+        self.mode_publisher.publish(m)
 
     # ----------------------------------------------------------
     # SERVICE
@@ -59,7 +81,7 @@ class NavCSInterface(Node):
         mode = request.mode
 
         if self.mode == Mode[mode]:
-            response.systems_state = self.mode
+            response.new_mode = mode
             response.error_type = 1
             response.error_message = "already in that state"
             return response
@@ -67,42 +89,55 @@ class NavCSInterface(Node):
 
         # Transition to Manual mode from Off
         if self.mode == 'Off' and Mode[mode] == 'Manual':
-            self.transition_state(Transition.CONFIGURE, "configure", self.default_transition_check_callback)
+            self.transitioning_state = True
+            self.transition_state(Transition.TRANSITION_CONFIGURE, "configure", 
+                                  State.PRIMARY_STATE_INACTIVE, 
+                                  self.default_transition_check_callback,
+                                  mode,
+                                  "NAV lifecycle change state successfully",
+                                  response)
+            
+            while(self.transitioning_state):
+                time.sleep(1)
 
-            if self.state_motor_control == State.PRIMARY_STATE_INACTIVE:
-                self.mode = Mode[mode]
-                response.systems_state = self.mode
-                response.error_type = 0
-                response.error_message = "NAV lifecycle change state successfully"
-                return response  
-            else:
-                response.systems_state = self.mode
-                response.error_type = 1
-                response.error_message = "NAV lifecycle change state failed"
-                return response                
+            return response
+            # if self.state_motor_control == State.PRIMARY_STATE_INACTIVE:
+            #     self.mode = Mode[mode]
+            #     response.new_mode = mode
+            #     response.error_type = 0
+            #     response.error_message = "NAV lifecycle change state successfully"
+            #     return response  
+            # else:
+            #     response.new_mode = Mode_to_CS[self.mode]
+            #     response.error_type = 1
+            #     response.error_message = "NAV lifecycle change state failed"
+            #     return response                
 
         # Transition to Auto mode from Off
+        '''
         if self.mode == 'Off' and Mode[mode] == 'Auto':
-            self.transition_state(Transition.CONFIGURE, "configure", self.default_transition_check_callback)
+            self.transition_state(Transition.TRANSITION_CONFIGURE, "configure", 
+                                  State.PRIMARY_STATE_INACTIVE, self.default_transition_check_callback)
             
             if self.state_motor_control == State.PRIMARY_STATE_INACTIVE:
                 has_started = self.launch_nav2_cmd()
 
                 if has_started:
-                    response.systems_state = Mode[mode]
+                    response.new_mode = Mode[mode]
                     response.error_type = 0
                     response.error_message = "Transition to Auto mode successful"
                     self.mode = Mode[mode]
                     return response
                 else:
-                    self.transition_state(Transition.CLEANUP, "cleanup", self.default_transition_check_callback)
-                    response.systems_state = self.mode
+                    self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
+                                          State.PRIMARY_STATE_UNCONFIGURED, self.default_transition_check_callback)
+                    response.new_mode = Mode_to_CS[self.mode]
                     response.error_type = 1
                     response.error_message = "error can't launch nav2"
                     return response
                 
             else:
-                response.systems_state = self.mode
+                response.new_mode = Mode_to_CS[self.mode]
                 response.error_type = 1
                 response.error_message = "NAV lifecycle change state failed"
                 return response
@@ -110,49 +145,63 @@ class NavCSInterface(Node):
         # Transition to Off mode from Auto
         if self.mode == 'Auto' and Mode[mode] == 'Off':
             self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
-                                  self.default_transition_check_callback)
+                                  State.PRIMARY_STATE_UNCONFIGURED, self.default_transition_check_callback)
             
             if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED:
                 
                 has_stopped = self.stop_nav2_cmd()
 
                 if has_stopped:
-                    response.systems_state = Mode[mode]
+                    response.new_mode = Mode[mode]
                     response.error_type = 0
                     response.error_message = "Transition to Off mode successful"
                     self.mode = Mode[mode]
                     return response
                 else:
-                    response.systems_state = self.mode
+                    response.new_mode = Mode_to_CS[self.mode]
                     response.error_type = 1
                     response.error_message = "error can't stop nav2"
                     return response
                 
             else:
-                response.systems_state = self.mode
+                response.new_mode = Mode_to_CS[self.mode]
                 response.error_type = 1
                 response.error_message = "NAV lifecycle change state failed"
                 return response
-            
+        '''   
         # Transition to Off mode from Manual
         if self.mode == 'Manual' and Mode[mode] == 'Off':
+
+            self.transitioning_state = True
             self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
-                                  self.default_transition_check_callback)
+                                  State.PRIMARY_STATE_UNCONFIGURED, 
+                                  self.default_transition_check_callback,
+                                  mode,
+                                  "NAV lifecycle change state successfully",
+                                  response)
+            
+            while(self.transitioning_state):
+                time.sleep(1)
+
+            return response
+            '''
+            self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
+                                  State.PRIMARY_STATE_UNCONFIGURED, self.default_transition_check_callback)
             
             if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED:
                 
-                response.systems_state = Mode[mode]
+                response.new_mode = Mode[mode]
                 response.error_type = 0
                 response.error_message = "Transition to Off mode successful"
                 self.mode = Mode[mode]
                 return response
                 
             else:
-                response.systems_state = self.mode
+                response.new_mode = Mode_to_CS[self.mode]
                 response.error_type = 1
                 response.error_message = "NAV lifecycle change state failed"
                 return response
-
+            '''
     # ------------------------------------------------------------------------
     # NAV2 COMMANDS STACK
     
@@ -234,6 +283,8 @@ class NavCSInterface(Node):
 
         self.state_motor_control = future.result().current_state.id
 
+        self.get_logger().info(f"{self.state_motor_control}")
+
         # If for some reasons the motors go off while being in Auto mode
         if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED and self.mode == 'Auto':
             # kill nav2
@@ -242,56 +293,60 @@ class NavCSInterface(Node):
             if has_stopped:
                 # send information to cs and update state
                 self.mode = 'Off'
-                mode = String()
-                mode.data = "Off" 
-                self.mode_publisher.publish(mode)
                 return
             else:
                 self.get_logger().error("nav2 has not been shutdown while motors went off")
                 return
         
+        # If for some reasons the motors go off while being in Manual mode
         if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED and self.mode == 'Manual':
             self.mode = 'Off'
-            mode = String()
-            mode.data = "Off" 
-            self.mode_publisher.publish(mode)
             return
 
         if self.state_motor_control == State.PRIMARY_STATE_INACTIVE and self.mode == 'Off':
             self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
-                                  self.default_transition_check_callback)
-
-            mode = String()
-            mode.data = "Off" 
-            self.mode_publisher.publish(mode)
+                                  State.PRIMARY_STATE_UNCONFIGURED, self.default_transition_check_callback)
             return
     
     # ------------------------------------------------------------------------
 
-    def transition_state(self, state, label, callback_transition):
+    def transition_state(self, state, label, next_state, callback_transition, mode, message_response, response):
         motor_request = ChangeState.Request()
         motor_request.transition.id = state
         motor_request.transition.label = label
 
         future = self.motor_change_service.call_async(motor_request)
-        future.add_done_callback(lambda f: callback_transition(f, state))
+        future.add_done_callback(lambda f: self.default_transition_check_callback(f, next_state, mode, message_response, response))
     
-    def default_transition_check_callback(self, future, state):
+    def default_transition_check_callback(self, future, next_state, mode, message_response, response):
         if future.result().success:
-            self.state_motor_control = state
-            self.get_logger().error("NAV lifecycle change state successfull")
+            self.state_motor_control = next_state
+            self.change_mode(mode, 0, response, message_response)
+            self.get_logger().info(message_response)
     
         else:
+            self.change_mode(Mode_to_CS[self.mode], 1, response, "NAV lifecycle change state failed")
             self.get_logger().error("NAV lifecycle change state failed")
+        
+        self.transitioning_state = False
+    
+    def change_mode(self, mode, error_type, response, message_response):
+        self.mode = Mode[mode]
+        response.new_mode = mode
+        response.error_type = error_type
+        response.error_message = message_response
 
 def main(args=None):
     rclpy.init(args=args)
 
-    minimal_subscriber = NavCSInterface()
+    nav_cs_interface = NavCSInterface()
 
-    rclpy.spin(minimal_subscriber)
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(nav_cs_interface)
 
-    minimal_subscriber.destroy_node()
+    executor.spin()
+
+    nav_cs_interface.destroy_node()
     rclpy.shutdown()
 
 

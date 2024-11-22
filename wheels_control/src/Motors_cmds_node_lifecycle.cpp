@@ -123,6 +123,9 @@ public:
         timer_ = this->create_wall_timer(
             100ms, std::bind(&MotorCmdsLifecycle::motors_param_callback, this));
 
+        pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
+            "/NAV/motor_nav_status", 10);
+
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
             "NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
 
@@ -182,6 +185,34 @@ public:
         RCLCPP_INFO(get_logger(), "on_shutdown() called");
 
         return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+    }
+
+    void motors_param_callback()
+    {
+        auto message_nav = custom_msg::msg::MotorStatus();
+        for (auto motor = motors.begin(); motor != motors.end(); motor++)
+        {
+            int id = motor->get_id();
+            if (motor->connected())
+            {                
+                message_nav.state[id-1] = motor->connected();
+                message_nav.current[id-1] = motor->get_current_is();
+                message_nav.average_current[id-1] = motor->get_current_is_averaged();
+
+                // IDs [0,1,2,3] are the nodes for the driving
+                // IDs [4,5,6,7] are the nodes for the steering
+                if (id > 4)
+                {
+                    message_nav.position[id-5] = motor->get_position_is();
+                }
+                else{
+                    float rpm_to_ms = 2*3.1415*13.5*0.01/60.0;
+                    message_nav.velocity[id-1] = (motor->get_velocity_is())*rpm_to_ms;
+                }
+            }
+        }    
+
+        pub_motor_nav_status->publish(message_nav);
     }
 
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)
@@ -411,6 +442,7 @@ public:
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
+    rclcpp::Publisher<custom_msg::msg::MotorStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;
     bool homing;
