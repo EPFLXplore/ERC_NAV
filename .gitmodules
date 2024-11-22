@@ -13,3 +13,6 @@
 [submodule "localization/lidar/liorf"]
 	path = localization/lidar/liorf
 	url = https://github.com/EPFLXplore/liorf
+[submodule "sensors/camera/ERC_CAMERAS"]
+	path = sensors/camera/ERC_CAMERAS
+	url = git@github.com:EPFLXplore/ERC_CAMERAS.git
