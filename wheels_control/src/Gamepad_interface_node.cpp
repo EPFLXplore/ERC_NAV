@@ -109,13 +109,13 @@ class GamepadInterface : public rclcpp::Node
           {
             if (((msg->axes[GP_axis_R2]) > joystick_threadhold) && ((msg->axes[GP_axis_L2]) < joystick_threadhold)) 
             {
-              float r_z = msg->axes[msg->axes[GP_axis_joystick_left_horizontal]];  
+              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
               float v_x = msg->axes[GP_axis_R2];
               float v_y = 0;
             }
             else if (((msg->axes[GP_axis_R2]) < joystick_threadhold) && ((msg->axes[GP_axis_L2]) > joystick_threadhold))
             {
-              float r_z = msg->axes[msg->axes[GP_axis_joystick_left_horizontal]];  
+              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
               float v_x = -msg->axes[GP_axis_L2];
               float v_y = 0;
             }
@@ -134,6 +134,7 @@ class GamepadInterface : public rclcpp::Node
             float v_x = 0;
             float v_y = 0;
           } 
+        }
       }
      
       else if ((msg->axes[GP_axis_R2]) > joystick_threadhold) || ((msg->axes[GP_axis_L2]) > joystick_threadhold)
@@ -182,12 +183,12 @@ class GamepadInterface : public rclcpp::Node
       if (state_manual)
       {
         // MANUAL MODE
-        nav_message = "NAV_MANUAL";
+        nav_message = "NAV_AUTONOMOUS_END";
       }
       else 
       {
         // AUTONOMOUS MODE
-        nav_message = "NAV_AUTONOMOUS";
+        nav_message = "NAV_AUTONOMOUS_START";
       }
 
       // Switch between kinematics state
