@@ -44,7 +44,7 @@ string kinematic_state = NORMAL_KINEMATIC;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
-_Float64 get_wheels_angle_inc_for_rotation(_Float64 width = 0.833, _Float64 length = 0.736)
+_Float64 get_wheels_angle_inc_for_rotation()
 {
   /*
   Calculating the angle of rotation from the tangent angle of the rectangle's circle structure of the rover
@@ -60,7 +60,7 @@ _Float64 get_wheels_angle_inc_for_rotation(_Float64 width = 0.833, _Float64 leng
   _Float64 angle_of_rotation_radians = 0;
   _Float64 angle_of_rotation_increment = 0;
 
-  angle_of_rotation_radians = atan(width / length);
+  angle_of_rotation_radians = atan(WIDTH / LENGTH);
   angle_of_rotation_increment = (angle_of_rotation_radians * (pow(2, TOUR_RESOLUTION_BITS))) / (2 * M_PI);
 
   return angle_of_rotation_increment;

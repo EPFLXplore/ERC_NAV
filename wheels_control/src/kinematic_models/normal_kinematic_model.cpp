@@ -1,3 +1,10 @@
+/*
+Last updated:       22/11/2024
+Rewritting author:  Cyril Goffin
+Description:        Computes the wheels velocity commands and the steering angle commands 
+                    based on the gamepad inputs.
+*/
+
 #include <cmath>
 #include <iostream>
 #include <thread>
@@ -29,108 +36,73 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 alpha_ext = 0.0;
     _Float64 alpha_int = 0.0;
 
-    _Float64 conversion_speed = 3600; // 1800; // for 0.5m.s
-    _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI);
+    _Float64 conversion_speed = 3600; // 1800; // for 0.5m.s                       ????????????
+    _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI); //    ????????????
 
-    if (std::abs(v_x) > 0.5)
+
+    _Float64 max_linear_velocity = 0.5; // in m/s 
+    _Float64 max_angular_velocity = 0.5; // in rad/s
+    _Float64 max_ratation_radius = 1; // in m
+
+    // limit the linear velocity
+    if (std::abs(v_x) > max_linear_velocity)
     {
-        v_x = (v_x / std::abs(v_x)) * 0.5;
+        v_x = (v_x / std::abs(v_x)) * max_linear_velocity;
     }
 
-    // if (std::abs(omega_z) > 0.5)
-    // {
-    //     omega_z = (omega_z / std::abs(omega_z)) * 0.5;
-    // }
+    // limit the angular velocity
+    if (std::abs(omega_z) > max_angular_velocity)
+    {
+        omega_z = (omega_z / std::abs(omega_z)) * max_angular_velocity;
+    }
 
+    // 3 DIFFERENT CASES: ONLY ROTATION ON ITSELF, ONLY TRANSLATION, TRANSLATION AND ROTATION
     if (omega_z != 0)
     {
         r_ = v_x / omega_z;
-        std::cout << "TRANSLATION AND ROTATION " << std::endl;
-
-        std::cout << "r_1 " << r_ << std::endl;
 
         if (r_ != 0)
         {
+            // TRANSLATION AND ROTATION (curve motion)
+            current_motors_cmds.info = "translation and rotation";
+
             _Float64 sign_r = std::abs(r_) / r_;
+            _Float64 velocity_sign = std::abs(v_x) / v_x; // equivalent to   _Float64 velocity_sign = v_x >= 0 ? 1 : -1;    ?? 
 
-            if (std::abs(r_) < 1)
+            if (std::abs(r_) < max_ratation_radius)
             {
-                r_ = 1 * sign_r;
+                r_ = max_ratation_radius * sign_r;
 
-                // if (std::abs(v_x) == 0.5)
-                // {
-                //     std::cout << "OMEGA LIMITS " << r_ << std::endl;
-                //     omega_z = v_x;
-
-                // }
-                omega_z = std::abs(omega_z) / omega_z * v_x;
+                omega_z = std::abs(omega_z) / omega_z * v_x; // ?????????????????????
             }
 
-            std::cout << "v_x " << v_x << std::endl;
-
-            std::cout << "omega_z " << omega_z << std::endl;
-
-            std::cout << "r_2 " << r_ << std::endl;
-            std::cout << "desired radius " << r_ << std::endl;
-
-            alpha_ext = atan2((LENGTH / 2), (std::abs(r_) + WIDTH / 2)); // atan2 between -pi and pi
+            alpha_ext = atan2((LENGTH / 2), (std::abs(r_) + WIDTH / 2));
             alpha_int = atan2((LENGTH / 2), (std::abs(r_) - WIDTH / 2));
-
-            _Float64 velocity_sign = v_x >= 0 ? 1 : -1;
 
             _Float64 r_ext = std::sqrt((std::abs(r_) + WIDTH / 2) * (std::abs(r_) + WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
             _Float64 r_int = std::sqrt((std::abs(r_) - WIDTH / 2) * (std::abs(r_) - WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
 
-            std::cout << "r_ext " << r_ext << std::endl;
-            std::cout << "r_int " << r_int << std::endl;
-
             v_ext = std::abs(omega_z) * r_ext * velocity_sign;
             v_int = std::abs(omega_z) * r_int * velocity_sign;
-            current_motors_cmds.info = "translation and rotation";
         }
         else if (r_ == 0)
         {
-            _Float64 omega_z_local = 0.0;
-
+            // ROTATION ON ITSELF
             current_motors_cmds.info = "self rotation";
+
             en_rotation_quoi = true;
-            std::cout << "wheels_angle_for_rotation " << wheels_angle_for_rotation << std::endl;
-            alpha_ext = wheels_angle_for_rotation / conversion_angle;
-            alpha_int = -wheels_angle_for_rotation / conversion_angle;
 
-            if (std::abs(omega_z) > 0.5)
-            {
-                omega_z_local = (omega_z / std::abs(omega_z)) * 0.5;
-            }
-            else
-            {
-                omega_z_local = omega_z;
-            }
+            alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
+            alpha_int = -alpha_ext;
 
-            v_ext = (std::abs(omega_z_local));
-            v_int = -(std::abs(omega_z_local));
+            v_ext = (std::abs(omega_z));
+            v_int = -(std::abs(omega_z));
         }
-
-        // if (std::abs(v_ext) > 0.5)
-        // {
-        //     v_ext = (v_ext / std::abs(v_ext)) * 0.5;
-        // }
-
-        std::cout << "alpha_ext " << alpha_ext << std::endl;
-        std::cout << "alpha_int " << alpha_int << std::endl;
-
-        std::cout << "v_ext " << v_ext << std::endl;
-        std::cout << "v_int " << v_int << std::endl;
     }
-    // else if (omega_z == 0)
     else
     {
+        // ONLY TRANSLATION
         current_motors_cmds.info = "translation";
-        std::cout << "TRANSLATION " << std::endl;
-        // if (std::abs(v_x) > 0.5)
-        // {
-        //     v_x = (v_x / std::abs(v_x)) * 0.5;
-        // }
 
         v_ext = v_x;
         v_int = v_x;
@@ -162,32 +134,16 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
         wheels_current_commands.velocity_1 = v_ext * conversion_speed;
     }
 
-    // if ( (std::abs(wheels_current_commands.angle_2) > PI_IN_INCR))
-    // {
-    //     wheels_current_commands.velocity_2 = -wheels_current_commands.velocity_2;
-    //     _Float64 sign =  omega_z >= 0 ? 1 : -1;
-    //     wheels_current_commands.angle_2 = sign * (int(std::abs(wheels_current_commands.angle_2)) % PI_IN_INCR);
-
-    // }
-    // else if ((std::abs(wheels_current_commands.angle_1) > PI_IN_INCR))
-    // {
-    //     wheels_current_commands.velocity_1 = -wheels_current_commands.velocity_1;
-    //     _Float64 sign = omega_z >= 0 ? 1 : -1;
-    //     wheels_current_commands.angle_1 = sign *(int(std::abs(wheels_current_commands.angle_1)) % PI_IN_INCR);
-    // }
-    std::cout << "en_rotation_quoi " << en_rotation_quoi << std::endl;
     if (en_rotation_quoi)
     {
         if (v_x != 0)
         {
             if (check_steering_position_for_translation(motors_position))
             {
-                std::cout << "translation " << std::endl;
                 en_rotation_quoi = false;
             }
             else
             {
-                std::cout << "translation NOOO" << std::endl;
                 wheels_current_commands.angle_2 = 0;
                 wheels_current_commands.angle_1 = 0;
 
@@ -207,7 +163,6 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
             {
                 wheels_current_commands.velocity_2 = 0;
                 wheels_current_commands.velocity_1 = 0;
-                std::cout << "rotation NOO " << std::endl;
                 current_motors_cmds.info = "fail checking rotation";
             }
         }
@@ -244,8 +199,6 @@ bool RoverNormalKinematicModel::check_steering_position_for_translation(motors_o
                 wheel_positioned_for_translation++;
         }
 
-        std::cout << "T " << wheel_positioned_for_translation << std::endl;
-
         return (wheel_positioned_for_translation == NB_WHEELS);
     }
     else
@@ -268,8 +221,6 @@ bool RoverNormalKinematicModel::check_steering_position_for_rotation(motors_obj 
                 wheel_positioned_for_rotation++;
             }
         }
-
-        std::cout << "R " << wheel_positioned_for_rotation << std::endl;
 
         return (wheel_positioned_for_rotation == NB_WHEELS);
     }

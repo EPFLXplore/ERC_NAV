@@ -49,11 +49,8 @@
 
 #define CURRENT_LIMIT 0
 
-#define RADIUS_MAX  1
-#define RADIUS_MIN 0.5
 #define MIN_DESIRED_RADIUS 1
 #define PI_IN_INCR 16384
-
 
 
 #define WIDTH 0.736

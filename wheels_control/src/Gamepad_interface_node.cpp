@@ -5,8 +5,8 @@ topics:
         publish:    /NAV/cmd_vel_manual
         subscribe:  /CS/NAV_gamepad 
         
-description:  
-
+Last updated:       22/11/2024
+Rewritting author:  Cyril Goffin
 */
 
 
@@ -37,8 +37,6 @@ std::vector<double> buffer_z;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
-
-
 class GamepadInterface : public rclcpp::Node
 {
   public:
@@ -49,11 +47,10 @@ class GamepadInterface : public rclcpp::Node
 
       sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 10, std::bind(&GamepadInterface::callback_gamepad, this, std::placeholders::_1));
-
-
     }
 
-    double filter(double newValue, std::vector<double> buffer) {
+    double filter(double newValue, std::vector<double> buffer) 
+    {
         // Add the new value to the buffer
         buffer.push_back(newValue);
 
@@ -83,36 +80,138 @@ class GamepadInterface : public rclcpp::Node
     }
 
 
-
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
+      // Gamepad buttons and axes attribution
+      int GP_axis_R2 = 5;
+      int GP_axis_L2 = 2;
+      int GP_axis_joystick_left_horizontal = 0;
+      int GP_button_joystick_left = 8;
+      int GP_button_round = 1;
+      int GP_button_cross = 0;
 
-     // bool lateral = (msg->axes[0]) > 0.5f;
-      float r_z = (msg->axes[0]);  
-      float v_x = 0;
-      float v_y = 0;
+      _Float64 joystick_threadhold = 0.001;
 
-      bool change_kinematics_state = msg->buttons[8];
-      bool auto_state =  msg->buttons[1]; // button O
-      bool manual_state =  msg->buttons[2]; // button O
-      string nav_message = "";
-      
 
-      if (msg->axes[5] > 0)
-        v_x = msg->axes[5];
-      else
-        v_x = -msg->axes[2];
-
-      if (auto_state == 1)
+      if (std::abs(msg->axes[GP_axis_joystick_left_horizontal]) > joystick_threadhold)
       {
-        nav_message = "NAV_AUTONOMOUS_START";
+        if ((msg->button[GP_button_joystick_left]) == 1)
+        {
+          // ROTATION ON ITSELF (CRAB)
+            float r_z = msg->axes[msg->axes[GP_axis_joystick_left_horizontal]];  
+            float v_x = 0;
+            float v_y = 0;
+        }
+        else
+        {
+          // ROTATION AND TRANSLATION
+          if ((msg->axes[GP_axis_R2]) > joystick_threadhold) || ((msg->axes[GP_axis_L2]) > joystick_threadhold)
+          {
+            if (((msg->axes[GP_axis_R2]) > joystick_threadhold) && ((msg->axes[GP_axis_L2]) < joystick_threadhold)) 
+            {
+              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
+              float v_x = msg->axes[GP_axis_R2];
+              float v_y = 0;
+            }
+            else if (((msg->axes[GP_axis_R2]) < joystick_threadhold) && ((msg->axes[GP_axis_L2]) > joystick_threadhold))
+            {
+              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
+              float v_x = -msg->axes[GP_axis_L2];
+              float v_y = 0;
+            }
+            else
+            {
+              // DON'T MOVE
+              float r_z = 0;  
+              float v_x = 0;
+              float v_y = 0;
+            }
+          }
+          else 
+          {
+            // DON'T MOVE
+            float r_z = 0;  
+            float v_x = 0;
+            float v_y = 0;
+          } 
+        }
       }
-      else if (manual_state == 1)
+     
+      else if ((msg->axes[GP_axis_R2]) > joystick_threadhold) || ((msg->axes[GP_axis_L2]) > joystick_threadhold)
       {
+        // ONLY TRANSLATION
+        if (((msg->axes[GP_axis_R2]) > joystick_threadhold) && ((msg->axes[GP_axis_L2]) < joystick_threadhold)) 
+        {
+          // FORWARD TRANSLATION
+          float r_z = 0;  
+          float v_x = msg->axes[GP_axis_R2];
+          float v_y = 0;
+        }
+        else if (((msg->axes[GP_axis_R2]) < joystick_threadhold) && ((msg->axes[GP_axis_L2]) > joystick_threadhold))
+        {
+          // BACKWARD TRANSLATION
+          float r_z = 0;  
+          float v_x = -msg->axes[GP_axis_L2];
+          float v_y = 0;
+        }
+        else
+        {
+          // DON'T MOVE
+          float r_z = 0;  
+          float v_x = 0;
+          float v_y = 0;
+        }
+      }
+
+      else 
+      {
+        // DON'T MOVE
+        float r_z = 0;  
+        float v_x = 0;
+        float v_y = 0;
+      }
+
+      // Switch between manual and autonomous mode
+      bool state_manual = False;
+      string nav_message = "";
+
+      if (msg->buttons[GP_button_round])
+      {
+        state_manual = !state_manual;
+      }
+
+      if (state_manual)
+      {
+        // MANUAL MODE
         nav_message = "NAV_AUTONOMOUS_END";
       }
-      
+      else 
+      {
+        // AUTONOMOUS MODE
+        nav_message = "NAV_AUTONOMOUS_START";
+      }
 
+      // Switch between kinematics state
+
+      bool normal_state = False;
+      string nav_kinematics_message = "";
+
+      if (msg->buttons[GP_button_cross])
+      {
+        normal_state = !normal_state;
+      }
+
+      if (normal_state)
+      {
+        // NORMAL KINEMATIC MODE
+        nav_kinematics_message = "NORMAL_KINEMATIC";
+      }
+      else 
+      {
+        // LATERAL KINEMATIC MODE
+        nav_kinematics_message = "LATERAL_KINEMATIC";
+      }
+   
       auto message = geometry_msgs::msg::Twist(); 
       message.linear.x = filter(v_x, buffer_x);
       message.linear.y = v_y;
@@ -129,36 +228,25 @@ class GamepadInterface : public rclcpp::Node
       msg_nav_auto_state.data = nav_message;
 
       pub_nav_auto_state->publish(msg_nav_auto_state);
-      
     }
-
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_manual; 
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_nav_auto_state;       
-
 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
 
-    
-
     size_t count_;
-
-
 };
 
 
 int main(int argc, char * argv[])
 {
-
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<GamepadInterface>());
 
   rclcpp::shutdown();
 
   return 0;
-
 }
-
-
