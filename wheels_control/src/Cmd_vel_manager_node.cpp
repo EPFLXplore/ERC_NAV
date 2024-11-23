@@ -45,9 +45,9 @@ class CmdvelManager : public rclcpp::Node
   public:
     CmdvelManager() : Node("NAV_cmd_vel_manager"), count_(0)
     {
-      this->declare_parameter("autonomous_navigation", false);
-      autonomous_navigation = this->get_parameter("autonomous_navigation").as_bool();
-      autonomous_navigation = false;
+      // this->declare_parameter("autonomous_navigation", false);
+      // autonomous_navigation = this->get_parameter("autonomous_navigation").as_bool();
+      // autonomous_navigation = false;
 
       pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", 10); 
       
@@ -59,26 +59,26 @@ class CmdvelManager : public rclcpp::Node
         "/cmd_vel", 10, std::bind(&CmdvelManager::callback_cmd_vel_auto, this, std::placeholders::_1));
 
       sub_nav_nodes_state = this->create_subscription<std_msgs::msg::String>(
-        "NAV/nav_auto_state", 1, std::bind(&CmdvelManager::callback_nav_auto_state, this, std::placeholders::_1));
+        "NAV/NAV_mode", 1, std::bind(&CmdvelManager::callback_nav_mode, this, std::placeholders::_1));
 
-      // sub_mode_nav = this->create_subscription<std_msgs::msg::String>(
-      //   "/ROVER/NAV_mode", 1, std::bind(&CmdvelManager::callback_mode_nav, this, std::placeholders::_1));
+
     }
 
 
   private:
 
     //TODO: NEED TO CREATE A NEW SUBSCRIBER BECAUSE NAV MODE HAS BEEN TAKEN FOR SOMETHING ELSE
-    void callback_mode_nav(std_msgs::msg::String::SharedPtr msg)
+    void callback_nav_mode(std_msgs::msg::String::SharedPtr msg)
     {
-        if (msg->data == "auto")   
+        if (msg->data == "Auto")   
         {
-          autonomous_navigation = true;
+          current_rover_state.rover_mode = AUTO;
+
           RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] auto");
         }  
-        else if (msg->data == "manual")  
+        else if (msg->data == "Manual")  
         {
-          autonomous_navigation = false;
+          current_rover_state.rover_mode = MANUAL;
           RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] manual");
         }
 
@@ -93,17 +93,11 @@ class CmdvelManager : public rclcpp::Node
 
         if (instruction == NAV_AUTO_START)   
         {
-            //autonomous_navigation = true;
             current_rover_state.rover_mode = AUTO;
-            RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", msg->data.c_str());
-            RCLCPP_INFO_ONCE(get_logger(), "[cmd_vel_maganager] auto nav value: '%d'", autonomous_navigation);
         } 
         else if (msg->data == NAV_AUTO_END)   
         {
-            //autonomous_navigation = false;
             current_rover_state.rover_mode = MANUAL;
-            RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", msg->data.c_str());
-            RCLCPP_INFO_ONCE(get_logger(), "[cmd_vel_maganager] auto nav value: '%d'", autonomous_navigation);
         }         
     }
 
@@ -112,7 +106,7 @@ class CmdvelManager : public rclcpp::Node
     void callback_cmd_vel_manual(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
       
-      if (autonomous_navigation == false)
+      if (current_rover_state.rover_mode == MANUAL)
       {
 
         auto message = geometry_msgs::msg::Twist(); 
@@ -133,7 +127,7 @@ class CmdvelManager : public rclcpp::Node
     void callback_cmd_vel_auto(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
       
-      if (autonomous_navigation == true)
+      if (current_rover_state.rover_mode == AUTO)
       {
 
         auto message = geometry_msgs::msg::Twist(); 
@@ -161,7 +155,6 @@ class CmdvelManager : public rclcpp::Node
 
 
     size_t count_;
-    bool autonomous_navigation;
 
 };
 

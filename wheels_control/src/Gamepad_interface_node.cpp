@@ -182,29 +182,29 @@ class GamepadInterface : public rclcpp::Node
 
       // Switch between manual and autonomous mode
       
-      current_rover_state.rover_mode = MANUAL; //manual mode by default
+      // current_rover_state.rover_mode = MANUAL; //manual mode by default
 
-      std::string nav_message = "";
+      // std::string nav_message = "";
 
-      if (msg->buttons[GP_button_round]) {
-        //if current mode is manual, switch to autonomous, else switch to manual
-        current_rover_state.rover_mode = (current_rover_state.rover_mode == MANUAL) ? AUTO : MANUAL;
-      }
+      // if (msg->buttons[GP_button_round]) {
+      //   //if current mode is manual, switch to autonomous, else switch to manual
+      //   current_rover_state.rover_mode = (current_rover_state.rover_mode == MANUAL) ? AUTO : MANUAL;
+      // }
 
-      nav_message = (current_rover_state.rover_mode == MANUAL) ? NAV_AUTO_END : NAV_AUTO_START;
+      // nav_message = (current_rover_state.rover_mode == MANUAL) ? NAV_AUTO_END : NAV_AUTO_START;
 
-      // Switch between kinematics state
+      // // Switch between kinematics state
       
-      current_rover_state.motion_mode = NORMAL; //normal kinematic mode by default
+      // current_rover_state.motion_mode = NORMAL; //normal kinematic mode by default
 
-      std::string nav_kinematics_message = "";
+      // std::string nav_kinematics_message = "";
 
-      if (msg->buttons[GP_button_cross]) {
-        //if current mode is normal, switch to lateral, else switch to normal
-        current_rover_state.motion_mode = (current_rover_state.motion_mode == NORMAL) ? LATERAL : NORMAL;
-      }
-      //if rover in normal mode, send normal kinematic message, else send lateral kinematic message
-      nav_kinematics_message = (current_rover_state.motion_mode == NORMAL) ? NAV_NORMAL_KINEMATIC : NAV_LATERAL_KINEMATIC;
+      // if (msg->buttons[GP_button_cross]) {
+      //   //if current mode is normal, switch to lateral, else switch to normal
+      //   current_rover_state.motion_mode = (current_rover_state.motion_mode == NORMAL) ? LATERAL : NORMAL;
+      // }
+      // //if rover in normal mode, send normal kinematic message, else send lateral kinematic message
+      // nav_kinematics_message = (current_rover_state.motion_mode == NORMAL) ? NAV_NORMAL_KINEMATIC : NAV_LATERAL_KINEMATIC;
       
       auto message = geometry_msgs::msg::Twist(); 
       message.linear.x = filter(v_x, buffer_x);
