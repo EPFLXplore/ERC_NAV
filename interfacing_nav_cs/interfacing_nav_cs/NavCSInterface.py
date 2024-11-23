@@ -52,7 +52,7 @@ class NavCSInterface(Node):
         # Change Mode
         self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group)
         self.mode_publisher = self.create_publisher(String, self.nav_names['system_status'], 1)
-        self.timer_mode = self.create_timer(2.0, self.pub_state)
+        #self.timer_mode = self.create_timer(2.0, self.pub_state)
 
         # Nav 2
         self.path_nav2_launch_file = '/dev_ws/src/path_planning/launch/nav2_real.launch.py'
@@ -304,6 +304,7 @@ class NavCSInterface(Node):
     
     def change_mode(self, mode, error_type, response, message_response):
         self.mode = Mode[mode]
+        self.pub_state()
         response.new_mode = mode
         response.error_type = error_type
         response.error_message = message_response
