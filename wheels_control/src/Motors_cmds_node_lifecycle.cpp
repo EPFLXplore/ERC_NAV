@@ -142,11 +142,8 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
     on_cleanup(const rclcpp_lifecycle::State &)
     {
-        pub_absolute_encoders.reset();
         timer_.reset();
         sub_motors_displacement.reset();
-        sub_cmds_shutdown.reset();
-        destroy_sub_.reset();
 
         disconnect_motors();
 
@@ -172,11 +169,8 @@ public:
     rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
     on_shutdown(const rclcpp_lifecycle::State &)
     {
-        pub_absolute_encoders.reset();
         timer_.reset();
         sub_motors_displacement.reset();
-        sub_cmds_shutdown.reset();
-        destroy_sub_.reset();
         disconnect_motors();
 
         RCLCPP_WARN(get_logger(), "Navigation Motors SHUTDOWN");
@@ -207,7 +201,7 @@ public:
                 }
                 else{
                     float rpm_to_ms = 2*3.1415*13.5*0.01/60.0;
-                    message_nav.velocity[id-1] = (motor->get_velocity_is())*rpm_to_ms;
+                    message_nav.velocity[id-1] = motor->get_velocity_is()*rpm_to_ms;
                 }
             }
         }    
@@ -218,8 +212,6 @@ public:
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)
     {
         /*Manage the communication with the controllers to execute the desire speed*/
-
-        // RCLCPP_INFO(get_logger(), " motor_cmds_callback", 4);
 
         mode_deplacement = msg->modedeplacement;
 
@@ -438,10 +430,7 @@ public:
     }
 
     rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<custom_msg::msg::Wheelstatus>::SharedPtr pub_absolute_encoders;
     rclcpp::Subscription<custom_msg::msg::Motorcmds>::SharedPtr sub_motors_displacement;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
     rclcpp::Publisher<custom_msg::msg::MotorStatus>::SharedPtr pub_motor_nav_status;
 
     size_t count_;

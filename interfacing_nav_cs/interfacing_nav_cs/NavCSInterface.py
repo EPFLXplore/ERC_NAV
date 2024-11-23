@@ -100,18 +100,7 @@ class NavCSInterface(Node):
             while(self.transitioning_state):
                 time.sleep(1)
 
-            return response
-            # if self.state_motor_control == State.PRIMARY_STATE_INACTIVE:
-            #     self.mode = Mode[mode]
-            #     response.new_mode = mode
-            #     response.error_type = 0
-            #     response.error_message = "NAV lifecycle change state successfully"
-            #     return response  
-            # else:
-            #     response.new_mode = Mode_to_CS[self.mode]
-            #     response.error_type = 1
-            #     response.error_message = "NAV lifecycle change state failed"
-            #     return response                
+            return response      
 
         # Transition to Auto mode from Off
         '''
@@ -184,24 +173,7 @@ class NavCSInterface(Node):
                 time.sleep(1)
 
             return response
-            '''
-            self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
-                                  State.PRIMARY_STATE_UNCONFIGURED, self.default_transition_check_callback)
             
-            if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED:
-                
-                response.new_mode = Mode[mode]
-                response.error_type = 0
-                response.error_message = "Transition to Off mode successful"
-                self.mode = Mode[mode]
-                return response
-                
-            else:
-                response.new_mode = Mode_to_CS[self.mode]
-                response.error_type = 1
-                response.error_message = "NAV lifecycle change state failed"
-                return response
-            '''
     # ------------------------------------------------------------------------
     # NAV2 COMMANDS STACK
     

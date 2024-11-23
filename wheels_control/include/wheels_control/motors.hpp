@@ -19,7 +19,6 @@ private:
     void *gateway;
     unsigned short id;
     bool is_connected;
-    bool is_calibrated;
     unsigned short motor_type;
     signed char op_mode;
     long pos_ref;
@@ -34,7 +33,6 @@ public:
     NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp_type, signed char mode, bool homing);
     NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp_type) : NAV_Motor(KeyHandle, node_id, exp_type, 0, false) {};
 
-    void test(void);
     /* get_id
      * brief :  return the CAN id of the node
      */
@@ -55,9 +53,6 @@ public:
      */
     bool set_operational_mode(signed char mode);
 
-    bool fault_state();
-    bool fault_state(unsigned int *error_code);
-
     /* set_output_state
      * brief :  set the output state to active / inactive
      */
@@ -74,9 +69,6 @@ public:
     bool is_faulty(bool verbose);
 
     bool clear_fault();
-
-    void set_calibrated(bool calibrated);
-    bool calibrated();
 
     /* set_position_ref
      * brief :  set the position reference for the motor to track
@@ -123,11 +115,6 @@ public:
      * brief :  get the current efficiency in %
      */
     int get_efficiency();
-
-    /* get_current_informations
-       brief :  get Maximal peak current and max continuous current
-    */
-    //std::tuple<int, int> get_current_informations();
 };
 
 /* open_gateway

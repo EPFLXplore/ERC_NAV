@@ -61,13 +61,14 @@ class CmdvelManager : public rclcpp::Node
       sub_nav_nodes_state = this->create_subscription<std_msgs::msg::String>(
         "NAV/nav_auto_state", 1, std::bind(&CmdvelManager::callback_nav_auto_state, this, std::placeholders::_1));
 
-      sub_mode_nav = this->create_subscription<std_msgs::msg::String>(
-        "/ROVER/NAV_mode", 1, std::bind(&CmdvelManager::callback_mode_nav, this, std::placeholders::_1));
+      // sub_mode_nav = this->create_subscription<std_msgs::msg::String>(
+      //   "/ROVER/NAV_mode", 1, std::bind(&CmdvelManager::callback_mode_nav, this, std::placeholders::_1));
     }
 
 
   private:
 
+    //TODO: NEED TO CREATE A NEW SUBSCRIBER BECAUSE NAV MODE HAS BEEN TAKEN FOR SOMETHING ELSE
     void callback_mode_nav(std_msgs::msg::String::SharedPtr msg)
     {
         if (msg->data == "auto")   
@@ -154,7 +155,6 @@ class CmdvelManager : public rclcpp::Node
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_manual;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_nav_nodes_state;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmd_shutdown;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_mode_nav;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
 
 

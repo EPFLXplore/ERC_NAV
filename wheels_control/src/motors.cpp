@@ -69,7 +69,6 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
     gateway = KeyHandle;
     id = node_id;
     pos_ref = 0;
-    is_calibrated = false;
 
     VCS_GetMotorType(gateway, id, &motor_type, &error_code);
     cout << "motors.cpp] motor id : " << id << endl;
@@ -250,44 +249,6 @@ bool NAV_Motor::clear_fault()
     return (bool)error_code;
 }
 
-void NAV_Motor::set_calibrated(bool calibrated)
-{
-    is_calibrated = calibrated;
-}
-
-bool NAV_Motor::fault_state()
-{
-    unsigned int error_code = 0;
-    int fault = false;
-    VCS_GetFaultState(gateway, id, &fault, &error_code);
-    print_VCS_error(error_code, __FUNCTION__);
-    return fault;
-}
-
-bool NAV_Motor::fault_state(unsigned int *error_code)
-{
-    int fault = false;
-    VCS_GetFaultState(gateway, id, &fault, error_code);
-    return fault;
-}
-
-bool NAV_Motor::calibrated()
-{
-    return is_calibrated;
-}
-// bool NAV_Motor::set_position_ref(long pos) {
-//     CONNECTION_CHECK;
-
-//     unsigned int    error_code  = 0;
-//     if ((op_mode != OMD_POSITION_MODE) &&
-//         !this->set_operational_mode(OMD_POSITION_MODE))
-//         return false;
-
-//     VCS_SetPositionMust(gateway, id, pos + pos_ref, &error_code);
-//     print_VCS_error(error_code, __FUNCTION__);
-//     return !error_code;
-// }
-
 bool NAV_Motor::set_position_ref(long pos)
 {
     CONNECTION_CHECK;
@@ -415,19 +376,3 @@ int NAV_Motor::get_efficiency()
 
     return (int)(100. / (1. + fabs((WINDING_RES * cur) / (SPEED_CONSTANT * vel))));
 }
-
-/*
-std::tuple<int, int> NAV_Motor::get_current_informations()
-{
-    unsigned int max_continuous_current = 0;
-    unsigned int max_peek_current = 0;
-    unsigned int termal_time_constant = 0;
-    unsigned int error_code = 0;
-
-    VCS_GetEcMotorParameter(gateway, id, &max_continuous_current, 
-    &max_peek_current, &termal_time_constant, &error_code);
-    print_VCS_error(error_code, __FUNCTION__);
-
-    return std::make_tuple(max_continuous_current, max_peek_current);
-}
-*/
