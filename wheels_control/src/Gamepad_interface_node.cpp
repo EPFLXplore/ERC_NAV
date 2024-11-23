@@ -177,7 +177,7 @@ class GamepadInterface : public rclcpp::Node
 
       if (msg->buttons[GP_button_round])
       {
-        state_manual = not state_manual;
+        state_manual = !state_manual;
       }
 
       if (state_manual)
