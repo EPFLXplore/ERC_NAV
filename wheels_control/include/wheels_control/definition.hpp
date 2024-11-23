@@ -80,17 +80,16 @@ struct wheels_normal_kinematic_cmds
     _Float64 angle_2;
 };
 
+enum MOTION_MODE {
+    NORMAL = 0
+    LATERAL = 1
+}
 
-
-// struct wheels_commands
-// {
-//     _Float64 velocity_1;
-//     _Float64 velocity_2;
-//     _Float64 angle_1;
-//     _Float64 angle_2;
-// };
-
-
+enum ROVER_MODE {
+    OFF = 0,
+    MANUAL = 1,
+    AUTO = 2
+}
 
 // enum ModeType {
 //     TRANSLATION_ONLY = 0,

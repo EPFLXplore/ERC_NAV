@@ -204,6 +204,22 @@ bool NAV_Motor::set_output_state(bool output_active)
     return !error_code;
 }
 
+bool NAV_Motor::fault_state()
+{
+    unsigned int error_code = 0;
+    int fault = false;
+    VCS_GetFaultState(gateway, id, &fault, &error_code);
+    print_VCS_error(error_code, __FUNCTION__);
+    return fault;
+}
+
+bool NAV_Motor::fault_state(unsigned int *error_code)
+{
+    int fault = false;
+    VCS_GetFaultState(gateway, id, &fault, error_code);
+    return fault;
+}
+
 bool NAV_Motor::is_faulty(bool verbose)
 {
     if (!is_connected)

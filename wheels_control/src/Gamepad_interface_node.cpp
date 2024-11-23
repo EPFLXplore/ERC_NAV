@@ -35,6 +35,9 @@ int windowSize = 10;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 
+MOTION_MODE motion_mode = MOTION_MODE.NORMAL;
+ROVER_MODE rover_mode = ROVER_MODE.OFF;
+
 //------------------------------------NODE DEFINITION---------------------------------------
 
 class GamepadInterface : public rclcpp::Node
@@ -86,93 +89,98 @@ class GamepadInterface : public rclcpp::Node
       int GP_axis_R2 = 5;
       int GP_axis_L2 = 2;
       int GP_axis_joystick_left_horizontal = 0;
-      int GP_button_joystick_left = 8;
+      int GP_button_joystick_left = 7;
       int GP_button_round = 1;
       int GP_button_cross = 0;
 
-      _Float64 joystick_threadhold = 0.001;
+      float v_x = 0;
+      float v_y = 0;
+      float r_z = 0;
+
+      _Float64 joystick_threadhold = 0.00001;
 
 
       if (std::abs(msg->axes[GP_axis_joystick_left_horizontal]) > joystick_threadhold)
       {
-        if ((msg->button[GP_button_joystick_left]) == 1)
+        if ((msg->buttons[GP_button_joystick_left]) == 1)
         {
           // ROTATION ON ITSELF (CRAB)
-            float r_z = msg->axes[msg->axes[GP_axis_joystick_left_horizontal]];  
-            float v_x = 0;
-            float v_y = 0;
+            r_z = msg->axes[msg->axes[GP_axis_joystick_left_horizontal]];  
+            v_x = 0;
+            v_y = 0;
         }
         else
         {
           // ROTATION AND TRANSLATION
-          if ((msg->axes[GP_axis_R2]) > joystick_threadhold) || ((msg->axes[GP_axis_L2]) > joystick_threadhold)
+          if ((msg->axes[GP_axis_R2] > joystick_threadhold) || (msg->axes[GP_axis_L2] > joystick_threadhold))
           {
             if (((msg->axes[GP_axis_R2]) > joystick_threadhold) && ((msg->axes[GP_axis_L2]) < joystick_threadhold)) 
             {
-              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
-              float v_x = msg->axes[GP_axis_R2];
-              float v_y = 0;
+              r_z = msg->axes[GP_axis_joystick_left_horizontal];  
+              v_x = msg->axes[GP_axis_R2];
+              v_y = 0;
             }
             else if (((msg->axes[GP_axis_R2]) < joystick_threadhold) && ((msg->axes[GP_axis_L2]) > joystick_threadhold))
             {
-              float r_z = msg->axes[GP_axis_joystick_left_horizontal];  
-              float v_x = -msg->axes[GP_axis_L2];
-              float v_y = 0;
+              r_z = msg->axes[GP_axis_joystick_left_horizontal];  
+              v_x = -msg->axes[GP_axis_L2];
+              v_y = 0;
             }
             else
             {
               // DON'T MOVE
-              float r_z = 0;  
-              float v_x = 0;
-              float v_y = 0;
+              r_z = 0;  
+              v_x = 0;
+              v_y = 0;
             }
           }
           else 
           {
             // DON'T MOVE
-            float r_z = 0;  
-            float v_x = 0;
-            float v_y = 0;
+            r_z = 0;  
+            v_x = 0;
+            v_y = 0;
           } 
         }
       }
      
-      else if ((msg->axes[GP_axis_R2]) > joystick_threadhold) || ((msg->axes[GP_axis_L2]) > joystick_threadhold)
+      else if ((msg->axes[GP_axis_R2] > joystick_threadhold) || (msg->axes[GP_axis_L2] > joystick_threadhold))
       {
         // ONLY TRANSLATION
         if (((msg->axes[GP_axis_R2]) > joystick_threadhold) && ((msg->axes[GP_axis_L2]) < joystick_threadhold)) 
         {
           // FORWARD TRANSLATION
-          float r_z = 0;  
-          float v_x = msg->axes[GP_axis_R2];
-          float v_y = 0;
+          r_z = 0;  
+          v_x = msg->axes[GP_axis_R2];
+          v_y = 0;
         }
         else if (((msg->axes[GP_axis_R2]) < joystick_threadhold) && ((msg->axes[GP_axis_L2]) > joystick_threadhold))
         {
           // BACKWARD TRANSLATION
-          float r_z = 0;  
-          float v_x = -msg->axes[GP_axis_L2];
-          float v_y = 0;
+          r_z = 0;  
+          v_x = -msg->axes[GP_axis_L2];
+          v_y = 0;
         }
         else
         {
           // DON'T MOVE
-          float r_z = 0;  
-          float v_x = 0;
-          float v_y = 0;
+          r_z = 0;  
+          v_x = 0;
+          v_y = 0;
         }
       }
 
       else 
       {
         // DON'T MOVE
-        float r_z = 0;  
-        float v_x = 0;
-        float v_y = 0;
+        r_z = 0;  
+        v_x = 0;
+        v_y = 0;
       }
 
       // Switch between manual and autonomous mode
-      bool state_manual = False;
+      /*
+      bool state_manual = false;
       string nav_message = "";
 
       if (msg->buttons[GP_button_round])
@@ -192,8 +200,8 @@ class GamepadInterface : public rclcpp::Node
       }
 
       // Switch between kinematics state
-
-      bool normal_state = False;
+      
+      bool normal_state = false;
       string nav_kinematics_message = "";
 
       if (msg->buttons[GP_button_cross])
@@ -211,7 +219,7 @@ class GamepadInterface : public rclcpp::Node
         // LATERAL KINEMATIC MODE
         nav_kinematics_message = "LATERAL_KINEMATIC";
       }
-   
+      */
       auto message = geometry_msgs::msg::Twist(); 
       message.linear.x = filter(v_x, buffer_x);
       message.linear.y = v_y;
@@ -223,11 +231,12 @@ class GamepadInterface : public rclcpp::Node
       message.angular.z = -filter(r_z, buffer_z);
 
       pub_cmd_vel_manual->publish(message);
-
+      /*
       auto msg_nav_auto_state = std_msgs::msg::String(); 
-      msg_nav_auto_state.data = nav_message;
+      msg_nav_auto_state.data = nav_kinematics_message;
 
       pub_nav_auto_state->publish(msg_nav_auto_state);
+      */
     }
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_manual; 

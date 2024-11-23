@@ -58,6 +58,10 @@ public:
      */
     bool set_output_state(bool output_active);
 
+    bool fault_state(unsigned int *error_code);
+
+    bool fault_state();
+
     void homing();
 
     int get_encoder_pulse();
