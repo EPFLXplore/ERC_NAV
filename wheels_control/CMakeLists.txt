@@ -3,7 +3,7 @@ project(wheels_control)
 
 # Default to C++14
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17) # needed for inline object variables
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -101,7 +101,6 @@ target_link_libraries(NAV_motor_cmds /usr/local/lib/libftd2xx.so )
 target_link_libraries(NAV_motor_cmds /usr/local/lib/libEposCmd.so )
 
 
-  
 install(TARGETS
   NAV_gamepad_interface
   NAV_cmd_vel_manager

@@ -2,9 +2,11 @@
 #define DEFINITION_HPP
 
 #include <iostream>
+#include <fstream>
 #include <math.h>
 #include <cmath>
 #include <string>
+#include <cstdint>
 
 
 #define FRONT_LEFT 0
@@ -65,15 +67,13 @@
 // #define ROTATION_ONLY 2
 // #define TRANSLATION_ONLY 3
 
-struct motors_obj 
-{
+struct motors_obj {
     std::string   info;
     _Float64 steer[NB_WHEELS];
     _Float64 drive[NB_WHEELS];
 };
 
-struct wheels_normal_kinematic_cmds
-{
+struct wheels_normal_kinematic_cmds {
     _Float64 velocity_1;
     _Float64 velocity_2;
     _Float64 angle_1;
@@ -81,15 +81,35 @@ struct wheels_normal_kinematic_cmds
 };
 
 enum MOTION_MODE {
-    NORMAL = 0
+    NORMAL = 0,
     LATERAL = 1
-}
+};
 
 enum ROVER_MODE {
     OFF = 0,
     MANUAL = 1,
     AUTO = 2
-}
+};
+
+//store the rover mode and motion mode of the rover for gamepad interface and cmd_vel_manager
+struct shared_rover_state {
+    MOTION_MODE motion_mode = NORMAL;
+    ROVER_MODE rover_mode = OFF;
+};
+
+//extern shared_rover_state current_rover_state;
+
+const std::string NAV_AUTO_START = "NAV_AUTONOMOUS_START";
+const std::string NAV_AUTO_END = "NAV_AUTONOMOUS_END";
+const std::string NAV_LATERAL_KINEMATIC = "NAV_LATERAL_KINEMATIC";
+const std::string NAV_NORMAL_KINEMATIC = "NAV_NORMAL_KINEMATIC";
+
+inline static shared_rover_state current_rover_state = {NORMAL, OFF};
+
+
+
+
+
 
 // enum ModeType {
 //     TRANSLATION_ONLY = 0,
@@ -99,10 +119,6 @@ enum ROVER_MODE {
 //     ROTATION_TRANSLATION = 4,
 //     CRABE = 10
 // };
-
-
-
-
 
 
 

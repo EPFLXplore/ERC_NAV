@@ -35,8 +35,6 @@ int windowSize = 10;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 
-MOTION_MODE motion_mode = MOTION_MODE.NORMAL;
-ROVER_MODE rover_mode = ROVER_MODE.OFF;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -50,6 +48,7 @@ class GamepadInterface : public rclcpp::Node
 
       sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
         "/CS/NAV_gamepad", 10, std::bind(&GamepadInterface::callback_gamepad, this, std::placeholders::_1));
+      
     }
 
     double filter(double newValue, std::vector<double> buffer) 
@@ -85,6 +84,8 @@ class GamepadInterface : public rclcpp::Node
 
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
+
+
       // Gamepad buttons and axes attribution
       int GP_axis_R2 = 5;
       int GP_axis_L2 = 2;
@@ -98,6 +99,7 @@ class GamepadInterface : public rclcpp::Node
       float r_z = 0;
 
       _Float64 joystick_threadhold = 0.00001;
+      
 
 
       if (std::abs(msg->axes[GP_axis_joystick_left_horizontal]) > joystick_threadhold)
@@ -179,47 +181,31 @@ class GamepadInterface : public rclcpp::Node
       }
 
       // Switch between manual and autonomous mode
-      /*
-      bool state_manual = false;
-      string nav_message = "";
+      
+      current_rover_state.rover_mode = MANUAL; //manual mode by default
 
-      if (msg->buttons[GP_button_round])
-      {
-        state_manual = !state_manual;
+      std::string nav_message = "";
+
+      if (msg->buttons[GP_button_round]) {
+        //if current mode is manual, switch to autonomous, else switch to manual
+        current_rover_state.rover_mode = (current_rover_state.rover_mode == MANUAL) ? AUTO : MANUAL;
       }
 
-      if (state_manual)
-      {
-        // MANUAL MODE
-        nav_message = "NAV_AUTONOMOUS_END";
-      }
-      else 
-      {
-        // AUTONOMOUS MODE
-        nav_message = "NAV_AUTONOMOUS_START";
-      }
+      nav_message = (current_rover_state.rover_mode == MANUAL) ? NAV_AUTO_END : NAV_AUTO_START;
 
       // Switch between kinematics state
       
-      bool normal_state = false;
-      string nav_kinematics_message = "";
+      current_rover_state.motion_mode = NORMAL; //normal kinematic mode by default
 
-      if (msg->buttons[GP_button_cross])
-      {
-        normal_state = !normal_state;
-      }
+      std::string nav_kinematics_message = "";
 
-      if (normal_state)
-      {
-        // NORMAL KINEMATIC MODE
-        nav_kinematics_message = "NORMAL_KINEMATIC";
+      if (msg->buttons[GP_button_cross]) {
+        //if current mode is normal, switch to lateral, else switch to normal
+        current_rover_state.motion_mode = (current_rover_state.motion_mode == NORMAL) ? LATERAL : NORMAL;
       }
-      else 
-      {
-        // LATERAL KINEMATIC MODE
-        nav_kinematics_message = "LATERAL_KINEMATIC";
-      }
-      */
+      //if rover in normal mode, send normal kinematic message, else send lateral kinematic message
+      nav_kinematics_message = (current_rover_state.motion_mode == NORMAL) ? NAV_NORMAL_KINEMATIC : NAV_LATERAL_KINEMATIC;
+      
       auto message = geometry_msgs::msg::Twist(); 
       message.linear.x = filter(v_x, buffer_x);
       message.linear.y = v_y;

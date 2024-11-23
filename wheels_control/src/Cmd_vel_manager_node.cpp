@@ -91,15 +91,17 @@ class CmdvelManager : public rclcpp::Node
         std::string instruction = msg->data; 
         //RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", instruction.c_str());
 
-        if (instruction == "NAV_AUTONOMOUS_START")   
+        if (instruction == NAV_AUTO_START)   
         {
-            autonomous_navigation = true;
+            //autonomous_navigation = true;
+            current_rover_state.rover_mode = AUTO;
             RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", msg->data.c_str());
             RCLCPP_INFO_ONCE(get_logger(), "[cmd_vel_maganager] auto nav value: '%d'", autonomous_navigation);
         } 
-        else if (msg->data == "NAV_AUTONOMOUS_END")   
+        else if (msg->data == NAV_AUTO_END)   
         {
-            autonomous_navigation = false;
+            //autonomous_navigation = false;
+            current_rover_state.rover_mode = MANUAL;
             RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", msg->data.c_str());
             RCLCPP_INFO_ONCE(get_logger(), "[cmd_vel_maganager] auto nav value: '%d'", autonomous_navigation);
         }         
