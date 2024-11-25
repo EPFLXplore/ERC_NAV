@@ -81,7 +81,7 @@ add_executable(NAV_displacement_cmds
   src/Displacement_cmds_node.cpp
   src/kinematic_models/normal_kinematic_model.cpp
   src/kinematic_models/lateral_kinematic_model.cpp
-
+  src/kinematic_models/odometry_node.cpp
 )
 
 ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs) 

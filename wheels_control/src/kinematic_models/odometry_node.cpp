@@ -9,8 +9,9 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include "custom_msg/msg/motornavstatus.hpp"
+#include "custom_msg/msg/motor_status.hpp"
 #include "definition.hpp"
+
 
 using std::placeholders::_1;
 
@@ -25,35 +26,64 @@ public:
           pos_theta_(0.0) {
         prev_time_ = this->get_clock()->now();
 
-        // Subscriber to wheel speeds and angles
-        subscription_ = this->create_subscription<custom_msg::msg::MotorNavStatus>(
+        subscription_ = this->create_subscription<custom_msg::msg::MotorStatus>(
             "/NAV/motor_nav_status", 10,
             std::bind(&ForwardKinematicsNode::publish_odometry, this, _1));
 
-        // Publisher for odometry
         odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
 
         RCLCPP_INFO(this->get_logger(), "Forward Kinematics Node Initialized.");
     }
 
 private:
-    void publish_odometry(const custom_msg::msg::MotorNavStatus::SharedPtr msg) {
+    void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
         if (msg->velocity.size() != 4 || msg->position.size() != 4) {
             RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
             return;
         }
 
-        for (int i = 0; i < 4; ++i) {
-            wheel_speeds_[i] = msg->velocity[i];
-            wheel_angles_[i] = msg->position[i];
-        }
+
+            // in motors_cmds_node_lifecycle:
+            // IDs [0,1,2,3] are the nodes for the driving
+            // IDs [4,5,6,7] are the nodes for the steering
+
+            // in definition.hpp:
+            // #define FRONT_LEFT_DRIVE 1
+            // #define FRONT_RIGHT_DRIVE 2
+            // #define BACK_RIGHT_DRIVE 3
+            // #define BACK_LEFT_DRIVE 4
+            // #define FRONT_LEFT_STEER 5
+            // #define FRONT_RIGHT_STEER 6
+            // #define BACK_RIGHT_STEER 7
+            // #define BACK_LEFT_STEER 8
+
+            //wheel_speeds_[0] --> Front left drive = msg->velocity[0]
+            //wheel_speeds_[1] --> front right drive
+            //wheel_speeds_[2] --> Back right drive
+            //wheel_speeds_[3] --> Back left drive
+            
+            //wheel_angles_[0] --> front left steering  = msg->position[4]
+            //wheel_angles_[1] --> front right steering = msg->position[5]
+            //wheel_angles_[2] --> back right steering = msg->position[6]
+            //wheel_angles_[3] --> back left steering = msg->position[7]
+
+        wheel_speeds_[0] = msg->velocity[0];
+        wheel_speeds_[1] = msg->velocity[1];
+        wheel_speeds_[2] = msg->velocity[2];
+        wheel_speeds_[3] = msg->velocity[3];
+
+        wheel_angles_[0] = msg->position[4];
+        wheel_angles_[1] = msg->position[5];
+        wheel_angles_[2] = msg->position[6];
+        wheel_angles_[3] = msg->position[7];
+        
 
         constexpr double d1 = 0.12, d2 = 0.15;
         const Eigen::Vector2d wheel_positions[4] = {
-            {-LENGTH / 2 - d2, WIDTH / 2 + d1},
-            {-LENGTH / 2 - d2, -WIDTH / 2 - d1},
-            {LENGTH / 2 + d2, WIDTH / 2 + d1},
-            {LENGTH / 2 + d2, -WIDTH / 2 - d1}
+            {-LENGTH / 2 - d2, WIDTH / 2 + d1},     //back left wheel
+            {-LENGTH / 2 - d2, -WIDTH / 2 - d1},    //back right wheel
+            {LENGTH / 2 + d2, WIDTH / 2 + d1},      //front left wheel
+            {LENGTH / 2 + d2, -WIDTH / 2 - d1}      //front right wheel
         };
 
         Eigen::MatrixXd A(8, 3);
@@ -63,13 +93,15 @@ private:
         for (int i = 0; i < 4; ++i) {
             double cos_alpha = std::cos(wheel_angles_[i]);
             double sin_alpha = std::sin(wheel_angles_[i]);
-            double x = wheel_positions wheel_positions ;
+            double x = wheel_positions[i][0];
+            double y = wheel_positions[i][1];
 
         A.row(2 * i) << cos_alpha, sin_alpha, -y * cos_alpha + x * sin_alpha;
             A.row(2 * i + 1) << -sin_alpha, cos_alpha, y * sin_alpha + x * cos_alpha;
 
             b(2 * i) = wheel_speeds_[i];
         }
+
 
         auto now = this->get_clock()->now();
         Eigen::Vector3d x = A.colPivHouseholderQr().solve(b);
@@ -117,7 +149,7 @@ private:
         prev_time_ = now;
     }
 
-    rclcpp::Subscription<custom_msg::msg::MotorNavStatus>::SharedPtr subscription_;
+    rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr subscription_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     Eigen::VectorXd wheel_speeds_;
     Eigen::VectorXd wheel_angles_;
