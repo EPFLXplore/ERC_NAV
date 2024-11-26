@@ -8,9 +8,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "custom_msg/msg/motor_status.hpp"
-#include "definition.hpp"
+#include "wheels_control/definition.hpp"
 
 
 using std::placeholders::_1;
@@ -18,7 +18,7 @@ using std::placeholders::_1;
 class ForwardKinematicsNode : public rclcpp::Node {
 public:
     ForwardKinematicsNode()
-        : Node("forward_kinematics_node"),
+        : Node("wheel_odometry_node"),
           wheel_speeds_(Eigen::VectorXd::Zero(4)),
           wheel_angles_(Eigen::VectorXd::Zero(4)),
           pos_x_(0.0),
@@ -32,16 +32,21 @@ public:
 
         odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
 
-        RCLCPP_INFO(this->get_logger(), "Forward Kinematics Node Initialized.");
+        RCLCPP_INFO(this->get_logger(), "Wheel Odometry Node Initialized.");
     }
 
 private:
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
+        if(current_rover_state.rover_mode == OFF){
+            RCLCPP_ERROR(this->get_logger(), "Can't publish wheel odom if rover is OFF");
+            return;
+        }
+        
         if (msg->velocity.size() != 4 || msg->position.size() != 4) {
             RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
             return;
         }
-
+        
 
             // in motors_cmds_node_lifecycle:
             // IDs [0,1,2,3] are the nodes for the driving

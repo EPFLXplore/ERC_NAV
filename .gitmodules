@@ -7,3 +7,6 @@
 [submodule "xplore_description"]
 	path = xplore_description
 	url = git@github.com:EPFLXplore/ERC_DESCRIPTION.git
+[submodule "localization/wheels_odometry"]
+	path = localization/wheels_odometry
+	url = https://gitlab.com/libeigen/eigen.git

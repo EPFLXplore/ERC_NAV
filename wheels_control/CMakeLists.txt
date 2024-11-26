@@ -23,10 +23,19 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(custom_msg REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+
+
 
 include_directories(
   include
   ${ament_INCLUDE_DIRS}
+  ${Eigen3_DIR}
+  ${tf2_INCLUDE_DIRS}
+  ${tf2_geometry_msgs_INCLUDE_DIRS}
 )
 
 # install launch directory
@@ -54,6 +63,7 @@ install(DIRECTORY
 #   DESTINATION share/${PROJECT_NAME}/
 # )
 
+set(Eigen3_DIR ${CMAKE_SOURCE_DIR}/localization/wheels_odometry)
 
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
@@ -76,18 +86,21 @@ ament_target_dependencies(NAV_gamepad_interface rclcpp custom_msg geometry_msgs 
 add_executable(NAV_cmd_vel_manager src/Cmd_vel_manager_node.cpp)
 ament_target_dependencies(NAV_cmd_vel_manager rclcpp custom_msg geometry_msgs sensor_msgs) 
 
+add_executable(NAV_odometry_node src/odometry_node.cpp)
+ament_target_dependencies(NAV_odometry_node rclcpp nav_msgs tf2 tf2_geometry_msgs Eigen3 custom_msg)
+
 
 add_executable(NAV_displacement_cmds 
   src/Displacement_cmds_node.cpp
   src/kinematic_models/normal_kinematic_model.cpp
   src/kinematic_models/lateral_kinematic_model.cpp
-  src/kinematic_models/odometry_node.cpp
 )
 
-ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs) 
+ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs tf2 tf2_ros tf2_geometry_msgs) 
 
 add_executable(NAV_motor_cmds src/Motors_cmds_node_lifecycle.cpp src/motors.cpp)
 ament_target_dependencies(NAV_motor_cmds rclcpp_lifecycle rclcpp custom_msg std_msgs)
+
 
 install(
   DIRECTORY include/
@@ -99,6 +112,12 @@ install(
 
 target_link_libraries(NAV_motor_cmds /usr/local/lib/libftd2xx.so )
 target_link_libraries(NAV_motor_cmds /usr/local/lib/libEposCmd.so )
+target_link_libraries(NAV_odometry_node Eigen3::Eigen)
+target_link_libraries(NAV_odometry_node 
+  ${tf2_LIBRARIES}
+  ${tf2_ros_LIBRARIES}
+  ${tf2_geometry_msgs_LIBRARIES}
+)
 
 
 install(TARGETS
