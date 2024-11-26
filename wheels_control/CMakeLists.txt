@@ -125,6 +125,7 @@ install(TARGETS
   NAV_cmd_vel_manager
   NAV_displacement_cmds
   NAV_motor_cmds
+  NAV_odometry_node
   
   DESTINATION lib/${PROJECT_NAME})
 

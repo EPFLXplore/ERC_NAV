@@ -37,10 +37,10 @@ public:
 
 private:
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
-        if(current_rover_state.rover_mode == OFF){
-            RCLCPP_ERROR(this->get_logger(), "Can't publish wheel odom if rover is OFF");
-            return;
-        }
+        //if(current_rover_state.rover_mode == OFF){
+        //    RCLCPP_ERROR(this->get_logger(), "Can't publish wheel odom if rover is OFF");
+        //    return;
+        //}
         
         if (msg->velocity.size() != 4 || msg->position.size() != 4) {
             RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
@@ -73,17 +73,21 @@ private:
             //wheel_angles_[3] --> back left steering = msg->position[7]
 
         wheel_speeds_[0] = msg->velocity[0];
+        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[0]: ", wheel_speeds_[0]);
         wheel_speeds_[1] = msg->velocity[1];
+        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[1]: ", wheel_speeds_[1]);
         wheel_speeds_[2] = msg->velocity[2];
+        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[2]: ", wheel_speeds_[2]);
         wheel_speeds_[3] = msg->velocity[3];
-
+        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[3]: ", wheel_speeds_[3]);
+        
         wheel_angles_[0] = msg->position[4];
         wheel_angles_[1] = msg->position[5];
         wheel_angles_[2] = msg->position[6];
         wheel_angles_[3] = msg->position[7];
         
 
-        constexpr double d1 = 0.12, d2 = 0.15;
+        constexpr double d1 = 0.1, d2 = 0.1;
         const Eigen::Vector2d wheel_positions[4] = {
             {-LENGTH / 2 - d2, WIDTH / 2 + d1},     //back left wheel
             {-LENGTH / 2 - d2, -WIDTH / 2 - d1},    //back right wheel
