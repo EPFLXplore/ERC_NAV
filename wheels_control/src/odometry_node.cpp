@@ -142,27 +142,31 @@ private:
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
-        Eigen::Vector3d k1, k2, k3, k4;
+        // Eigen::Vector3d k1, k2, k3, k4;
 
-        k1 << x[0] * std::cos(pos_theta_) - x[1] * std::sin(pos_theta_),
-              x[0] * std::sin(pos_theta_) + x[1] * std::cos(pos_theta_),
-              x[2];
-        double k2_theta = pos_theta_ + dt / 2.0 * k1[2];
-        k2 << x[0] * std::cos(k2_theta) - x[1] * std::sin(k2_theta),
-              x[0] * std::sin(k2_theta) + x[1] * std::cos(k2_theta),
-              x[2];
-        double k3_theta = pos_theta_ + dt / 2.0 * k2[2];
-        k3 << x[0] * std::cos(k3_theta) - x[1] * std::sin(k3_theta),
-              x[0] * std::sin(k3_theta) + x[1] * std::cos(k3_theta),
-              x[2];
-        double k4_theta = pos_theta_ + dt * k3[2];
-        k4 << x[0] * std::cos(k4_theta) - x[1] * std::sin(k4_theta),
-              x[0] * std::sin(k4_theta) + x[1] * std::cos(k4_theta),
-              x[2];
+        // k1 << x[0] * std::cos(pos_theta_) - x[1] * std::sin(pos_theta_),
+        //       x[0] * std::sin(pos_theta_) + x[1] * std::cos(pos_theta_),
+        //       x[2];
+        // double k2_theta = pos_theta_ + dt / 2.0 * k1[2];
+        // k2 << x[0] * std::cos(k2_theta) - x[1] * std::sin(k2_theta),
+        //       x[0] * std::sin(k2_theta) + x[1] * std::cos(k2_theta),
+        //       x[2];
+        // double k3_theta = pos_theta_ + dt / 2.0 * k2[2];
+        // k3 << x[0] * std::cos(k3_theta) - x[1] * std::sin(k3_theta),
+        //       x[0] * std::sin(k3_theta) + x[1] * std::cos(k3_theta),
+        //       x[2];
+        // double k4_theta = pos_theta_ + dt * k3[2];
+        // k4 << x[0] * std::cos(k4_theta) - x[1] * std::sin(k4_theta),
+        //       x[0] * std::sin(k4_theta) + x[1] * std::cos(k4_theta),
+        //       x[2];
 
-        pos_x_ += dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0]);
-        pos_y_ += dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]);
-        pos_theta_ += dt * x[2];
+        // pos_x_ += dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0]);
+        // pos_y_ += dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]);
+        // pos_theta_ += dt * x[2];
+
+        pos_x_ += dt * x[0]
+        pos_y_ += dt * x[1]
+        pos_theta_ += dt * x[2]
 
         nav_msgs::msg::Odometry odom;
         odom.header.stamp = this->get_clock()->now();
