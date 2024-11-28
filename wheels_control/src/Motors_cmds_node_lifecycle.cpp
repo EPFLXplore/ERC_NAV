@@ -200,8 +200,11 @@ public:
                     message_nav.position[id-5] = motor->get_position_is();
                 }
                 else{
-                    float rpm_to_ms = 2*3.1415*13.5*0.01/60.0;
-                    message_nav.velocity[id-1] = motor->get_velocity_is()*rpm_to_ms;
+                    //this returns 1800 (approx) which is correct for the max speed.
+                    //to get the actual value we need to divide by the gear ration 1:53
+                    //which gives us again the 33.3 rpm
+                    message_nav.velocity[id-1] = motor->get_velocity_is();
+                    //RCLCPP_INFO(get_logger(), "pub drive sent: %f", message_nav.velocity[id-1]);
                 }
             }
         }    
@@ -214,11 +217,16 @@ public:
         /*Manage the communication with the controllers to execute the desire speed*/
 
         mode_deplacement = msg->modedeplacement;
-
+        //at max speed it sends in abs value 1800 --> gear ration 1:53 --> 1800/53=33.3rpm
+        //which is what we actually measure in real life with a timer hence it is correct
         motors_cmds[0] = msg->drive[0];
+        //RCLCPP_INFO(get_logger(), "drive0 sent: %f", motors_cmds[0]);
         motors_cmds[1] = msg->drive[1];
+        //RCLCPP_INFO(get_logger(), "drive1 sent: %f", motors_cmds[1]);
         motors_cmds[2] = msg->drive[2];
+        //RCLCPP_INFO(get_logger(), "drive2 sent: %f", motors_cmds[2]);
         motors_cmds[3] = msg->drive[3];
+        //RCLCPP_INFO(get_logger(), "drive3 sent: %f", motors_cmds[3]);
 
         motors_cmds[4] = msg->steer[0];
         motors_cmds[5] = msg->steer[1];

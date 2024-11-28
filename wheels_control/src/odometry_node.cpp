@@ -15,6 +15,8 @@
 
 using std::placeholders::_1;
 
+const double WHEEL_RADIUS = 0.1325;
+
 class ForwardKinematicsNode : public rclcpp::Node {
 public:
     ForwardKinematicsNode()
@@ -36,6 +38,7 @@ public:
     }
 
 private:
+
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
         //if(current_rover_state.rover_mode == OFF){
         //    RCLCPP_ERROR(this->get_logger(), "Can't publish wheel odom if rover is OFF");
@@ -71,23 +74,44 @@ private:
             //wheel_angles_[1] --> front right steering = msg->position[5]
             //wheel_angles_[2] --> back right steering = msg->position[6]
             //wheel_angles_[3] --> back left steering = msg->position[7]
+        
+        //rpm to m/s
+        //2pi/60seconds
 
-        wheel_speeds_[0] = msg->velocity[0];
-        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[0]: ", wheel_speeds_[0]);
-        wheel_speeds_[1] = msg->velocity[1];
-        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[1]: ", wheel_speeds_[1]);
-        wheel_speeds_[2] = msg->velocity[2];
-        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[2]: ", wheel_speeds_[2]);
-        wheel_speeds_[3] = msg->velocity[3];
-        RCLCPP_INFO(this->get_logger(), "wheel_speeds_[3]: ", wheel_speeds_[3]);
+        //max speed : 10 revolutions in 17.85s
+        //rpm = (10/17.85) * 60 = 33rpm
+        //m/s = rpm * 2*pi*r/60 = 0.471 m/s
+        
+        const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
+        const double gear_ratio = 1.0/53;
+
+        //msg->velocity does NOT take into account the gear ratio 1/53 of the wheels.
+        //we must first multiply the value from the message by this gear ratio
+        //then convert it to m/s. The non gear-ratio corrected speed should produce 
+        //a max value of 1800 rpm. This should result in 0.471 m/s we the gear ratio taken into account
+
+        wheel_speeds_[0] = msg->velocity[0] * rpm_to_ms * gear_ratio;
+        wheel_speeds_[1] = msg->velocity[1]* rpm_to_ms * gear_ratio;
+        wheel_speeds_[2] = msg->velocity[2]* rpm_to_ms * gear_ratio;
+        wheel_speeds_[3] = msg->velocity[3]* rpm_to_ms * gear_ratio;
         
         wheel_angles_[0] = msg->position[4];
         wheel_angles_[1] = msg->position[5];
         wheel_angles_[2] = msg->position[6];
         wheel_angles_[3] = msg->position[7];
-        
 
-        constexpr double d1 = 0.1, d2 = 0.1;
+        //correct the -1 signs cuz some motors are wired backwards
+
+        wheel_speeds_[1] = (-1.0)*wheel_speeds_[1];
+        wheel_speeds_[2] = (-1.0)*wheel_speeds_[2];      
+
+        RCLCPP_INFO(this->get_logger(), "corr[0]: %f", wheel_speeds_[0]);
+        RCLCPP_INFO(this->get_logger(), "corr[1]: %f", wheel_speeds_[1]);
+        RCLCPP_INFO(this->get_logger(), "corr[2]: %f", wheel_speeds_[2]);
+        RCLCPP_INFO(this->get_logger(), "corr[3]: %f", wheel_speeds_[3]);
+
+
+        constexpr double d1 = 0.0, d2 = 0.0;
         const Eigen::Vector2d wheel_positions[4] = {
             {-LENGTH / 2 - d2, WIDTH / 2 + d1},     //back left wheel
             {-LENGTH / 2 - d2, -WIDTH / 2 - d1},    //back right wheel
