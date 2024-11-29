@@ -1,0 +1,7 @@
+joy_node:
+  ros__parameters:
+    device_id: 0
+    deadzone: 0.05
+    autorepeat_rate: 20.0 #     Rate in Hz at which a joystick that has a non-changing state will resend the previously sent message. 
+    default_trig_val: 0.0
+    coalesce_interval: 0.01

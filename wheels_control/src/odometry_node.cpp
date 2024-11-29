@@ -164,9 +164,9 @@ private:
         // pos_y_ += dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]);
         // pos_theta_ += dt * x[2];
 
-        pos_x_ += dt * x[0]
-        pos_y_ += dt * x[1]
-        pos_theta_ += dt * x[2]
+        pos_x_ += dt * x[0];
+        pos_y_ += dt * x[1];
+        pos_theta_ += dt * x[2];
 
         nav_msgs::msg::Odometry odom;
         odom.header.stamp = this->get_clock()->now();

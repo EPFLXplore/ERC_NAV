@@ -73,6 +73,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/fake_cs_gamepad.py
   scripts/fake_cs_shutdown.py
+  scripts/backup_gamepad_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
