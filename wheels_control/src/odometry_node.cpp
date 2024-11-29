@@ -95,20 +95,22 @@ private:
         wheel_speeds_[2] = msg->velocity[2]* rpm_to_ms * gear_ratio;
         wheel_speeds_[3] = msg->velocity[3]* rpm_to_ms * gear_ratio;
         
-        wheel_angles_[0] = msg->position[4];
-        wheel_angles_[1] = msg->position[5];
-        wheel_angles_[2] = msg->position[6];
-        wheel_angles_[3] = msg->position[7];
+        wheel_angles_[0] = msg->position[0];
+        wheel_angles_[1] = msg->position[1];
+        wheel_angles_[2] = msg->position[2];
+        wheel_angles_[3] = msg->position[3];
 
         //correct the -1 signs cuz some motors are wired backwards
 
         wheel_speeds_[1] = (-1.0)*wheel_speeds_[1];
         wheel_speeds_[2] = (-1.0)*wheel_speeds_[2];      
 
-        RCLCPP_INFO(this->get_logger(), "corr[0]: %f", wheel_speeds_[0]);
-        RCLCPP_INFO(this->get_logger(), "corr[1]: %f", wheel_speeds_[1]);
-        RCLCPP_INFO(this->get_logger(), "corr[2]: %f", wheel_speeds_[2]);
-        RCLCPP_INFO(this->get_logger(), "corr[3]: %f", wheel_speeds_[3]);
+        //DEBUG MEEE!!!
+        //check in motors_cmds_lifecycle
+        RCLCPP_INFO(this->get_logger(), "ang[0]: %d", wheel_angles_[4]);
+        RCLCPP_INFO(this->get_logger(), "ang[1]: %d", wheel_angles_[5]);
+        RCLCPP_INFO(this->get_logger(), "ang[2]: %d", wheel_angles_[6]);
+        RCLCPP_INFO(this->get_logger(), "ang[3]: %d", wheel_angles_[7]);
 
 
         constexpr double d1 = 0.0, d2 = 0.0;
