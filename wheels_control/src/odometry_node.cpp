@@ -2,6 +2,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <math.h>
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
@@ -47,11 +48,7 @@ public:
 private:
 
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
-        //if(current_rover_state.rover_mode == OFF){
-        //    RCLCPP_ERROR(this->get_logger(), "Can't publish wheel odom if rover is OFF");
-        //    return;
-        //}
-        
+
         if (msg->velocity.size() != 4 || msg->position.size() != 4) {
             RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
             return;
@@ -61,7 +58,7 @@ private:
         //rpm = (10/17.85) * 60 = 33rpm
         //m/s = rpm * 2*pi*r/60 = 0.471 m/s
 
-        //msg->velocity does NOT take into account the gear ratio 1/53 of the wheels.
+        //the motor status custom msg msg->velocity does NOT take into account the gear ratio 1/53 of the wheels.
         //we must first multiply the value from the message by this gear ratio
         //then convert it to m/s. The non gear-ratio-corrected speed should produce 
         //a max value of 1800 rpm. This should result in 0.471 m/s with the gear ratio taken into account
@@ -83,19 +80,28 @@ private:
         // #define BACK_RIGHT_STEER 7  --> index 2 here
         // #define BACK_LEFT_STEER 8   --> index 3 here
 
-        wheel_angles_[0] = (90.0 - msg->position[0] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[1] = (90.0 - msg->position[1] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[2] = (90.0 - msg->position[2] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[3] = (90.0 - msg->position[3] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[0] = (msg->position[0] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[1] = (msg->position[1] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[2] = (msg->position[2] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[3] = (msg->position[3] * steer_ang_scaling) * deg_to_rad;
 
+        //the wheels have slip rings, so one might as well have an angle between [-PI, PI]
+        for(unsigned int i=0; i<4; i++){
+            if(wheel_angles_[i] > M_PI){
+                wheel_angles_[i] -= 2*M_PI;
+            }else if (wheel_angles_[i] < -M_PI){
+                wheel_angles_[i] +=2*M_PI;
+            }
+        }
         //check in motors_cmds_lifecycle, %f prints a double/float, %d prints an int
-        RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0] * (1/deg_to_rad));
-        RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1] * (1/deg_to_rad));
-        RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2] * (1/deg_to_rad));
-        RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3] * (1/deg_to_rad));
+        //RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0] * (1/deg_to_rad));
+        //RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1] * (1/deg_to_rad));
+        //RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2] * (1/deg_to_rad));
+        //RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3] * (1/deg_to_rad));
 
 
-        constexpr double d1 = 0.0, d2 = 0.0;
+        constexpr double d1 = 0.0;
+        constexpr double d2 = 0.0;
         const Eigen::Vector2d wheel_positions[4] = {
             {-WIDTH/2 - d1, LENGTH/2 + d2},       //index 0 --> front left
             {WIDTH/2 + d1, LENGTH/2 + d2},        //index 1 --> front right
@@ -113,15 +119,21 @@ private:
             double x = wheel_positions[i][0];
             double y = wheel_positions[i][1];
 
-            A.row(2 * i) << cos_alpha, sin_alpha, -y * cos_alpha + x * sin_alpha;
-            A.row(2 * i + 1) << -sin_alpha, cos_alpha, y * sin_alpha + x * cos_alpha;
+            A.row(2 * i) << 1, 0, -y;
+            A.row(2 * i + 1) << 0, 1, x;
 
-            b(2 * i) = wheel_speeds_[i];
+            b(2 * i) = wheel_speeds_[i] * sin_alpha;
+            b(2 * i + 1) = wheel_speeds_[i] * cos_alpha;
         }
 
 
         auto now = this->get_clock()->now();
         Eigen::Vector3d x = A.colPivHouseholderQr().solve(b);
+        //Eigen::Vector3d x = A.completeOrthogonalDecomposition().solve(b);
+
+        RCLCPP_INFO(this->get_logger(), "state vx %f", x[0]);
+        RCLCPP_INFO(this->get_logger(), "state vy %f", x[1]);
+        RCLCPP_INFO(this->get_logger(), "state wz %f", x[2]);
 
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
@@ -148,9 +160,24 @@ private:
         // pos_y_ += dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]);
         // pos_theta_ += dt * x[2];
 
-        pos_x_ += dt * x[0];
-        pos_y_ += dt * x[1];
+        //see math pdf, we swtich referentials from the math one to the ros2 one (x forward, y left, z up)
+        double ros_vx = x[1];
+        double ros_vy = -x[0];
+
+        // Transform velocities to world frame
+        double world_vx = ros_vx * std::cos(pos_theta_) - ros_vy * std::sin(pos_theta_);
+        double world_vy = ros_vx * std::sin(pos_theta_) + ros_vy * std::cos(pos_theta_);
+
+        pos_x_ += world_vx * dt;
+        pos_y_ += world_vy * dt;
         pos_theta_ += dt * x[2];
+
+        // normalize [-pi, pi]
+        if (pos_theta_ > M_PI) {
+            pos_theta_ -= 2 * M_PI;
+        } else if (pos_theta_ < -M_PI) {
+            pos_theta_ += 2 * M_PI;
+        }
 
         nav_msgs::msg::Odometry odom;
         odom.header.stamp = this->get_clock()->now();
