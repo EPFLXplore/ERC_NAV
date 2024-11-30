@@ -16,6 +16,12 @@
 using std::placeholders::_1;
 
 const double WHEEL_RADIUS = 0.1325;
+const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
+const double gear_ratio = 1.0/53;
+const double steer_ang_scaling = 30.0/6075; //measured experimentally
+const double deg_to_rad = M_PI/(180.0);
+
+//WARNING: this code assumes the wheels are properly homed before starting the node!
 
 class ForwardKinematicsNode : public rclcpp::Node {
 public:
@@ -26,6 +32,7 @@ public:
           pos_x_(0.0),
           pos_y_(0.0),
           pos_theta_(0.0) {
+
         prev_time_ = this->get_clock()->now();
 
         subscription_ = this->create_subscription<custom_msg::msg::MotorStatus>(
@@ -50,75 +57,50 @@ private:
             return;
         }
         
-
-            // in motors_cmds_node_lifecycle:
-            // IDs [0,1,2,3] are the nodes for the driving
-            // IDs [4,5,6,7] are the nodes for the steering
-
-            // in definition.hpp:
-            // #define FRONT_LEFT_DRIVE 1
-            // #define FRONT_RIGHT_DRIVE 2
-            // #define BACK_RIGHT_DRIVE 3
-            // #define BACK_LEFT_DRIVE 4
-            // #define FRONT_LEFT_STEER 5
-            // #define FRONT_RIGHT_STEER 6
-            // #define BACK_RIGHT_STEER 7
-            // #define BACK_LEFT_STEER 8
-
-            //wheel_speeds_[0] --> Front left drive = msg->velocity[0]
-            //wheel_speeds_[1] --> front right drive
-            //wheel_speeds_[2] --> Back right drive
-            //wheel_speeds_[3] --> Back left drive
-            
-            //wheel_angles_[0] --> front left steering  = msg->position[4]
-            //wheel_angles_[1] --> front right steering = msg->position[5]
-            //wheel_angles_[2] --> back right steering = msg->position[6]
-            //wheel_angles_[3] --> back left steering = msg->position[7]
-        
-        //rpm to m/s
-        //2pi/60seconds
-
         //max speed : 10 revolutions in 17.85s
         //rpm = (10/17.85) * 60 = 33rpm
         //m/s = rpm * 2*pi*r/60 = 0.471 m/s
-        
-        const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
-        const double gear_ratio = 1.0/53;
 
         //msg->velocity does NOT take into account the gear ratio 1/53 of the wheels.
         //we must first multiply the value from the message by this gear ratio
-        //then convert it to m/s. The non gear-ratio corrected speed should produce 
-        //a max value of 1800 rpm. This should result in 0.471 m/s we the gear ratio taken into account
+        //then convert it to m/s. The non gear-ratio-corrected speed should produce 
+        //a max value of 1800 rpm. This should result in 0.471 m/s with the gear ratio taken into account
 
         wheel_speeds_[0] = msg->velocity[0] * rpm_to_ms * gear_ratio;
-        wheel_speeds_[1] = msg->velocity[1]* rpm_to_ms * gear_ratio;
-        wheel_speeds_[2] = msg->velocity[2]* rpm_to_ms * gear_ratio;
-        wheel_speeds_[3] = msg->velocity[3]* rpm_to_ms * gear_ratio;
-        
-        wheel_angles_[0] = msg->position[0];
-        wheel_angles_[1] = msg->position[1];
-        wheel_angles_[2] = msg->position[2];
-        wheel_angles_[3] = msg->position[3];
+        wheel_speeds_[1] = msg->velocity[1] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
+        wheel_speeds_[2] = msg->velocity[2] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
+        wheel_speeds_[3] = msg->velocity[3] * rpm_to_ms * gear_ratio;
 
-        //correct the -1 signs cuz some motors are wired backwards
 
-        wheel_speeds_[1] = (-1.0)*wheel_speeds_[1];
-        wheel_speeds_[2] = (-1.0)*wheel_speeds_[2];      
+        //in the definition.hpp file :
+        // #define FRONT_LEFT_DRIVE 1
+        // #define FRONT_RIGHT_DRIVE 2
+        // #define BACK_RIGHT_DRIVE 3
+        // #define BACK_LEFT_DRIVE 4
 
-        //DEBUG MEEE!!!
-        //check in motors_cmds_lifecycle
-        RCLCPP_INFO(this->get_logger(), "ang[0]: %d", wheel_angles_[4]);
-        RCLCPP_INFO(this->get_logger(), "ang[1]: %d", wheel_angles_[5]);
-        RCLCPP_INFO(this->get_logger(), "ang[2]: %d", wheel_angles_[6]);
-        RCLCPP_INFO(this->get_logger(), "ang[3]: %d", wheel_angles_[7]);
+        // #define FRONT_LEFT_STEER 5  --> index 0 here
+        // #define FRONT_RIGHT_STEER 6 --> index 1 here
+        // #define BACK_RIGHT_STEER 7  --> index 2 here
+        // #define BACK_LEFT_STEER 8   --> index 3 here
+
+        wheel_angles_[0] = (90.0 - msg->position[0] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[1] = (90.0 - msg->position[1] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[2] = (90.0 - msg->position[2] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[3] = (90.0 - msg->position[3] * steer_ang_scaling) * deg_to_rad;
+
+        //check in motors_cmds_lifecycle, %f prints a double/float, %d prints an int
+        RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0] * (1/deg_to_rad));
+        RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1] * (1/deg_to_rad));
+        RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2] * (1/deg_to_rad));
+        RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3] * (1/deg_to_rad));
 
 
         constexpr double d1 = 0.0, d2 = 0.0;
         const Eigen::Vector2d wheel_positions[4] = {
-            {-LENGTH / 2 - d2, WIDTH / 2 + d1},     //back left wheel
-            {-LENGTH / 2 - d2, -WIDTH / 2 - d1},    //back right wheel
-            {LENGTH / 2 + d2, WIDTH / 2 + d1},      //front left wheel
-            {LENGTH / 2 + d2, -WIDTH / 2 - d1}      //front right wheel
+            {-WIDTH/2 - d1, LENGTH/2 + d2},       //index 0 --> front left
+            {WIDTH/2 + d1, LENGTH/2 + d2},        //index 1 --> front right
+            {WIDTH/2 + d1, -LENGTH/2 - d2},       //index 2 --> back right
+            {-WIDTH/2 - d1, -LENGTH/2 - d2}       //index 3 --> back left
         };
 
         Eigen::MatrixXd A(8, 3);
@@ -131,7 +113,7 @@ private:
             double x = wheel_positions[i][0];
             double y = wheel_positions[i][1];
 
-        A.row(2 * i) << cos_alpha, sin_alpha, -y * cos_alpha + x * sin_alpha;
+            A.row(2 * i) << cos_alpha, sin_alpha, -y * cos_alpha + x * sin_alpha;
             A.row(2 * i + 1) << -sin_alpha, cos_alpha, y * sin_alpha + x * cos_alpha;
 
             b(2 * i) = wheel_speeds_[i];

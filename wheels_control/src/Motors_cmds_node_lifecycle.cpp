@@ -197,8 +197,10 @@ public:
                 // IDs [4,5,6,7] are the nodes for the steering
                 if (id > 4)
                 {
-                    message_nav.position[id-5] = motor->get_position_is();
-                    RCLCPP_INFO(get_logger(), "idx nbr: %d", id-5);
+                    message_nav.position[id-5] = (double)motor->get_position_is();
+                    //RCLCPP_INFO(get_logger(), "pos int getter: %d", motor->get_position_is());
+                    //RCLCPP_INFO(get_logger(), "pos int saved dyn conversion: %f", (double)message_nav.position[id-5]);
+                    //RCLCPP_INFO(get_logger(), "index int: %d", id-5);
                 }
                 else{
                     //this returns 1800 (approx) which is correct for the max speed.
