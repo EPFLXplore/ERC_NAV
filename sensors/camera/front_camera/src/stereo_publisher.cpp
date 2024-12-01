@@ -17,6 +17,13 @@
 
 #include "depthai/depthai.hpp"
 
+// -------------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
+// OLD CODE FOR CAMERA OAKD - ERC 2024
+// -------------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
+
+
 std::tuple<dai::Pipeline, int, int> createPipeline(
     bool withDepth, bool lrcheck, bool extended, bool subpixel, int confidence, int LRchecktresh, std::string resolution) {
     dai::Pipeline pipeline;
