@@ -77,6 +77,7 @@ class MotorCmds : public rclcpp::Node
 
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
             "/NAV/motor_nav_status", 10);
+
             
         timer_=this->create_wall_timer(
             100ms, std::bind(&MotorCmds::motors_param_callback, this));

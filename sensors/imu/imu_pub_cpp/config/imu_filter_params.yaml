@@ -1,0 +1,17 @@
+imu_filter:
+  ros__parameters:
+    stateless: false
+    #stateless: If set to true, don't publish a filtered orientation. Instead, publish the stateless estimate of the orientation based on the latest accelerometer (and optionally magnetometer) readings alone. Useful for debugging. 
+    use_mag: true      #Start by setting the use_mag parameter to false. Once you get good results, you can set it back to true.
+    publish_tf: true
+    reverse_tf: false
+    fixed_frame: "odom"
+    constant_dt: 0.0
+    publish_debug_topics: false
+    world_frame: "enu"
+    gain: 0.2
+    zeta: 0.0
+    mag_bias_x: 0.0
+    mag_bias_y: 0.0
+    mag_bias_z: 0.0
+    orientation_stddev: 0.0
