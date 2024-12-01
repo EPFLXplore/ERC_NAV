@@ -19,7 +19,7 @@ using std::placeholders::_1;
 const double WHEEL_RADIUS = 0.1325;
 const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
 const double gear_ratio = 1.0/53;
-const double steer_ang_scaling = 30.0/6075; //measured experimentally
+const double steer_ang_scaling = 30.0/6075; //measured experimentally, increments = 65536 = 2^16
 const double deg_to_rad = M_PI/(180.0);
 
 //WARNING: this code assumes the wheels are properly homed before starting the node!

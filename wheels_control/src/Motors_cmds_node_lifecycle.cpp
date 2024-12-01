@@ -190,8 +190,8 @@ public:
             if (motor->connected())
             {                
                 message_nav.state[id-1] = motor->connected();
-                message_nav.current[id-1] = motor->get_current_is();
-                message_nav.average_current[id-1] = motor->get_current_is_averaged();
+                message_nav.current[id-1] = (double)motor->get_current_is();
+                message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
 
                 // IDs [0,1,2,3] are the nodes for the driving
                 // IDs [4,5,6,7] are the nodes for the steering
