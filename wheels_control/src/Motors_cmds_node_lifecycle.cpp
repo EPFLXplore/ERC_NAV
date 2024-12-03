@@ -35,6 +35,7 @@ Function used from motors.hpp:  - connected()
 #include "custom_msg/msg/wheelstatus.hpp"
 #include "custom_msg/msg/statussteering.hpp"
 #include "custom_msg/msg/motor_status.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 
 using namespace std::chrono_literals;
 
@@ -81,6 +82,7 @@ public:
         // add all motors
         int i = 0;
         bool homing;
+        
 
         this->declare_parameter("homing", true);
 
@@ -129,12 +131,19 @@ public:
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
             "NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
 
+        reset_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
+            "/CS/ResetNavMotors",
+            std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
+        );
+        
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
 
         // Get the size of the vector
         std::size_t size = motors.size();
         RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%d'", size);
         RCLCPP_INFO(get_logger(), "Nav motors configured");
+
+        current_faulty_motors.resize(motors.size(), false);
 
         return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
     }
@@ -181,12 +190,68 @@ public:
         return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
     }
 
+    void handle_reset_nav_motors(
+        const std_srvs::srv::SetBool::Request::SharedPtr request,
+        const std_srvs::srv::SetBool::Response::SharedPtr response){
+
+            if(request->data){
+                RCLCPP_INFO(get_logger(), "Received request to reset navigation motor.");
+                //detect how many motors need resetting
+                unsigned int num_faulty_before = 0;
+                for (bool is_faulty: current_faulty_motors){
+                    if(is_faulty){
+                        num_faulty_before++;
+                    }
+                }
+
+                for (auto motor = motors.begin(); motor != motors.end(); motor++){
+                    int id = motor->get_id();
+                    unsigned int error_code = 0;
+
+                    if(current_faulty_motors[id-1] == true){
+                        bool cleared_fault = motor->clear_fault();
+                        if (error_code != 0){
+                            RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id-1);
+                        }else{
+                            current_faulty_motors[id-1] = false;
+                        }
+                    }
+                }
+                unsigned int num_faulty_after = 0;
+                for (bool is_faulty: current_faulty_motors){
+                    if(is_faulty){
+                        num_faulty_after++;
+                    }
+                }
+
+                if(num_faulty_after == 0){
+                    response->success = true;
+                    response->message = "ERR: Nav motors reset succesfully!";
+                }else{
+                    RCLCPP_WARN(get_logger(), "%d motors failed to reset.", num_faulty_after);
+                    response->success = false;
+                    response->message = "ERR: at least one of the motors was not successfully reset";
+                }
+                
+            }else{
+                RCLCPP_WARN(get_logger(), "Nav Motor Reset request denied.");
+                response->success = false;
+                response->message = "Nav Motor Reset request denied.";
+            }
+        }
+    
+    
     void motors_param_callback()
     {
         auto message_nav = custom_msg::msg::MotorStatus();
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
+            unsigned int error_code = 0;
+            bool has_fault = motor->fault_state(&error_code);
+            message_nav.fault_state[id-1] = has_fault;
+            current_faulty_motors[id-1] = has_fault;
+
             if (motor->connected())
             {                
                 message_nav.state[id-1] = motor->connected();
@@ -198,16 +263,12 @@ public:
                 if (id > 4)
                 {
                     message_nav.position[id-5] = (double)motor->get_position_is();
-                    //RCLCPP_INFO(get_logger(), "pos int getter: %d", motor->get_position_is());
-                    //RCLCPP_INFO(get_logger(), "pos int saved dyn conversion: %f", (double)message_nav.position[id-5]);
-                    //RCLCPP_INFO(get_logger(), "index int: %d", id-5);
                 }
                 else{
                     //this returns 1800 (approx) which is correct for the max speed.
                     //to get the actual value we need to divide by the gear ration 1:53
                     //which gives us again the 33.3 rpm
                     message_nav.velocity[id-1] = motor->get_velocity_is();
-                    //RCLCPP_INFO(get_logger(), "pub drive sent: %f", message_nav.velocity[id-1]);
                 }
             }
         }    
@@ -458,6 +519,9 @@ private:
         close_gateway(gateway);
         motors.clear();
     }
+
+    std::vector<bool> current_faulty_motors;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_nav_motors_service_;
 };
 
 int main(int argc, char *argv[])

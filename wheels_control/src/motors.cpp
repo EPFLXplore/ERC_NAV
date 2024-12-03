@@ -257,10 +257,10 @@ bool NAV_Motor::is_faulty(bool verbose)
 
 bool NAV_Motor::clear_fault()
 {
+    //VCS_ClearFault changes the device state from “fault” to “disable”.
     CONNECTION_CHECK;
-
     unsigned int error_code = 0;
-    VCS_ClearFault(gateway, id, &error_code); // clear fault just in case
+    VCS_ClearFault(gateway, id, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return (bool)error_code;
 }

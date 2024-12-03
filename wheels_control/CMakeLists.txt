@@ -27,6 +27,7 @@ find_package(Eigen3 REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 
 
@@ -100,7 +101,7 @@ add_executable(NAV_displacement_cmds
 ament_target_dependencies(NAV_displacement_cmds rclcpp custom_msg geometry_msgs sensor_msgs tf2 tf2_ros tf2_geometry_msgs) 
 
 add_executable(NAV_motor_cmds src/Motors_cmds_node_lifecycle.cpp src/motors.cpp)
-ament_target_dependencies(NAV_motor_cmds rclcpp_lifecycle rclcpp custom_msg std_msgs)
+ament_target_dependencies(NAV_motor_cmds rclcpp_lifecycle rclcpp custom_msg std_msgs std_srvs)
 
 
 install(
