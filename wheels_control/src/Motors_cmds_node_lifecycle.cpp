@@ -135,6 +135,11 @@ public:
             "/CS/ResetNavMotors",
             std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
         );
+
+        reset_home_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
+            "/CS/ResetHomeNavMotors",
+            std::bind(&MotorCmdsLifecycle::handle_reset_home_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
+        );
         
         RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
 
@@ -194,53 +199,77 @@ public:
         const std_srvs::srv::SetBool::Request::SharedPtr request,
         const std_srvs::srv::SetBool::Response::SharedPtr response){
 
-            if(request->data){
-                RCLCPP_INFO(get_logger(), "Received request to reset navigation motor.");
-                //detect how many motors need resetting
-                unsigned int num_faulty_before = 0;
-                for (bool is_faulty: current_faulty_motors){
-                    if(is_faulty){
-                        num_faulty_before++;
-                    }
+        if(request->data){
+            RCLCPP_INFO(get_logger(), "Received request to reset navigation motor.");
+            //detect how many motors need resetting
+            unsigned int num_faulty_before = 0;
+            for (bool is_faulty: current_faulty_motors){
+                if(is_faulty){
+                    num_faulty_before++;
                 }
-
-                for (auto motor = motors.begin(); motor != motors.end(); motor++){
-                    int id = motor->get_id();
-                    unsigned int error_code = 0;
-
-                    if(current_faulty_motors[id-1] == true){
-                        bool cleared_fault = motor->clear_fault();
-                        if (error_code != 0){
-                            RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id-1);
-                        }else{
-                            current_faulty_motors[id-1] = false;
-                        }
-                    }
-                }
-                unsigned int num_faulty_after = 0;
-                for (bool is_faulty: current_faulty_motors){
-                    if(is_faulty){
-                        num_faulty_after++;
-                    }
-                }
-
-                if(num_faulty_after == 0){
-                    response->success = true;
-                    response->message = "ERR: Nav motors reset succesfully!";
-                }else{
-                    RCLCPP_WARN(get_logger(), "%d motors failed to reset.", num_faulty_after);
-                    response->success = false;
-                    response->message = "ERR: at least one of the motors was not successfully reset";
-                }
-                
-            }else{
-                RCLCPP_WARN(get_logger(), "Nav Motor Reset request denied.");
-                response->success = false;
-                response->message = "Nav Motor Reset request denied.";
             }
+
+            for (auto motor = motors.begin(); motor != motors.end(); motor++){
+                int id = motor->get_id();
+                unsigned int error_code = 0;
+
+                if(current_faulty_motors[id-1] == true){
+                    bool cleared_fault = motor->clear_fault();
+                    if (error_code != 0){
+                        RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id-1);
+                    }else{
+                        current_faulty_motors[id-1] = false;
+                    }
+                }
+            }
+            unsigned int num_faulty_after = 0;
+            for (bool is_faulty: current_faulty_motors){
+                if(is_faulty){
+                    num_faulty_after++;
+                }
+            }
+
+            if(num_faulty_after == 0){
+                response->success = true;
+                response->message = "ERR: Nav motors reset succesfully!";
+            }else{
+                RCLCPP_WARN(get_logger(), "%d motors failed to reset.", num_faulty_after);
+                response->success = false;
+                response->message = "ERR: at least one of the motors was not successfully reset";
+            }
+            
+        }else{
+            RCLCPP_WARN(get_logger(), "Nav Motor Reset request denied.");
+            response->success = false;
+            response->message = "Nav Motor Reset request denied.";
         }
+    }
     
-    
+    void handle_reset_home_nav_motors(
+        const std_srvs::srv::SetBool::Request::SharedPtr request,
+        const std_srvs::srv::SetBool::Response::SharedPtr response){
+
+        if(request->data){
+            for (auto motor = motors.begin(); motor != motors.end(); motor++){
+                int id = motor->get_id();
+                unsigned int error_code = 0;
+                bool successfully_homed = motor->homing();
+                if(successfully_homed){
+                    response->success = true;
+                    response->message = "Successfully home all motors";
+                }else{
+                    RCLCPP_WARN(get_logger(), "ERR : Failed to home all motors");
+                    response->success = false;
+                    response->message = "ERR: Could not home all motors";
+                }
+            }
+        }else{
+            RCLCPP_WARN(get_logger(), "Nav Motor Homing Reset request denied.");
+            response->success = false;
+            response->message = "Nav Motor Homing Reset request denied.";
+        }
+    }
+
     void motors_param_callback()
     {
         auto message_nav = custom_msg::msg::MotorStatus();
@@ -522,6 +551,7 @@ private:
 
     std::vector<bool> current_faulty_motors;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_nav_motors_service_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_home_nav_motors_service_;
 };
 
 int main(int argc, char *argv[])

@@ -279,14 +279,15 @@ bool NAV_Motor::set_position_ref(long pos)
     return !error_code;
 }
 
-void NAV_Motor::homing()
+bool NAV_Motor::homing()
 {
     int pos;
     unsigned int error_code = 0;
     VCS_GetPositionIs(gateway, id, &pos, &error_code);
     VCS_ActivateHomingMode(gateway, id, &error_code);
-    VCS_DefinePosition(gateway, id, pos, &error_code);
+    bool succesfull_homing = VCS_DefinePosition(gateway, id, pos, &error_code);
     VCS_StopHoming(gateway, id, &error_code);
+    return succesfull_homing;
 }
 bool NAV_Motor::reset_position_counter()
 {

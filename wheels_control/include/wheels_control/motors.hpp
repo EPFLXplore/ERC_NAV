@@ -62,7 +62,7 @@ public:
 
     bool fault_state();
 
-    void homing();
+    bool homing();
 
     int get_encoder_pulse();
     /* is_faulty
