@@ -277,7 +277,8 @@ public:
         {
             int id = motor->get_id();
             unsigned int error_code = 0;
-            bool has_fault = motor->fault_state(&error_code);
+            bool debug_verbose = true;
+            bool has_fault = motor->is_faulty(debug_verbose);
             message_nav.fault_state[id-1] = has_fault;
             current_faulty_motors[id-1] = has_fault;
 
