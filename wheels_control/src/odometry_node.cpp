@@ -186,7 +186,12 @@ private:
 
         odom.pose.pose.position.x = pos_x_;
         odom.pose.pose.position.y = pos_y_;
-        odom.pose.pose.position.z = 0.0;
+
+        odom.twist.twist.linear.x = world_vx;
+        odom.twist.twist.linear.y = world_vy;
+
+        odom.twist.twist.angular.z = x[2];
+
 
         tf2::Quaternion q;
         q.setRPY(0.0, 0.0, pos_theta_);
