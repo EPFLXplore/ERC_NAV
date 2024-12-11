@@ -75,6 +75,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(motor_cmds),
     )
 
+    front_camera = launch_ros.actions.Node(
+        package='camera',
+        executable='camera',
+        name='camera_nav_front',
+        namespace='/NAV',
+        parameters=[
+            {'camera_type': "oakd_stereo"},
+            {'topic_service': "/NAV/req_camera_nav_0"},
+            {'topic_pub': "/NAV/feed_camera_nav_0"},
+            {'bw_pub': "/NAV/bw_camera_nav_0"}, 
+            #the devrule is already in the dockerfile
+        ],
+    )
+
     return [
         # Arguments
         motor_cmds_arg,
@@ -85,6 +99,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
+        front_camera,
     ]
 
 
