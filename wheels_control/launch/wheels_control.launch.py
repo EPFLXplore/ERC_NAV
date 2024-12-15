@@ -89,6 +89,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         ],
     )
 
+    wheel_odom_node = launch_ros.actions.Node(
+        package="wheels_control",
+        executable="NAV_odometry_node",
+        name="NAV_odometry_node",
+    )
+
+
+
     return [
         # Arguments
         motor_cmds_arg,
@@ -99,7 +107,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        front_camera,
+        #front_camera,
+        wheel_odom_node
     ]
 
 
