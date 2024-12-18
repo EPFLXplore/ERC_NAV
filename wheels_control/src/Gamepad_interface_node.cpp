@@ -31,7 +31,8 @@ Rewritting author:  Cyril Goffin
 
 using namespace std::chrono_literals;
 
-int windowSize = 10;
+int windowSize = 30;
+int windowSizeSteering = 50;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 
@@ -62,6 +63,22 @@ class GamepadInterface : public rclcpp::Node
         }
 
         // Calculate the average of the values in the buffer
+        double sum = 0.0;
+        for (double value : buffer) {
+            sum += value;
+        }
+
+        return sum / buffer.size();
+    }
+
+    double filter_steering(double newValue, std::vector<double> buffer) 
+    {
+        buffer.push_back(newValue);
+
+        if (buffer.size() > windowSizeSteering) {
+            buffer.erase(buffer.begin());
+        }
+
         double sum = 0.0;
         for (double value : buffer) {
             sum += value;
@@ -214,7 +231,7 @@ class GamepadInterface : public rclcpp::Node
       message.angular.x = 0;
       message.angular.y = 0;
 
-      message.angular.z = -filter(r_z, buffer_z);
+      message.angular.z = -filter_steering(r_z, buffer_z);
 
       pub_cmd_vel_manual->publish(message);
       /*

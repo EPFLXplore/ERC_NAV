@@ -113,6 +113,19 @@ private:
         Eigen::VectorXd b(8);
         b.setZero();
 
+        //dynamic slip factor : the more you turn the more you slip sideways
+        //if you turn right you will slip and move a bit to the left
+        //we want a 5 degree error at 30 degrees of steering angle
+        double slip_factor = (6.0/30.0) * (0.25)*(std::fabs(wheel_angles_[0]) + std::fabs(wheel_angles_[1]) + std::fabs(wheel_angles_[2]) + std::fabs(wheel_angles_[3]));
+        //RCLCPP_INFO(this->get_logger(), "slip factor %f", slip_factor);
+
+        if(pos_theta_ >= 0.0){
+            //if turning right
+            slip_factor = std::fabs(slip_factor);
+        }else{
+            slip_factor = (-1.0)*std::fabs(slip_factor);
+        }
+
         for (int i = 0; i < 4; ++i) {
             double cos_alpha = std::cos(wheel_angles_[i]);
             double sin_alpha = std::sin(wheel_angles_[i]);
@@ -122,57 +135,89 @@ private:
             A.row(2 * i) << 1, 0, -y;
             A.row(2 * i + 1) << 0, 1, x;
 
-            b(2 * i) = wheel_speeds_[i] * sin_alpha;
-            b(2 * i + 1) = wheel_speeds_[i] * cos_alpha;
+            b(2 * i) = slip_factor * wheel_speeds_[i] * cos_alpha + (1-slip_factor)*wheel_speeds_[i] * sin_alpha;
+            b(2 * i + 1) = (-1.0)*slip_factor*wheel_speeds_[i] * sin_alpha + (1-slip_factor)*wheel_speeds_[i] * cos_alpha;
         }
 
 
         auto now = this->get_clock()->now();
         Eigen::Vector3d x = A.colPivHouseholderQr().solve(b);
-        //Eigen::Vector3d x = A.completeOrthogonalDecomposition().solve(b);
 
-        RCLCPP_INFO(this->get_logger(), "state vx %f", x[0]);
-        RCLCPP_INFO(this->get_logger(), "state vy %f", x[1]);
-        RCLCPP_INFO(this->get_logger(), "state wz %f", x[2]);
+        //RCLCPP_INFO(this->get_logger(), "state vx %f", x[0]);
+        //RCLCPP_INFO(this->get_logger(), "state vy %f", x[1]);
+        //RCLCPP_INFO(this->get_logger(), "state wz %f", x[2]);
+
+        ////////////////////////////////////////////
+
+        //Closed form double Ackermann forward kinematics
+
+        //mean of the right side wheel steering angle in the reference of the front wheel
+        //if we go right, the front right wheel [1] will have a +alpha_l angle whilst the back right wheel will have -alpha_l
+        // double alpha_r = (wheel_angles_[1] - wheel_angles_[2])/2.0;
+        // //if we go right the front left wheel will have a steering angle of +alpha_l whilst the back left wheel will have a steering angle of -alpha_l
+        // double alpha_l = (wheel_angles_[0] - wheel_angles_[3])/2.0;
+
+        // double v_l = (wheel_speeds_[0] + wheel_speeds_[3])/2.0;
+        // double v_r = (wheel_speeds_[1] + wheel_speeds_[2])/2.0;
+
+        // double R1 = 0.0;
+        // double R2 = 0.0;
+        // if(std::tan(alpha_l) == 0){
+        //     R1 = 9999999;
+        // }else{
+        //     R1 = LENGTH/(2*std::tan(alpha_l)) - (WIDTH/2);
+        // }
+
+        // if(std::tan(alpha_r) == 0){
+        //     R2 = 9999999;
+        // }else{
+        //     R2 = LENGTH/(2*std::tan(alpha_r)) + (WIDTH/2);
+
+        // }
+
+        // double R = (R1+R2)/2.0;
+        // double r_left =  std::sqrt((R + WIDTH/2.0)*(R + WIDTH/2.0) + (LENGTH/2)*(LENGTH/2));
+        // double r_right = std::sqrt((R - WIDTH/2.0)*(R - WIDTH/2.0) + (LENGTH/2)*(LENGTH/2));
+
+        // double omega = ((v_l/r_left) + (v_r/r_right))/2.0;
+        // double est_vx = omega * R;
+
+
+        ///////////////////////////////////////////
+
 
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
-        // Eigen::Vector3d k1, k2, k3, k4;
 
-        // k1 << x[0] * std::cos(pos_theta_) - x[1] * std::sin(pos_theta_),
-        //       x[0] * std::sin(pos_theta_) + x[1] * std::cos(pos_theta_),
-        //       x[2];
-        // double k2_theta = pos_theta_ + dt / 2.0 * k1[2];
-        // k2 << x[0] * std::cos(k2_theta) - x[1] * std::sin(k2_theta),
-        //       x[0] * std::sin(k2_theta) + x[1] * std::cos(k2_theta),
-        //       x[2];
-        // double k3_theta = pos_theta_ + dt / 2.0 * k2[2];
-        // k3 << x[0] * std::cos(k3_theta) - x[1] * std::sin(k3_theta),
-        //       x[0] * std::sin(k3_theta) + x[1] * std::cos(k3_theta),
-        //       x[2];
-        // double k4_theta = pos_theta_ + dt * k3[2];
-        // k4 << x[0] * std::cos(k4_theta) - x[1] * std::sin(k4_theta),
-        //       x[0] * std::sin(k4_theta) + x[1] * std::cos(k4_theta),
-        //       x[2];
-
-        // pos_x_ += dt / 6.0 * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0]);
-        // pos_y_ += dt / 6.0 * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]);
-        // pos_theta_ += dt * x[2];
-
-        //see math pdf, we swtich referentials from the math one to the ros2 one (x forward, y left, z up)
+        //we swtich referentials from the math one to the ros2 one (x forward, y left, z up)
         double ros_vx = x[1];
         double ros_vy = -x[0];
+
+        ///double ackerman closed form
+        //double ros_vx_est = est_vx;
+        //
 
         // Transform velocities to world frame
         double world_vx = ros_vx * std::cos(pos_theta_) - ros_vy * std::sin(pos_theta_);
         double world_vy = ros_vx * std::sin(pos_theta_) + ros_vy * std::cos(pos_theta_);
 
+        //closed form double ackermann kinematics, vy=0
+        // double world_est_vx =  ros_vx_est * std::cos(pos_theta_acker_);
+        // double world_est_vy =  ros_vx_est * std::sin(pos_theta_acker_);
+        //
+
         pos_x_ += world_vx * dt;
         pos_y_ += world_vy * dt;
         pos_theta_ += dt * x[2];
 
-        // normalize [-pi, pi]
+        //double ackermann
+        // pos_x_acker_ += world_est_vx * dt;
+        // pos_y_acker_ += world_est_vy * dt;
+        // pos_theta_acker_ += dt * omega;
+        //
+
+        //normalize [-pi, pi]
         if (pos_theta_ > M_PI) {
             pos_theta_ -= 2 * M_PI;
         } else if (pos_theta_ < -M_PI) {
@@ -183,21 +228,28 @@ private:
         odom.header.stamp = this->get_clock()->now();
         odom.header.frame_id = "odom";
         odom.child_frame_id = "base_link";
-
         odom.pose.pose.position.x = pos_x_;
         odom.pose.pose.position.y = pos_y_;
-
         odom.twist.twist.linear.x = world_vx;
         odom.twist.twist.linear.y = world_vy;
-
         odom.twist.twist.angular.z = x[2];
-
 
         tf2::Quaternion q;
         q.setRPY(0.0, 0.0, pos_theta_);
         odom.pose.pose.orientation = tf2::toMsg(q);
-
         odom_publisher_->publish(odom);
+
+        //double ackermann kinematics
+        // odom.pose.pose.position.x = pos_x_acker_;
+        // odom.pose.pose.position.y = pos_y_acker_;
+        // odom.twist.twist.linear.x = world_est_vx;
+        // odom.twist.twist.linear.y = world_est_vy;
+        // odom.twist.twist.angular.z = omega;
+
+        // q.setRPY(0.0, 0.0, pos_theta_acker_);
+        // odom.pose.pose.orientation = tf2::toMsg(q);
+        // odom_publisher_acker_->publish(odom);
+        //
 
         prev_time_ = now;
     }
