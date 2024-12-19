@@ -3,9 +3,16 @@ import launch_ros
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
+import os
+import yaml
 
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
+
+    #-------------- File Paths ------------------
+    local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "local_ekf_liorf-wheel.yaml")
+
     # ------------- Launch Arguments -------------
     default_fake_cs_gamepad = "false"
     fake_cs_gamepad_arg = DeclareLaunchArgument(
@@ -95,6 +102,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_odometry_node",
     )
 
+    local_ekf_node = launch_ros.actions.Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name = 'local_ekf_filter_node',
+        output = 'screen',
+        parameters=[local_ekf_file_path]
+    )
+
 
 
     return [
@@ -108,7 +123,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         displacement_cmds_node,
         motor_cmds_node,
         #front_camera,
-        wheel_odom_node
+        wheel_odom_node,
+        local_ekf_node
     ]
 
 

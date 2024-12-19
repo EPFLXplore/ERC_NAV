@@ -7,42 +7,42 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ################################################################
 #                       realsense
-RUN sudo apt update && sudo apt autoremove -y && sudo apt clean -y
+# RUN sudo apt update && sudo apt autoremove -y && sudo apt clean -y
 
-RUN sudo apt-get -y update && sudo apt-get -y upgrade \
-    && echo "[INFO] Upgrades are done!" \
-    && sleep 2
+# RUN sudo apt-get -y update && sudo apt-get -y upgrade \
+#     && echo "[INFO] Upgrades are done!" \
+#     && sleep 2
 
 
-ENV REALSENSE_BASE=/root
+# ENV REALSENSE_BASE=/root
 
-ENV REALSENSE_DIR=$REALSENSE_BASE/librealsense
+# ENV REALSENSE_DIR=$REALSENSE_BASE/librealsense
 
-# clone librealsense SKD
-RUN git clone https://github.com/IntelRealSense/librealsense.git $REALSENSE_DIR \
-    && cd $REALSENSE_DIR \
-    && mkdir build
+# # clone librealsense SKD
+# RUN git clone https://github.com/IntelRealSense/librealsense.git $REALSENSE_DIR \
+#     && cd $REALSENSE_DIR \
+#     && mkdir build
  
-RUN sudo apt-get -y install python3 python3-dev libssl-dev libxinerama-dev libxcursor-dev libcanberra-gtk-module libcanberra-gtk3-module
-RUN apt-get update && apt-get install -y \
-    libusb-1.0-0-dev \
-    pkg-config \
-    libgtk-3-dev \
-    python3-numpy \
-    && rm -rf /var/lib/apt/lists/*
-RUN echo "[INFO] pyrealsense2 bindings build has been started!"
+# RUN sudo apt-get -y install python3 python3-dev libssl-dev libxinerama-dev libxcursor-dev libcanberra-gtk-module libcanberra-gtk3-module
+# RUN apt-get update && apt-get install -y \
+#     libusb-1.0-0-dev \
+#     pkg-config \
+#     libgtk-3-dev \
+#     python3-numpy \
+#     && rm -rf /var/lib/apt/lists/*
+# RUN echo "[INFO] pyrealsense2 bindings build has been started!"
 
-# Give the CUDA path to CMake
-RUN sed -i '3iset(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)' $REALSENSE_DIR/CMakeLists.txt
-# Set the flags so that librealsense is compatible with python
+# # Give the CUDA path to CMake
+# RUN sed -i '3iset(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)' $REALSENSE_DIR/CMakeLists.txt
+# # Set the flags so that librealsense is compatible with python
 
-RUN cmake $REALSENSE_DIR/ -DBUILD_PYTHON_BINDINGS:bool=true -DPYTHON_EXECUTABLE=/usr/bin/python3 -DCMAKE_BUILD_TYPE=release -DBUILD_EXAMPLES=true -DBUILD_GRAPHICAL_EXAMPLES=true -DFORCE_RSUSB_BACKEND=ON
+# RUN cmake $REALSENSE_DIR/ -DBUILD_PYTHON_BINDINGS:bool=true -DPYTHON_EXECUTABLE=/usr/bin/python3 -DCMAKE_BUILD_TYPE=release -DBUILD_EXAMPLES=true -DBUILD_GRAPHICAL_EXAMPLES=true -DFORCE_RSUSB_BACKEND=ON
 
-RUN sudo make uninstall && sudo make clean
+# RUN sudo make uninstall && sudo make clean
 
-RUN echo "[INFO] Building is starting, it will take a long time like half an hour or more!"
-RUN sleep 2
-RUN sudo make -j$(($(nproc)-1)) && sudo make install
+# RUN echo "[INFO] Building is starting, it will take a long time like half an hour or more!"
+# RUN sleep 2
+# RUN sudo make -j$(($(nproc)-1)) && sudo make install
 
 
 ###############################################################
@@ -107,8 +107,8 @@ WORKDIR /home/$USERNAME/dev_ws
 #RUN rosdep update \
 #    && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
 
-RUN rosdep update \
-    && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r --skip-keys "ros-humble-gazebo-ros"
+#RUN rosdep update \
+#    && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
 
 
 # Add the source of the project to the .bashrc
