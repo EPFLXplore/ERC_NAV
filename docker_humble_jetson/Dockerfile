@@ -115,9 +115,8 @@ RUN apt-get update && apt-get install -y \
     ros-humble-pcl-msgs
 
 # Add USB rules for oak-d
-RUN echo 'SUBSYSTEM=="usb", ATTRS{idProduct}=="2485", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
-#this udev rule restart doesn't work
-RUN /etc/init.d/udev restart    
+RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
+RUN /etc/init.d/udev restart  
 
 
 # Add Lidar Host
