@@ -1,45 +1,35 @@
+import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import ExecuteProcess
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
-from ament_index_python.packages import get_package_share_directory
-import os
+import xacro
+
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco')
-    # rviz_config_file = "src/ros2_aruco/ros2_aruco/rviz/aruco.rviz" #os.path.join(share_dir, 'config', 'rviz2.rviz')
-
-    # urdf_file_path = "src/ros2_aruco/ros2_aruco/urdf/simple_camera.urdf.xacro"  
-    # urdf_file_path = os.path.join(
-    #     os.getenv('AMENT_PREFIX_PATH').split(':')[0],
-    #     'share', 'ros2_aruco', 'urdf', urdf_file_name
-    # )
-
     rviz_config_file = os.path.join(package_dir, 'rviz', 'aruco.rviz')
-    urdf_file_path = os.path.join(package_dir, 'urdf', 'simple_camera.urdf.xacro')
+    xacro_file_path = os.path.join(package_dir, 'urdf', 'simple_dual_camera.urdf.xacro')
 
-
-    sim = LaunchConfiguration('sim', default=False)
-    multiview = LaunchConfiguration('multiview', default=False)
+    sim = LaunchConfiguration('sim', default='false')
+    multiview = LaunchConfiguration('multiview', default='true')
     initial_pose = LaunchConfiguration('initial_pose', default='start')
     x = LaunchConfiguration('x', default='0.0')
     y = LaunchConfiguration('y', default='0.0')
-    rviz = LaunchConfiguration('rviz', default=True)
-    description = LaunchConfiguration('description', default=True) # publish simple urdf
+    rviz = LaunchConfiguration('rviz', default='true')
+    description = LaunchConfiguration('description', default='true')
 
-
-
+    # Process Xacro file
+    robot_description = xacro.process_file(xacro_file_path).toxml()
 
     return LaunchDescription([
-        
-
         Node(
             package='ros2_aruco',
             executable='multiview_aruco_node',
             name='aruco_node',
             output='screen',
-            parameters=[{'sim': sim}] ,
+            parameters=[{'sim': sim}],
             condition=IfCondition(multiview)
         ),
 
@@ -48,8 +38,8 @@ def generate_launch_description():
             executable='aruco_node',
             name='aruco_node',
             output='screen',
-            parameters=[{'sim': sim}] ,
-            condition=UnlessCondition(multiview)    
+            parameters=[{'sim': sim}],
+            condition=UnlessCondition(multiview)
         ),
 
         Node(
@@ -57,7 +47,7 @@ def generate_launch_description():
             executable='pose_estimation_node',
             name='pose_estimation_node',
             output='screen',
-            parameters=[{'sim': sim, 'initial_pose': initial_pose, 'x': x, 'y':y}] 
+            parameters=[{'sim': sim, 'initial_pose': initial_pose, 'x': x, 'y': y}]
         ),
 
         Node(
@@ -74,11 +64,7 @@ def generate_launch_description():
             executable='robot_state_publisher',
             name='robot_state_publisher',
             output='screen',
-            parameters=[{'robot_description': open(urdf_file_path).read()}],
+            parameters=[{'robot_description': robot_description}],
             condition=IfCondition(description)
         ),
-
     ])
-
-if __name__ == '__main__':
-    generate_launch_description()

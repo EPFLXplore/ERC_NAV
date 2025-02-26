@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from cv_bridge import CvBridge
 import tf2_ros
@@ -35,20 +35,20 @@ class MultiViewArucoNode(Node):
             self.declare_parameter("camera_info_topic_2", '/intel_rgb/camera_info')
             self.declare_parameter("camera_frame_2", "intel_camera_link")
 
-            self.declare_parameter("marker_size", .175)
+            self.declare_parameter("marker_size", .15)
 
         else:
 
-            self.declare_parameter("image_topic_1", '/oak/rgb/image_raw')
-            self.declare_parameter("camera_info_topic_1", '/oak/rgb/camera_info')
-            self.declare_parameter("camera_frame_1", "oak-d-base-frame")
+            self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
+            self.declare_parameter("camera_info_topic_1", '/NAV/camera_info_102122061110')
+            self.declare_parameter("camera_frame_1", "realsense1-frame")
 
-            self.declare_parameter("image_topic_2", '/camera/camera/color/image_raw')
-            self.declare_parameter("camera_info_topic_2", '/camera/camera/color/camera_info')
-            self.declare_parameter("camera_frame_2", "camera_link")
+            self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
+            self.declare_parameter("camera_info_topic_2", '/NAV/camera_info_135322062945')
+            self.declare_parameter("camera_frame_2", "realsense2-frame")
 
             # self.declare_parameter("marker_size", .125)
-            self.declare_parameter("marker_size", .17)
+            self.declare_parameter("marker_size", .15)
 
 
         self.base_frame = "base_link"
@@ -57,8 +57,8 @@ class MultiViewArucoNode(Node):
         dictionary_id_name = self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
 
         # Subscribers
-        self.image_sub_1 = Subscriber(self, Image, self.get_parameter("image_topic_1").get_parameter_value().string_value)
-        self.image_sub_2 = Subscriber(self, Image, self.get_parameter("image_topic_2").get_parameter_value().string_value)
+        self.image_sub_1 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_1").get_parameter_value().string_value)
+        self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value)
 
         # Subsribers to camera info topic to get intrisic matrix and distortion
         self.info_sub_1 = self.create_subscription(CameraInfo, 
@@ -74,8 +74,8 @@ class MultiViewArucoNode(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # synchronized call back that processes two images at the same time
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
+        # synchronized call back that processes two images at the same time, slop = windows of time for sync 0.3 before
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.8)
         self.ts.registerCallback(self.synced_callback)
 
         # Publishers
@@ -136,7 +136,9 @@ class MultiViewArucoNode(Node):
 
     def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
         
-        cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
+        # cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
+        np_arr = np.frombuffer(img_msg.data, np.uint8)
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR) #change to grayscale if performance is ass
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
         
         if marker_ids is not None:
@@ -171,6 +173,7 @@ class MultiViewArucoNode(Node):
                 markers.poses.append(pose)
                 markers.marker_ids.append(marker_id[0]-50) # ERC IDs go from 51 to 64
         else:
+            self.get_logger().info("NO MARKER DETECTED ")
             return
 
 
