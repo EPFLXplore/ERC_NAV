@@ -7,7 +7,7 @@ import cv2
 from ros2_aruco import transformations
 
 from sensor_msgs.msg import CameraInfo
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from geometry_msgs.msg import PoseArray, Pose
 from ros2_aruco_interfaces.msg import ArucoMarkers
 import math
@@ -38,10 +38,10 @@ class ArucoNode(rclpy.node.Node):
             self.declare_parameter("marker_size", .175)
    
         else:
-            self.declare_parameter("image_topic", '/oak/rgb/image_raw')
-            self.declare_parameter("camera_info_topic", '/oak/rgb/camera_info')
+            self.declare_parameter("image_topic", '/NAV/feed_camera_nav_1')
+            self.declare_parameter("camera_info_topic", '/NAV/camera_info_102122061110')
             self.declare_parameter("camera_frame", "oak-d-base-frame")
-            self.declare_parameter("marker_size", .125) #TODO measure
+            self.declare_parameter("marker_size", .15) #TODO measure
 
 
         self.marker_size = self.get_parameter("marker_size").get_parameter_value().double_value
@@ -61,7 +61,7 @@ class ArucoNode(rclpy.node.Node):
                                                  self.info_callback,
                                                  qos_profile_sensor_data)
 
-        self.create_subscription(Image, image_topic,
+        self.image_sub = self.create_subscription(CompressedImage, image_topic,
                                  self.image_callback, qos_profile_sensor_data)
 
         # Set up publishers
@@ -82,6 +82,8 @@ class ArucoNode(rclpy.node.Node):
         self.intrinsic_mat = np.reshape(np.array(self.info_msg.k), (3, 3))
         self.distortion = np.array(self.info_msg.d)
         self.destroy_subscription(self.info_sub)
+        self.get_logger().info("finished getting camera info")
+
 
 
     def image_callback(self, img_msg):
@@ -90,7 +92,13 @@ class ArucoNode(rclpy.node.Node):
             self.get_logger().warn("No camera info has been received!")
             return
 
-        cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
+        # cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
+        np_arr = np.frombuffer(img_msg.data, np.uint8)
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        if cv_image is None:
+            self.get_logger().error("Failed to decode compressed image!")
+            return
 
         markers = ArucoMarkers() # custom msg => ID + position
         pose_array = PoseArray() # for vizualization on rviz
@@ -105,6 +113,7 @@ class ArucoNode(rclpy.node.Node):
 
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image,self.aruco_dictionary, parameters=self.aruco_parameters)
         if marker_ids is not None:
+            self.get_logger().info("DETECTED +++")
 
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, self.intrinsic_mat, self.distortion)
         
@@ -138,7 +147,8 @@ class ArucoNode(rclpy.node.Node):
 
             self.poses_pub.publish(pose_array)
             self.markers_pub.publish(markers)
-
+        else:
+            self.get_logger().info("NO MARKERS DETECTED")
 
 def main():
     rclpy.init()

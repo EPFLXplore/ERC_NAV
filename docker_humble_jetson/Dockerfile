@@ -151,12 +151,13 @@ ENV GAZEBO_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
 RUN pip install opencv-python --no-cache-dir
 #RUN pip install pyrealsense2 -> does not work
 # For Aruco
-RUN pip install opencv-contrib-python==4.6.0.66 
+RUN pip install opencv-contrib-python==4.6.0.66 --no-cache-dir
 RUN pip install depthai --no-cache-dir
 RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
+
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*

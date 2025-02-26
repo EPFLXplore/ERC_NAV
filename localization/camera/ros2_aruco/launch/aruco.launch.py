@@ -4,24 +4,29 @@ from launch.actions import ExecuteProcess
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
-
+from ament_index_python.packages import get_package_share_directory
+import os
 def generate_launch_description():
+    package_dir = get_package_share_directory('ros2_aruco')
+    # rviz_config_file = "src/ros2_aruco/ros2_aruco/rviz/aruco.rviz" #os.path.join(share_dir, 'config', 'rviz2.rviz')
 
-    rviz_config_file = "src/ros2_aruco/ros2_aruco/rviz/aruco.rviz" #os.path.join(share_dir, 'config', 'rviz2.rviz')
-
-    urdf_file_path = "src/ros2_aruco/ros2_aruco/urdf/simple_camera.urdf.xacro"  
+    # urdf_file_path = "src/ros2_aruco/ros2_aruco/urdf/simple_camera.urdf.xacro"  
     # urdf_file_path = os.path.join(
     #     os.getenv('AMENT_PREFIX_PATH').split(':')[0],
     #     'share', 'ros2_aruco', 'urdf', urdf_file_name
     # )
+
+    rviz_config_file = os.path.join(package_dir, 'rviz', 'aruco.rviz')
+    urdf_file_path = os.path.join(package_dir, 'urdf', 'simple_camera.urdf.xacro')
+
 
     sim = LaunchConfiguration('sim', default=False)
     multiview = LaunchConfiguration('multiview', default=False)
     initial_pose = LaunchConfiguration('initial_pose', default='start')
     x = LaunchConfiguration('x', default='0.0')
     y = LaunchConfiguration('y', default='0.0')
-    rviz = LaunchConfiguration('rviz', default=False)
-    description = LaunchConfiguration('description', default=False) # publish simple urdf
+    rviz = LaunchConfiguration('rviz', default=True)
+    description = LaunchConfiguration('description', default=True) # publish simple urdf
 
 
 
@@ -64,14 +69,14 @@ def generate_launch_description():
             condition=IfCondition(rviz)
         ),
 
-        # Node(
-        #     package='robot_state_publisher',
-        #     executable='robot_state_publisher',
-        #     name='robot_state_publisher',
-        #     output='screen',
-        #     parameters=[{'robot_description': open(urdf_file_path).read()}],
-        #     condition=IfCondition(description)
-        # ),
+        Node(
+            package='robot_state_publisher',
+            executable='robot_state_publisher',
+            name='robot_state_publisher',
+            output='screen',
+            parameters=[{'robot_description': open(urdf_file_path).read()}],
+            condition=IfCondition(description)
+        ),
 
     ])
 
