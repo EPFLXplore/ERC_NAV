@@ -87,6 +87,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-tf-transformations \
     ros-${ROS_DISTRO}-tf2* \
+    ros-${ROS_DISTRO}-xacro \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \

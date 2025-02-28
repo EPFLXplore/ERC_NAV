@@ -64,29 +64,30 @@ class PoseEstimatorNode(Node):
             self.initial_estimate = np.array([0.0, 0.0])
 
 
-        if self.sim:
+        #if self.sim:
             # known absolute positions of landmarks (only x,y)
-            self.landmark_poses = [
-                    (9.80, 0.00),
-                    (9.80, 3.5),
-                    (34.00, 1.50),
-                    (23.63, -4.62),
-                    (10.27, 9.76),
-                    (10.10, -21.38),
-                    (5.44, -15.17),
-                    (31.00, -9.13),
-                    (18.37, 11.00),
-                    (1.36, 9.60),
-                    (17.00, -22.46),
-                    (19.63, -0.02),
-                    (18.29, -13.90),
-                    (3.02, -17.34)
-                ]
+        self.landmark_poses = [
+                (2.03, 0.2648),
+                (2.03, -1.132),
+                (2.03, -0.4002),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+                (999999, 999999),
+            ]
             
-        else: 
-            self.landmark_poses=[(63., 21.33), 
-                    (63., -2.37),
-                    (63., -21.33)]
+        # else: 
+        #     self.landmark_poses=[(63., 21.33), 
+        #             (63., -2.37),
+        #             (63., -21.33)]
 
 
     def timer_callback(self):
@@ -120,8 +121,8 @@ class PoseEstimatorNode(Node):
 
         base_pose_msg = PoseWithCovarianceStamped()
         base_pose_msg.header.stamp = self.get_clock().now().to_msg()
-        base_pose_msg.header.frame_id = 'map'
-
+        #base_pose_msg.header.frame_id = 'map'   #put me back later
+        base_pose_msg.header.frame_id = 'base_link'
         # Need 3 landmarks to estimate pose
         if len(marker_ids)>=3:
 
@@ -137,6 +138,9 @@ class PoseEstimatorNode(Node):
             # Only care about x and y
             self.x_estimate = base_estimate.x[0] 
             self.y_estimate = base_estimate.x[1]
+
+            self.get_logger().info(f"--> X: {self.x_estimate}")
+            self.get_logger().info(f"--> Y: {self.y_estimate}")
 
             
         else:

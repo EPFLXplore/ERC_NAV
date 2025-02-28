@@ -75,7 +75,7 @@ class MultiViewArucoNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         # synchronized call back that processes two images at the same time, slop = windows of time for sync 0.3 before
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.8)
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
         self.ts.registerCallback(self.synced_callback)
 
         # Publishers
@@ -106,7 +106,7 @@ class MultiViewArucoNode(Node):
         self.destroy_subscription(self.info_sub_2)
 
     def synced_callback(self, img_msg_1, img_msg_2):
-        self.get_logger().info("Callback")
+        #self.get_logger().info("Callback")
         
         if self.info_msg_1 is None or self.info_msg_2 is None:
             self.get_logger().warn("No camera info has been received!")
@@ -126,7 +126,7 @@ class MultiViewArucoNode(Node):
         self.process_image(img_msg_1, self.intrinsic_mat_1, self.distortion_1, self.get_parameter("camera_frame_1").get_parameter_value().string_value, markers, pose_array)
         self.process_image(img_msg_2, self.intrinsic_mat_2, self.distortion_2, self.get_parameter("camera_frame_2").get_parameter_value().string_value, markers, pose_array)
 
-        self.get_logger().info("Publishing")
+        #self.get_logger().info("Publishing")
 
         # Publish
         self.poses_pub.publish(pose_array)
@@ -144,13 +144,13 @@ class MultiViewArucoNode(Node):
         if marker_ids is not None:
 
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
-            
+            self.get_logger().info(f"markers detect: {marker_ids}")
             for i, marker_id in enumerate(marker_ids):
 
                 pose = Pose()
                 pose.position.x = tvecs[i][0][2]
-                pose.position.y = tvecs[i][0][0]
-                pose.position.z = tvecs[i][0][1]
+                pose.position.y = -tvecs[i][0][0]
+                pose.position.z = -tvecs[i][0][1]
 
                 rot_matrix = np.eye(4)
                 rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
@@ -171,9 +171,32 @@ class MultiViewArucoNode(Node):
 
                 pose_array.poses.append(pose)
                 markers.poses.append(pose)
-                markers.marker_ids.append(marker_id[0]-50) # ERC IDs go from 51 to 64
+                #self.get_logger().info(f"marker ID : {marker_id}")
+                erc_to_index = lambda erc_id: erc_id - 51 if 51 <= erc_id <= 65 else None
+                aruco_index = erc_to_index(marker_id[0])
+                self.get_logger().info(f"detect idndex: {aruco_index}")
+                if aruco_index is not None:
+                    markers.marker_ids.append(aruco_index)
+                #aruco markers number map:
+                #erc nbr - aruco id
+                #1  - 51
+                #2  - 52
+                #3  - 53
+                #4  - 54
+                #5  - 55
+                #6  - 56
+                #7  - 57
+                #8  - 58
+                #9  - 59
+                #10 - 60
+                #11 - 61
+                #12 - 62
+                #13 - 63
+                #14 - 64
+                #15 - 65
+                
         else:
-            self.get_logger().info("NO MARKER DETECTED ")
+            #self.get_logger().info("NO MARKER DETECTED ")
             return
 
 
