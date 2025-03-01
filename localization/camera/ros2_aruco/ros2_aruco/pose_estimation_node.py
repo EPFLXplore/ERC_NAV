@@ -67,9 +67,9 @@ class PoseEstimatorNode(Node):
         #if self.sim:
             # known absolute positions of landmarks (only x,y)
         self.landmark_poses = [
-                (2.03, 0.2648),
-                (2.03, -1.132),
-                (2.03, -0.4002),
+                (2.04, -1.53),
+                (3.0, 0.13),
+                (2.2, -0.54),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -122,7 +122,8 @@ class PoseEstimatorNode(Node):
         base_pose_msg = PoseWithCovarianceStamped()
         base_pose_msg.header.stamp = self.get_clock().now().to_msg()
         #base_pose_msg.header.frame_id = 'map'   #put me back later
-        base_pose_msg.header.frame_id = 'base_link'
+        base_pose_msg.header.frame_id = 'map'
+
         # Need 3 landmarks to estimate pose
         if len(marker_ids)>=3:
 

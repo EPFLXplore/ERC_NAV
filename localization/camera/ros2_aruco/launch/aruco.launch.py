@@ -9,7 +9,7 @@ import xacro
 
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco')
-    rviz_config_file = os.path.join(package_dir, 'rviz', 'aruco.rviz')
+    rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
     xacro_file_path = os.path.join(package_dir, 'urdf', 'simple_dual_camera.urdf.xacro')
 
     sim = LaunchConfiguration('sim', default='false')

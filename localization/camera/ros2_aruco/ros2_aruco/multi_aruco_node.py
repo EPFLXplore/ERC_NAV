@@ -11,6 +11,8 @@ import numpy as np
 from ros2_aruco import transformations
 from geometry_msgs.msg import PoseArray, Pose
 from ros2_aruco_interfaces.msg import ArucoMarkers
+from custom_msg.srv import CameraParams
+from functools import partial
 
 
 class MultiViewArucoNode(Node):
@@ -18,6 +20,9 @@ class MultiViewArucoNode(Node):
     def __init__(self):
         super().__init__('multi_view_aruco_node')
         self.get_logger().info("Multi camera ")
+
+        #half of the aruco box depth
+        self.aruco_box_offset = 0.125
 
         
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
@@ -40,15 +45,15 @@ class MultiViewArucoNode(Node):
         else:
 
             self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
-            self.declare_parameter("camera_info_topic_1", '/NAV/camera_info_102122061110')
+            # self.declare_parameter("camera_info_topic_1", '/NAV/camera_info_102122061110')
             self.declare_parameter("camera_frame_1", "realsense1-frame")
 
             self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
-            self.declare_parameter("camera_info_topic_2", '/NAV/camera_info_135322062945')
+            # self.declare_parameter("camera_info_topic_2", '/NAV/camera_info_135322062945')
             self.declare_parameter("camera_frame_2", "realsense2-frame")
 
             # self.declare_parameter("marker_size", .125)
-            self.declare_parameter("marker_size", .15)
+            self.declare_parameter("marker_size", .144)
 
 
         self.base_frame = "base_link"
@@ -61,14 +66,16 @@ class MultiViewArucoNode(Node):
         self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value)
 
         # Subsribers to camera info topic to get intrisic matrix and distortion
-        self.info_sub_1 = self.create_subscription(CameraInfo, 
-                                                   self.get_parameter("camera_info_topic_1").get_parameter_value().string_value, 
-                                                   self.info_callback_1, 
-                                                   qos_profile_sensor_data)
-        self.info_sub_2 = self.create_subscription(CameraInfo, 
-                                                   self.get_parameter("camera_info_topic_2").get_parameter_value().string_value, 
-                                                   self.info_callback_2, 
-                                                   qos_profile_sensor_data)
+        self.call_cam_params_server()
+
+        # self.info_sub_1 = self.create_subscription(CameraInfo, 
+        #                                            self.get_parameter("camera_info_topic_1").get_parameter_value().string_value, 
+        #                                            self.info_callback_1, 
+        #                                            qos_profile_sensor_data)
+        # self.info_sub_2 = self.create_subscription(CameraInfo, 
+        #                                            self.get_parameter("camera_info_topic_2").get_parameter_value().string_value, 
+        #                                            self.info_callback_2, 
+        #                                            qos_profile_sensor_data)
 
         # For tf transforms
         self.tf_buffer = tf2_ros.Buffer()
@@ -93,22 +100,80 @@ class MultiViewArucoNode(Node):
         self.aruco_dictionary = cv2.aruco.Dictionary_get(cv2.aruco.__getattribute__(dictionary_id_name))
         self.aruco_parameters = cv2.aruco.DetectorParameters_create()
 
-    def info_callback_1(self, info_msg):
-        self.info_msg_1 = info_msg
-        self.intrinsic_mat_1 = np.reshape(np.array(self.info_msg_1.k), (3, 3))
-        self.distortion_1 = np.array(self.info_msg_1.d)
-        self.destroy_subscription(self.info_sub_1)
 
-    def info_callback_2(self, info_msg):
-        self.info_msg_2 = info_msg
-        self.intrinsic_mat_2 = np.reshape(np.array(self.info_msg_2.k), (3, 3))
-        self.distortion_2 = np.array(self.info_msg_2.d)
-        self.destroy_subscription(self.info_sub_2)
+    def call_cam_params_server(self):
+        """Create a service client for CameraParams and request data for both cameras"""
+        self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
+        self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
+
+        while not self.client_left.wait_for_service(1.0):
+            self.get_logger().warn("Waiting for CameraParams service (Left Camera)...")
+        while not self.client_right.wait_for_service(1.0):
+            self.get_logger().warn("Waiting for CameraParams service (Right Camera)...")
+
+        request_left = CameraParams.Request()
+        future_left = self.client_left.call_async(request_left)
+        future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
+
+        request_right = CameraParams.Request()
+        future_right = self.client_right.call_async(request_right)
+        future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
+
+
+    def callback_cam_params(self, future, camera):
+        """
+        Process the CameraParams service response and store the parameters.
+        
+        Args:
+            future: The future result from the service call.
+            camera: "left" or "right" to differentiate which camera the response belongs to.
+        """
+        try:
+            response = future.result()
+
+            # Store distortion coefficients
+            distortion = np.array(response.distortion_coefficients)
+
+            # Construct intrinsic matrix
+            intrinsic_mat = np.array([[response.fx, 0, response.cx],
+                                    [0, response.fy, response.cy],
+                                    [0, 0, 1]])
+
+            # Store parameters based on camera
+            if camera == "left":
+                self.distortion_1 = distortion
+                self.intrinsic_mat_1 = intrinsic_mat
+                self.get_logger().info("Received CameraParams for Left Camera.")
+            else:
+                self.distortion_2 = distortion
+                self.intrinsic_mat_2 = intrinsic_mat
+                self.get_logger().info("Received CameraParams for Right Camera.")
+
+            self.get_logger().info(f"Intrinsic Matrix ({camera}):\n{intrinsic_mat}")
+            self.get_logger().info(f"Distortion Coefficients ({camera}): {distortion}")
+
+        except Exception as e:
+            self.get_logger().error(f"Service call failed for {camera} camera: {e}")
+
+
+    # def info_callback_1(self, info_msg):
+    #     self.info_msg_1 = info_msg
+    #     self.intrinsic_mat_1 = np.reshape(np.array(self.info_msg_1.k), (3, 3))
+    #     self.distortion_1 = np.array(self.info_msg_1.d)
+    #     self.destroy_subscription(self.info_sub_1)
+
+    # def info_callback_2(self, info_msg):
+    #     self.info_msg_2 = info_msg
+    #     self.intrinsic_mat_2 = np.reshape(np.array(self.info_msg_2.k), (3, 3))
+    #     self.distortion_2 = np.array(self.info_msg_2.d)
+    #     self.destroy_subscription(self.info_sub_2)
+
+
 
     def synced_callback(self, img_msg_1, img_msg_2):
         #self.get_logger().info("Callback")
         
-        if self.info_msg_1 is None or self.info_msg_2 is None:
+        if self.intrinsic_mat_1 is None or self.intrinsic_mat_2 is None:
             self.get_logger().warn("No camera info has been received!")
             return
         
@@ -141,6 +206,7 @@ class MultiViewArucoNode(Node):
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR) #change to grayscale if performance is ass
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
         
+
         if marker_ids is not None:
 
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
@@ -148,12 +214,25 @@ class MultiViewArucoNode(Node):
             for i, marker_id in enumerate(marker_ids):
 
                 pose = Pose()
-                pose.position.x = tvecs[i][0][2]
-                pose.position.y = -tvecs[i][0][0]
-                pose.position.z = -tvecs[i][0][1]
+                # pose.position.x = tvecs[i][0][2]
+                # self.get_logger().info(f"x: {pose.position.x}")
+                # pose.position.y = -tvecs[i][0][0]
+                # self.get_logger().info(f"y: {pose.position.y}")
+                # pose.position.z = -tvecs[i][0][1]
 
                 rot_matrix = np.eye(4)
                 rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
+
+                face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
+                adjusted_tvec = tvecs[i][0] + rot_matrix[0:3, 0:3] @ face_to_center_offset
+                
+                #in ros2 frame
+                pose.position.x = adjusted_tvec[2]
+                pose.position.y = -adjusted_tvec[0]
+                pose.position.z = -adjusted_tvec[1]
+                self.get_logger().info(f"x: {pose.position.x}")
+                self.get_logger().info(f"y: {pose.position.y}")
+
                 quat = transformations.quaternion_from_matrix(rot_matrix)
 
                 pose.orientation.x = quat[0]
