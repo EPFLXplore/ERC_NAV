@@ -102,6 +102,13 @@ ekf_filter_node:
         pose0_queue_size: 5
         #pose0_rejection_threshold: 2.0  
 
+        odom1: /ouster_imu_lowpass
+        odom1_config: [false,  false,  false,     # x, y, z               (position)
+                       false, false, false,      # roll, pitch, yaw      (orientation)
+                       false, false, false,       # vx, vy, vz            (position velocity)
+                       false, false, false,      # vroll, vpitch, vyaw   (rotational velocity)
+                       true, true, true]     # ax, ay, az            (position acceleration)
+
 
         # [ADVANCED]  The EKF and UKF models follow a standard predict/correct cycle. During prediction, if there is no
         # acceleration reference, the velocity at time t+1 is simply predicted to be the same as the velocity at time t. During
