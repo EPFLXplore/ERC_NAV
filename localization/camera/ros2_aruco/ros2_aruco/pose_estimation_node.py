@@ -67,9 +67,9 @@ class PoseEstimatorNode(Node):
         #if self.sim:
             # known absolute positions of landmarks (only x,y)
         self.landmark_poses = [
-                (2.04, -1.53),
-                (3.0, 0.13),
-                (2.2, -0.54),
+                (2.0, 1.0),
+                (2.125, -0.875),
+                (2.875, 0.0),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -118,6 +118,7 @@ class PoseEstimatorNode(Node):
     def listener_callback(self, msg):
         
         marker_ids = list(msg.marker_ids)
+        #print(f"marker ids pose est: {marker_ids}, msg: {msg.marker_ids}")
 
         base_pose_msg = PoseWithCovarianceStamped()
         base_pose_msg.header.stamp = self.get_clock().now().to_msg()
@@ -127,7 +128,7 @@ class PoseEstimatorNode(Node):
         # Need 3 landmarks to estimate pose
         if len(marker_ids)>=3:
 
-            self.get_logger().info('Estimating')
+            #self.get_logger().info('Estimating')
 
             distance_estimates = [np.linalg.norm([pose.position.x, pose.position.y]) for pose in msg.poses]
             landmarks_ordered = [self.landmark_poses[i] for i in marker_ids]

@@ -13,6 +13,7 @@ from geometry_msgs.msg import PoseArray, Pose
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from custom_msg.srv import CameraParams
 from functools import partial
+import math
 
 
 class MultiViewArucoNode(Node):
@@ -199,48 +200,81 @@ class MultiViewArucoNode(Node):
 
 
 
+######################################################################
     def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
+        marker_candidates = {}  # {marker_id: [(tvec, rot_matrix, yaw_deg)]}
         
-        # cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
         np_arr = np.frombuffer(img_msg.data, np.uint8)
-        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR) #change to grayscale if performance is ass
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # Keep original detection method
+
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
-        
 
         if marker_ids is not None:
-
+            cv2.aruco.drawDetectedMarkers(cv_image, corners, marker_ids)
+            cv2.imshow("Detected ArUco Markers", cv_image)
+            cv2.waitKey(1)  # Allow OpenCV window refresh
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
-            self.get_logger().info(f"markers detect: {marker_ids}")
-            for i, marker_id in enumerate(marker_ids):
+            self.get_logger().info(f"Markers detected: {marker_ids}")
 
-                pose = Pose()
-                # pose.position.x = tvecs[i][0][2]
-                # self.get_logger().info(f"x: {pose.position.x}")
-                # pose.position.y = -tvecs[i][0][0]
-                # self.get_logger().info(f"y: {pose.position.y}")
-                # pose.position.z = -tvecs[i][0][1]
+            all_markers = []  # Store all detected markers (ID, pose, yaw)
+            distinct_ids = set()  # Track unique marker IDs
+
+            # Step 1: Store all detections per ID
+            for i, marker_id in enumerate(marker_ids):
+                marker_id = marker_id[0]  # Extract integer ID
+                distinct_ids.add(marker_id)  # Track distinct marker IDs
 
                 rot_matrix = np.eye(4)
                 rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
 
-                face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
-                adjusted_tvec = tvecs[i][0] + rot_matrix[0:3, 0:3] @ face_to_center_offset
+                # Compute yaw angle from rotation matrix
+                sy = math.sqrt(rot_matrix[0, 0]**2 + rot_matrix[1, 0]**2)
+                yaw = 0 if sy < 1e-6 else math.atan2(rot_matrix[1, 0], rot_matrix[0, 0])
+                yaw_deg = abs(math.degrees(yaw))  # Use absolute value to compare tilt
+
+                # Store all detected markers
+                if marker_id not in marker_candidates:
+                    marker_candidates[marker_id] = []
+                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, yaw_deg))
+
+            # Step 2: **Apply Filtering Except When There Are <= 2 Distinct IDs**
+            if len(distinct_ids) > 2:
+                self.get_logger().info("Filtering markers with worst yaw angles")
                 
-                #in ros2 frame
+                for marker_id in marker_candidates.keys():
+                    # Sort detections by lowest yaw angle (least distortion)
+                    marker_candidates[marker_id].sort(key=lambda x: x[2], reverse=True)  # Sort by yaw_deg
+                    # Keep only the best (lowest yaw) detection per ID
+                    marker_candidates[marker_id] = [marker_candidates[marker_id][0]]
+
+            else:
+                self.get_logger().info("Skipping yaw filtering (Exactly 2 distinct IDs)")
+
+        else:
+            self.get_logger().info("No markers detected.")
+            return
+
+        # **Publish only the best markers (lowest yaw per ID)**
+        for marker_id, marker_list in marker_candidates.items():
+            for tvec, rot_matrix, best_yaw in marker_list:  # Handle multiple detections per ID
+                pose = Pose()
+
+                # Offset ArUco pose to the center of the box face
+                face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
+                adjusted_tvec = tvec + rot_matrix[0:3, 0:3] @ face_to_center_offset
+
+                # Convert to ROS2 frame
                 pose.position.x = adjusted_tvec[2]
                 pose.position.y = -adjusted_tvec[0]
                 pose.position.z = -adjusted_tvec[1]
-                self.get_logger().info(f"x: {pose.position.x}")
-                self.get_logger().info(f"y: {pose.position.y}")
 
                 quat = transformations.quaternion_from_matrix(rot_matrix)
-
                 pose.orientation.x = quat[0]
                 pose.orientation.y = quat[1]
                 pose.orientation.z = quat[2]
                 pose.orientation.w = quat[3]
 
-                # transform position from camera frame to base_link frame
+                # Transform position from camera frame to base_link frame
                 try:
                     transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
                     pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
@@ -248,35 +282,127 @@ class MultiViewArucoNode(Node):
                     self.get_logger().warn(f"Transform lookup failed: {ex}")
                     return
 
-                pose_array.poses.append(pose)
-                markers.poses.append(pose)
-                #self.get_logger().info(f"marker ID : {marker_id}")
+                # **ERC ID Mapping Logic (Preserved)**
                 erc_to_index = lambda erc_id: erc_id - 51 if 51 <= erc_id <= 65 else None
-                aruco_index = erc_to_index(marker_id[0])
-                self.get_logger().info(f"detect idndex: {aruco_index}")
+                aruco_index = erc_to_index(marker_id)
+
+                # **Only publish valid ERC markers**
                 if aruco_index is not None:
+                    pose_array.poses.append(pose)
+                    markers.poses.append(pose)
                     markers.marker_ids.append(aruco_index)
-                #aruco markers number map:
-                #erc nbr - aruco id
-                #1  - 51
-                #2  - 52
-                #3  - 53
-                #4  - 54
-                #5  - 55
-                #6  - 56
-                #7  - 57
-                #8  - 58
-                #9  - 59
-                #10 - 60
-                #11 - 61
-                #12 - 62
-                #13 - 63
-                #14 - 64
-                #15 - 65
+                    self.get_logger().info(f"Publishing Marker ID {marker_id} (ERC Index {aruco_index})")
+        
+
+########################################################################
+
+    # def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
+        
+    #     aruco_candidates = {}
+    #     # cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
+    #     np_arr = np.frombuffer(img_msg.data, np.uint8)
+    #     cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR) #change to grayscale if performance is ass
+    #     corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
+        
+
+    #     if marker_ids is not None:
+
+    #         rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
+    #         self.get_logger().info(f"markers detect: {marker_ids}")
+    #         for i, marker_id in enumerate(marker_ids):
+
+
+    #             pose = Pose()
+    #             # pose.position.x = tvecs[i][0][2]
+    #             # self.get_logger().info(f"x: {pose.position.x}")
+    #             # pose.position.y = -tvecs[i][0][0]
+    #             # self.get_logger().info(f"y: {pose.position.y}")
+    #             # pose.position.z = -tvecs[i][0][1]
+
+    #             rot_matrix = np.eye(4)
+    #             rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
+
+
+    #             sy = math.sqrt(rot_matrix[0, 0]**2 + rot_matrix[1, 0]**2)
+    #             if sy < 1e-6:  # Prevent division by zero
+    #                 roll = math.atan2(-rot_matrix[1, 2], rot_matrix[1, 1])
+    #                 pitch = math.atan2(-rot_matrix[2, 0], sy)
+    #                 yaw = 0  # Gimbal lock case
+    #             else:
+    #                 roll = math.atan2(rot_matrix[2, 1], rot_matrix[2, 2])
+    #                 pitch = math.atan2(-rot_matrix[2, 0], sy)
+    #                 yaw = math.atan2(rot_matrix[1, 0], rot_matrix[0, 0])
+
+    #             yaw_deg = abs(math.degrees(yaw))  # Use absolute value to compare tilt
+    #             self.get_logger().info(f"Marker {marker_id} Yaw: {yaw_deg:.2f} degrees")
+
+    #             if marker_id in marker_candidates: #if it already exists
+    #                 prev_pose, prev_yaw = marker_candidates[marker_id]
+
+    #                 # Keep the marker with the lowest yaw angle (least distortion)
+    #                 if yaw_deg < prev_yaw:
+    #                     self.get_logger().info(f"Updating marker {marker_id} with better (lower) yaw angle: {yaw_deg:.2f} degrees")
+    #                     marker_candidates[marker_id] = (pose, yaw_deg)
+    #                 else:
+    #                     self.get_logger().info(f"Marker {marker_id} discarded due to higher yaw: {yaw_deg:.2f} degrees")
+    #             else:
+    #                 marker_candidates[marker_id] = (pose, yaw_deg)
+
+    #             face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
+    #             adjusted_tvec = tvecs[i][0] + rot_matrix[0:3, 0:3] @ face_to_center_offset
                 
-        else:
-            #self.get_logger().info("NO MARKER DETECTED ")
-            return
+    #             #in ros2 frame
+    #             pose.position.x = adjusted_tvec[2]
+    #             pose.position.y = -adjusted_tvec[0]
+    #             pose.position.z = -adjusted_tvec[1]
+    #             self.get_logger().info(f"x: {pose.position.x}")
+    #             self.get_logger().info(f"y: {pose.position.y}")
+
+    #             quat = transformations.quaternion_from_matrix(rot_matrix)
+
+    #             pose.orientation.x = quat[0]
+    #             pose.orientation.y = quat[1]
+    #             pose.orientation.z = quat[2]
+    #             pose.orientation.w = quat[3]
+
+    #             # transform position from camera frame to base_link frame
+    #             try:
+    #                 transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
+    #                 pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
+    #             except tf2_ros.LookupException as ex:
+    #                 self.get_logger().warn(f"Transform lookup failed: {ex}")
+    #                 return
+
+    #             pose_array.poses.append(pose)
+    #             markers.poses.append(pose)
+    #             #self.get_logger().info(f"marker ID : {marker_id}")
+    #             erc_to_index = lambda erc_id: erc_id - 51 if 51 <= erc_id <= 65 else None
+    #             aruco_index = erc_to_index(marker_id[0])
+    #             self.get_logger().info(f"detect idndex: {aruco_index}")
+                
+    #             if aruco_index is not None:
+    #                 markers.marker_ids.append(aruco_index)
+    #             #aruco markers number map:
+    #             #erc nbr - aruco id
+    #             #1  - 51
+    #             #2  - 52
+    #             #3  - 53
+    #             #4  - 54
+    #             #5  - 55
+    #             #6  - 56
+    #             #7  - 57
+    #             #8  - 58
+    #             #9  - 59
+    #             #10 - 60
+    #             #11 - 61
+    #             #12 - 62
+    #             #13 - 63
+    #             #14 - 64
+    #             #15 - 65
+                
+    #     else:
+    #         #self.get_logger().info("NO MARKER DETECTED ")
+    #         return
 
 
 

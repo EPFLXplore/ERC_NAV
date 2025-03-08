@@ -3,7 +3,7 @@
 
     <link name="base_link"></link>
 
-    <!-- OakD on the left-->
+    <!-- realsense on the left-->
     <joint name="realsense1_joint" type="fixed">
         <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/> 
         <parent link="base_link"/>
@@ -13,7 +13,7 @@
 
     <link name="realsense1-frame"></link>
 
-    <!-- Intel on the right-->
+    <!-- realsense on the right 135-->
     <joint name="realsense2_joint" type="fixed">
         <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
         <parent link="base_link"/>

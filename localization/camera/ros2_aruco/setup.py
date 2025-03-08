@@ -14,7 +14,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'urdf'), glob('urdf/*.xacro')),  # <-- Added this line
+        (os.path.join('share', package_name, 'urdf'), glob('urdf/*.xacro')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -31,6 +31,3 @@ setup(
         ],
     },
 )
-
-# 0618378352
-# 0615316070
