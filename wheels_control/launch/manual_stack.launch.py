@@ -11,7 +11,7 @@ import os
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     #-------------- File Paths ------------------
-    local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "local_ekf_liorf-wheel.yaml")
+    local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
 
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
@@ -111,7 +111,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         )
     )
 
-    # ------------- Nodes to Start AFTER Ouster is Ready (Using Delay Timer) -------------
+    # ------------- Nodes to Start AFTER Ouster is Ready -------------
     local_ekf_node = launch_ros.actions.Node(
         package='robot_localization',
         executable='ekf_node',
@@ -119,6 +119,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output='screen',
         parameters=[local_ekf_file_path]
     )
+
 
     imu_filter_node = launch_ros.actions.Node(
         package='ouster_imu_tester',
