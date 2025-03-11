@@ -88,6 +88,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-tf-transformations \
     ros-${ROS_DISTRO}-tf2* \
     ros-${ROS_DISTRO}-xacro \
+    ros-${ROS_DISTRO}-imu-filter-madgwick \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
