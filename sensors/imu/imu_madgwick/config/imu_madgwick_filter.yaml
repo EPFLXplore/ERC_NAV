@@ -1,8 +1,8 @@
-imu_filter:
+ouster_madgwick_filter:
   ros__parameters:
     stateless: false
     use_mag: false
-    publish_tf: true
+    publish_tf: false
     reverse_tf: false
     fixed_frame: "odom"
     constant_dt: 0.0
@@ -13,4 +13,5 @@ imu_filter:
     mag_bias_x: 0.0
     mag_bias_y: 0.0
     mag_bias_z: 0.0
-    orientation_stddev: 0.0
+    orientation_stddev: 0.1
+    remove_gravity_vector: false

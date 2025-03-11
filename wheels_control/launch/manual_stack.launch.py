@@ -12,7 +12,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
-
+    config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
+    
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
     motor_cmds_arg = DeclareLaunchArgument(
@@ -127,19 +128,27 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name='imu_filter',
         output='screen'
     )
-
+    
+    imu_madgwick_filter = launch_ros.actions.Node(
+                package='imu_filter_madgwick',
+                executable='imu_filter_madgwick_node',
+                name='ouster_madgwick_filter',
+                output='screen',
+                parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
+    )
 
     delayed_launch = TimerAction(
-        period=26.0,  # Wait 22 sec. before launching other nodes because the ouster driver is slow
+        period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
             liorf_launch,
+            imu_madgwick_filter,
             local_ekf_node,
         ]
     )
 
     delayed_aruco_launch = TimerAction(
-        period=7.0,  # Wait 22 sec. before launching other nodes because the ouster driver is slow
+        period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
             LogInfo(msg="Cameras started! Launching dependent nodes..."),
             aruco_launch
@@ -157,7 +166,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         #motor_cmds_node,
         #description_launch,
         #wheel_odom_node,
-        imu_filter_node,
+        #imu_filter_node,
         ouster_launch,
         delayed_launch,
         #nav_cameras_launch,

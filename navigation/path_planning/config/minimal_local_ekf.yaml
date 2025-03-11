@@ -1,47 +1,77 @@
 local_ekf_filter_node:
   ros__parameters:
-    frequency: 100.0
+    frequency: 10.0
     sensor_timeout: 0.1
+    transform_timeout: 0.0
+    transform_time_offset: 0.0
     publish_tf: true
     two_d_mode: false
-    map_frame: map
     odom_frame: odom
     base_link_frame: base_link
     world_frame: odom
+    use_sim_time: false
+    # reset_on_time_jump: true
+    debug: true
+    debug_out_file: local_ekf_debug.txt
 
-    # odom0: liorf/mapping/odometry
-    # odom0_config: [true,  true,  true,      # x, y, z               (position)
-    #                 true, true, true,        # roll, pitch, yaw      (orientation)
-    #                 false, false, false,     # vx, vy, vz            (position velocity)
-    #                 false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
-    #                 false, false, false]     # ax, ay, az            (position acceleration)
-    # odom0_differential: false
-    # odom0_relative: false
-    # odom0_queue_size: 5
+    odom0: /liorf/mapping/odometry
+    odom0_config: [true,  true,  true,      # x, y, z               (position)
+                    false, true, true,        # roll, pitch, yaw      (orientation)
+                    false, false, false,     # vx, vy, vz            (position velocity)
+                    false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
+                    false, false, false]     # ax, ay, az            (position acceleration)
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    # odom0_nodelay: true
+    # smooth_lagged_data: true
+    # history_length: 1.5
 
-    imu0: /ouster_imu
-    imu0_config: [false,  false,  false,     # x, y, z               (position)
-                  false, false, false,      # roll, pitch, yaw      (orientation)
+    #IMU output from the madgwick filter
+    imu0: /imu/data
+    imu0_config: [false, false, false,     # x, y, z               (position)
+                  true, true, true,      # roll, pitch, yaw      (orientation)
                   false, false, false,       # vx, vy, vz            (position velocity)
                   true, true, true,      # vroll, vpitch, vyaw   (rotational velocity)
                   true, true, true]     # ax, ay, az            (position acceleration)
 
     # imu0_linear_acceleration_rejection_threshold: 10.0
-    imu0_remove_gravitational_acceleration: true
+    imu0_remove_gravitational_acceleration: false
+    imu0_differential: true
 
 
-    # process_noise_covariance: [0.001, 0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.001, 0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.001, 0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.001, 0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.001, 0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.001, 0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.025, 0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.025, 0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.04, 0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.01, 0.0,    0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.01, 0.0,    0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.02, 0.0,    0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.01, 0.0,    0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.01, 0.0,
-    #                           0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.015]
+
+    process_noise_covariance: [0.02, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
+
+
+
+
+    initial_estimate_covariance: [1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,  0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5, 0.0,
+                                    0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-5]
