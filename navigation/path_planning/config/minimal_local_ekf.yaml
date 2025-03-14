@@ -1,8 +1,8 @@
 local_ekf_filter_node:
   ros__parameters:
-    frequency: 10.0
+    frequency: 20.0
     sensor_timeout: 0.1
-    transform_timeout: 0.1
+    transform_timeout: 0.0
     transform_time_offset: 0.0
     publish_tf: true
     two_d_mode: false
@@ -10,20 +10,21 @@ local_ekf_filter_node:
     base_link_frame: base_link
     world_frame: odom
     use_sim_time: false
+    permit_corrected_publication: true
     # reset_on_time_jump: true
     debug: true
     debug_out_file: local_ekf_debug.txt
 
     odom0: /liorf/mapping/odometry
     odom0_config: [true,  true,  true,      # x, y, z               (position)
-                    false, true, true,        # roll, pitch, yaw      (orientation)
+                    true, true, true,        # roll, pitch, yaw      (orientation)
                     false, false, false,     # vx, vy, vz            (position velocity)
                     false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
                     false, false, false]     # ax, ay, az            (position acceleration)
     odom0_differential: false
     odom0_relative: false
     odom0_queue_size: 10
-    odom0_twist_rejection_threshold: 1.5
+    odom0_pose_rejection_threshold: 1.0
     
     # odom0_pose_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,
     #                        0.0,  0.05, 0.0,  0.0,  0.0,  0.0,
@@ -35,10 +36,10 @@ local_ekf_filter_node:
     # smooth_lagged_data: true
     # history_length: 1.5
 
-    #IMU output from the madgwick filter
+    #IMU output from the madgwick filter with custom covariance values
     imu0: /imu/modified
     imu0_config: [false, false, false,     # x, y, z               (position)
-                  false, true, true,      # roll, pitch, yaw      (orientation)
+                  true, true, true,      # roll, pitch, yaw      (orientation)
                   false, false, false,       # vx, vy, vz            (position velocity)
                   true, true, true,      # vroll, vpitch, vyaw   (rotational velocity)
                   true, true, true]     # ax, ay, az            (position acceleration)

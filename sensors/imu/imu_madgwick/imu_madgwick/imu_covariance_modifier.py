@@ -23,7 +23,6 @@ class ImuCovarianceModifier(Node):
         self.get_logger().info("IMU Covariance Modifier Node has been started.")
 
     def imu_callback(self, msg: Imu):
-        # Create a new IMU message, copying header and raw fields
         new_msg = Imu()
         new_msg.header = msg.header
         new_msg.orientation = msg.orientation
@@ -32,7 +31,7 @@ class ImuCovarianceModifier(Node):
 
         # Orientation covariance: roll (rotation around x), pitch(rot. around y), yaw(rot. around z)
         new_msg.orientation_covariance = [
-            0.15, 0.0, 0.0,
+            0.2, 0.0, 0.0,
             0.0, 0.1, 0.0,
             0.0, 0.0, 0.1
         ]
