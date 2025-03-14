@@ -130,11 +130,18 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
     
     imu_madgwick_filter = launch_ros.actions.Node(
-                package='imu_filter_madgwick',
-                executable='imu_filter_madgwick_node',
-                name='ouster_madgwick_filter',
-                output='screen',
-                parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
+        package='imu_filter_madgwick',
+        executable='imu_filter_madgwick_node',
+        name='ouster_madgwick_filter',
+        output='screen',
+        parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
+    )
+
+    imu_covariance_modif_node = launch_ros.actions.Node(
+        package='imu_madgwick',
+        executable='imu_covariance_modifier',
+        name='imu_covariance_modifier_node',
+        output='screen',
     )
 
     delayed_launch = TimerAction(
@@ -143,6 +150,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
             liorf_launch,
             imu_madgwick_filter,
+            imu_covariance_modif_node,
             local_ekf_node,
         ]
     )

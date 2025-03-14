@@ -23,6 +23,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'imu_covariance_modifier = imu_madgwick.imu_covariance_modifier:main',
         ],
     },
 )

@@ -47,6 +47,7 @@ void print_VCS_error(unsigned int error_code, const char *func)
 void *open_gateway(void)
 {
     unsigned int error_code = 0;
+    //WATCH OUT : YOU NEED THE UDEV RULES IN AND OUT OF THE DOCKER. ALSO MAYBE AVOID THE USB HUB
     void *gateway = VCS_OpenDevice((char *)"EPOS4", (char *)"MAXON SERIAL V2", (char *)"USB", (char *)"USB0", &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     // VCS_ClearFault(gateway, 0, &error_code);
