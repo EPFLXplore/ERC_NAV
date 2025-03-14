@@ -31,9 +31,9 @@ class ImuCovarianceModifier(Node):
 
         # Orientation covariance: roll (rotation around x), pitch(rot. around y), yaw(rot. around z)
         new_msg.orientation_covariance = [
-            0.2, 0.0, 0.0,
-            0.0, 0.1, 0.0,
-            0.0, 0.0, 0.1
+            0.08, 0.0, 0.0,
+            0.0, 0.05, 0.0,
+            0.0, 0.0, 0.05
         ]
         new_msg.angular_velocity_covariance = [
             0.01, 0.0, 0.0,
@@ -41,9 +41,9 @@ class ImuCovarianceModifier(Node):
             0.0, 0.0, 0.01
         ]
         new_msg.linear_acceleration_covariance = [
-            0.1, 0.0, 0.0,
-            0.0, 0.1, 0.0,
-            0.0, 0.0, 0.1
+            0.08, 0.0, 0.0,
+            0.0, 0.08, 0.0,
+            0.0, 0.0, 0.08
         ]
         
         self.publisher_.publish(new_msg)
