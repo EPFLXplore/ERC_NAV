@@ -123,8 +123,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         displacement_cmds_node,
         motor_cmds_node,
         #front_camera,
-        wheel_odom_node,
-        local_ekf_node
+       # wheel_odom_node,
+       # local_ekf_node
     ]
 
 

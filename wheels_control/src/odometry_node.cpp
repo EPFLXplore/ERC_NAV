@@ -115,10 +115,11 @@ private:
 
         //dynamic slip factor : the more you turn the more you slip sideways
         //if you turn right you will slip and move a bit to the left
-        //we want a 5 degree error at 30 degrees of steering angle
-        double slip_factor = (6.0/30.0) * (0.25)*(std::fabs(wheel_angles_[0]) + std::fabs(wheel_angles_[1]) + std::fabs(wheel_angles_[2]) + std::fabs(wheel_angles_[3]));
+        //we want a 3 degree error at 30 degrees of steering angle
+        double slip_factor = (3.0/30.0) * (0.25)*(std::fabs(wheel_angles_[0]) + std::fabs(wheel_angles_[1]) + std::fabs(wheel_angles_[2]) + std::fabs(wheel_angles_[3]));
         //RCLCPP_INFO(this->get_logger(), "slip factor %f", slip_factor);
-
+        
+        //check here if the +-1 signs are correct for the slip factor
         if(pos_theta_ >= 0.0){
             //if turning right
             slip_factor = std::fabs(slip_factor);
@@ -190,32 +191,19 @@ private:
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
 
-        //we swtich referentials from the math one to the ros2 one (x forward, y left, z up)
+        //we switch referentials from the math one to the ros2 one (x forward, y left, z up)
         double ros_vx = x[1];
         double ros_vy = -x[0];
-
-        ///double ackerman closed form
-        //double ros_vx_est = est_vx;
-        //
 
         // Transform velocities to world frame
         double world_vx = ros_vx * std::cos(pos_theta_) - ros_vy * std::sin(pos_theta_);
         double world_vy = ros_vx * std::sin(pos_theta_) + ros_vy * std::cos(pos_theta_);
 
-        //closed form double ackermann kinematics, vy=0
-        // double world_est_vx =  ros_vx_est * std::cos(pos_theta_acker_);
-        // double world_est_vy =  ros_vx_est * std::sin(pos_theta_acker_);
-        //
 
         pos_x_ += world_vx * dt;
         pos_y_ += world_vy * dt;
-        pos_theta_ += dt * x[2];
+        pos_theta_ += dt * x[2] * fabs((0.35 + slip_factor*10));
 
-        //double ackermann
-        // pos_x_acker_ += world_est_vx * dt;
-        // pos_y_acker_ += world_est_vy * dt;
-        // pos_theta_acker_ += dt * omega;
-        //
 
         //normalize [-pi, pi]
         if (pos_theta_ > M_PI) {
@@ -234,22 +222,33 @@ private:
         odom.twist.twist.linear.y = world_vy;
         odom.twist.twist.angular.z = x[2];
 
+        double yaw_uncertainty = 0.05 + (fabs(slip_factor) * 0.9);
+        
+        std::array<double, 36> pose_covariance = {
+            0.08, 0, 0, 0, 0, 0,
+            0, 0.08, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, yaw_uncertainty
+        };	
+
+        std::array<double, 36> twist_covariance = {
+                    0.08, 0, 0, 0, 0, 0,
+                    0, 0.08, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, yaw_uncertainty
+        };
+        
+        odom.pose.covariance = pose_covariance;
+        odom.twist.covariance = twist_covariance;
+
         tf2::Quaternion q;
         q.setRPY(0.0, 0.0, pos_theta_);
         odom.pose.pose.orientation = tf2::toMsg(q);
         odom_publisher_->publish(odom);
-
-        //double ackermann kinematics
-        // odom.pose.pose.position.x = pos_x_acker_;
-        // odom.pose.pose.position.y = pos_y_acker_;
-        // odom.twist.twist.linear.x = world_est_vx;
-        // odom.twist.twist.linear.y = world_est_vy;
-        // odom.twist.twist.angular.z = omega;
-
-        // q.setRPY(0.0, 0.0, pos_theta_acker_);
-        // odom.pose.pose.orientation = tf2::toMsg(q);
-        // odom_publisher_acker_->publish(odom);
-        //
 
         prev_time_ = now;
     }
