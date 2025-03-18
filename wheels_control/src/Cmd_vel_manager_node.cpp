@@ -45,68 +45,53 @@ class CmdvelManager : public rclcpp::Node
   public:
     CmdvelManager() : Node("NAV_cmd_vel_manager"), count_(0)
     {
-      // this->declare_parameter("autonomous_navigation", false);
-      // autonomous_navigation = this->get_parameter("autonomous_navigation").as_bool();
-      // autonomous_navigation = false;
-
       pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", 10); 
       
-
       sub_cmd_vel_manual = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_manual", 10, std::bind(&CmdvelManager::callback_cmd_vel_manual, this, std::placeholders::_1));
 
       sub_cmd_vel_auto = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10, std::bind(&CmdvelManager::callback_cmd_vel_auto, this, std::placeholders::_1));
+    
+      // Listens on the NAVCSInterface for the actual mode of the rover
+      sub_state_system = this->create_subscription<std_msgs::msg::String>(
+        "/NAV/NAV_mode", 1, std::bind(&CmdvelManager::callback_state_mode, this, std::placeholders::_1));
+    
 
-      sub_nav_nodes_state = this->create_subscription<std_msgs::msg::String>(
-        "NAV/NAV_mode", 1, std::bind(&CmdvelManager::callback_nav_mode, this, std::placeholders::_1));
-
-
+      current_rover_state = ROVER_MODE::OFF;
     }
-
 
   private:
 
-    //TODO: NEED TO CREATE A NEW SUBSCRIBER BECAUSE NAV MODE HAS BEEN TAKEN FOR SOMETHING ELSE
-    void callback_nav_mode(std_msgs::msg::String::SharedPtr msg)
+    /**
+    * @brief Callback function for the state of the rover
+    */
+    void callback_state_mode(const std_msgs::msg::String::SharedPtr msg)
     {
-        if (msg->data == "Auto")   
-        {
-          current_rover_state.rover_mode = AUTO;
-
-          RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] auto");
-        }  
-        else if (msg->data == "Manual")  
-        {
-          current_rover_state.rover_mode = MANUAL;
-          RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] manual");
-        }
-
+      if (msg->data == "Auto")
+      {
+        current_rover_state = ROVER_MODE::AUTO;
+      }
+      else if (msg->data == "Ackermann")
+      {
+        // check different state
+        current_rover_state = ROVER_MODE::ACKERMANN;
+      }
+      else if (msg->data == "Omni")
+      {
+        current_rover_state = ROVER_MODE::OMNI_DIRECTIONAL;
+      }
+      else if (msg->data == "Off")
+      {
+        current_rover_state = ROVER_MODE::OFF;
+      }
     }
-
-
-    void callback_nav_auto_state(std_msgs::msg::String::SharedPtr msg)
-    {
-        
-        std::string instruction = msg->data; 
-        //RCLCPP_INFO(get_logger(), "[cmd_vel_maganager] '%s'", instruction.c_str());
-
-        if (instruction == NAV_AUTO_START)   
-        {
-            current_rover_state.rover_mode = AUTO;
-        } 
-        else if (msg->data == NAV_AUTO_END)   
-        {
-            current_rover_state.rover_mode = MANUAL;
-        }         
-    }
-
-
 
     void callback_cmd_vel_manual(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
       
-      if (current_rover_state.rover_mode == MANUAL)
+      if (current_rover_state == ROVER_MODE::ACKERMANN || 
+          current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL)
       {
 
         auto message = geometry_msgs::msg::Twist(); 
@@ -127,7 +112,7 @@ class CmdvelManager : public rclcpp::Node
     void callback_cmd_vel_auto(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
       
-      if (current_rover_state.rover_mode == AUTO)
+      if (current_rover_state == ROVER_MODE::AUTO)
       {
 
         auto message = geometry_msgs::msg::Twist(); 
@@ -145,17 +130,14 @@ class CmdvelManager : public rclcpp::Node
       }
     }
 
+    ROVER_MODE current_rover_state;
+
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel;      
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_auto;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_manual;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_nav_nodes_state;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmd_shutdown;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
-
-
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
     size_t count_;
-
 };
 
 

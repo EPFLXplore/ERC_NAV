@@ -26,9 +26,6 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
 
-
-
-
 #include "wheels_control/definition.hpp"
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/normal_kinematic_model_slow.hpp"
@@ -41,8 +38,6 @@ motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
-
-string kinematic_state = NORMAL_KINEMATIC;
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -88,12 +83,12 @@ public:
 
     pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", 10);
 
-    sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
-        "/CS/NAV_gamepad", 1, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
-
     sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorStatus>(
         "/NAV/motor_nav_status", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
+    // Listens on the NAVCSInterface for the actual mode of the rover
+    sub_state_system = this->create_subscription<std_msgs::msg::String>(
+        "/NAV/NAV_mode", 1, std::bind(&DisplacementCmds::callback_state_mode, this, std::placeholders::_1));
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
@@ -101,11 +96,10 @@ public:
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
 
-    RCLCPP_INFO(get_logger(), "ANGLE OF ROTATION INCREMENT '%d'", wheels_angle_for_rotation);
-    RCLCPP_INFO(get_logger(), "ANGLE OF ROTATION WITH TRANSLATION INCREMENT '%d'", wheels_angle_for_rotation_with_translation);
-
+    current_rover_state = ROVER_MODE::OFF;
+    
+    // Init normal model. The lateral does not have an init function
     normalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
-    // slownormalKinematicModel.init(current_motors_position, wheels_angle_for_rotation);
   }
 
 
@@ -113,23 +107,42 @@ private:
   bool go_left = false;
   bool go_right = false;
 
-  
+  /**
+  * @brief Callback function for the state of the rover
+  */
+  void callback_state_mode(const std_msgs::msg::String::SharedPtr msg)
+  {
+    if (msg->data == "Auto")
+    {
+      current_rover_state = ROVER_MODE::AUTO;
+    }
+    else if (msg->data == "Ackermann")
+    {
+      // check different state
+      current_rover_state = ROVER_MODE::ACKERMANN;
+    }
+    else if (msg->data == "Omni")
+    {
+      current_rover_state = ROVER_MODE::OMNI_DIRECTIONAL;
+    }
+    else if (msg->data == "Off")
+    {
+      current_rover_state = ROVER_MODE::OFF;
+    }
+  }
+
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     float r_z = msg->angular.z;
-    // float v_x = 3 * msg->linear.x;
     float v_x = msg->linear.x;
     float v_y = msg->linear.y;
 
     /*Run the kinematics manager to compute the motion*/
-    if (kinematic_state == NORMAL_KINEMATIC) {
-      // normal_kinematics_manager(v_x, v_y, r_z);
-      //RCLCPP_INFO(get_logger(), "VX: %f, VY: %f, OZ: %f", v_x, v_y, r_z);
-
+    if (current_rover_state == ROVER_MODE::ACKERMANN) {
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
-     } else {
+   
+    } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       current_motors_cmds = lateralKinematicModel.run(go_left, go_right);
-      RCLCPP_INFO(get_logger(), "current_motors_cmds ");
     }
 
     send_kinematic_msg();
@@ -152,35 +165,10 @@ private:
         -current_motors_cmds.steer[3] // steering motor mounted in reverse
     };
 
-    // RCLCPP_INFO(get_logger(), "STATE KINEMATIC",  kinematic_state);
-
-    message.modedeplacement = kinematic_state;
-    message.info = current_motors_cmds.info;
-
-    // RCLCPP_INFO(get_logger(), "STATE KINEMATIC pub'%s'",  kinematic_state.c_str());
+    message.modedeplacement = current_rover_state;
+    message.info = "to be removed";
 
     pub_kinematic->publish(message);
-  }
-
-  void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
-  {
-    // RCLCPP_INFO(get_logger(), "GAMEPAD PUB'%d'",  msg->buttons[3]);
-
-    bool change_state = msg->buttons[8];
-    bool lateral = (msg->buttons[3] || msg->buttons[4]);
-
-    //go_left = msg->buttons[3];
-    //go_right = msg->buttons[4];
-    change_state = 0;
-    if (lateral)
-    {
-      RCLCPP_INFO(get_logger(), "IS LATERAL ");
-      kinematic_state = LATERAL_KINEMATIC;
-    }
-    else
-    {
-      kinematic_state = NORMAL_KINEMATIC;
-    }
   }
 
   void callback_absolute_encoders(const custom_msg::msg::MotorStatus::SharedPtr msg)
@@ -201,12 +189,10 @@ private:
 
   rclcpp::Publisher<custom_msg::msg::Motorcmds>::SharedPtr pub_kinematic;
   size_t count_;
+  ROVER_MODE current_rover_state;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel;
-  rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmds_shutdown;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_kinematic_state;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr destroy_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr sub_topic_absolute_encoders;
 };
 

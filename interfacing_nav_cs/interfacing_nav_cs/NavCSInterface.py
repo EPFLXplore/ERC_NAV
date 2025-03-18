@@ -20,14 +20,16 @@ Going from Off or Manual to Auto enables nav2 stack and deactivate it else.
 
 Mode = {
     0: "Off",
-    1: "Manual",
-    2: "Auto"
+    1: "Ackermann",
+    2: "Omni",
+    3: "Auto"
 }
 
 Mode_to_CS = {
     "Off": 0,
-    "Manual": 1,
-    "Auto": 2
+    "Ackermann": 1,
+    "Omni": 2,
+    "Auto": 3
 }
 
 class NavCSInterface(Node):
@@ -52,7 +54,7 @@ class NavCSInterface(Node):
         # Change Mode
         self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group)
         self.mode_publisher = self.create_publisher(String, self.nav_names['system_status'], 1)
-        #self.timer_mode = self.create_timer(2.0, self.pub_state)
+        self.timer_mode = self.create_timer(2.0, self.pub_state)
 
         # Nav 2
         self.path_nav2_launch_file = '/dev_ws/src/path_planning/launch/nav2_real.launch.py'
@@ -73,7 +75,7 @@ class NavCSInterface(Node):
         m = String()
         m.data = self.mode
         self.mode_publisher.publish(m)
-
+    
     # ----------------------------------------------------------
     # SERVICE
 
@@ -87,8 +89,8 @@ class NavCSInterface(Node):
             return response
 
 
-        # Transition to Manual mode from Off
-        if self.mode == 'Off' and Mode[mode] == 'Manual':
+        # Transition to Manual or Omni mode from Off
+        if self.mode == 'Off' and (Mode[mode] == 'Ackermann' or Mode[mode] == 'Omni'):
             self.transitioning_state = True
             self.transition_state(Transition.TRANSITION_CONFIGURE, "configure", 
                                   State.PRIMARY_STATE_INACTIVE, 
@@ -100,7 +102,11 @@ class NavCSInterface(Node):
             while(self.transitioning_state):
                 time.sleep(1)
 
-            return response      
+            return response 
+        
+        if (self.mode == "Ackermann" and Mode[mode] == 'Omni') or (self.mode == "Omni" and Mode[mode] == 'Ackermann'):
+            self.change_mode(mode, 0, response, "no errors")
+            return response 
 
         # Transition to Auto mode from Off
         '''
@@ -158,8 +164,8 @@ class NavCSInterface(Node):
                 response.error_message = "NAV lifecycle change state failed"
                 return response
         '''   
-        # Transition to Off mode from Manual
-        if self.mode == 'Manual' and Mode[mode] == 'Off':
+        # Transition to Off mode from Manual or Omni
+        if (self.mode == 'Ackermann' or self.mode == "Omni") and Mode[mode] == 'Off':
 
             self.transitioning_state = True
             self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 

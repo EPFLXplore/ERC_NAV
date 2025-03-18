@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef DEFINITION_HPP
 #define DEFINITION_HPP
 
@@ -40,6 +42,15 @@
 #define ANGLE_MAX 30 //2900000/8 // = 45
 #define ANGLE_MIN 0
 
+// Gamepad Definitions
+#define GP_BUTTON_JOYSTICK_LEFT 7         // control crab mode in normal mode
+#define GP_BUTTON_CROSS 0                 // Switch kinematics state
+#define GP_BUTTON_ROUND 1                 // Switch mode rover
+#define GP_AXIS_R2 5                      // NORMAL MODE: FORWARD | LATERAL: NOTHING
+#define GP_AXIS_L2 2                      // NORMAL MODE: BACKWARD | LATERAL: NOTHING
+#define GP_AXIS_JOYSTICK_LEFT_VERTICAL 1  // NORMAL MODE: Up/Down | LATERAL: MOVE FORWARD AND BACKWARD 
+#define GP_AXIS_JOYSTICK_LEFT_HORIZONTAL 0  // 
+#define JOYSTICK_THRESHOLD 0.00001
 
 
 #define RADIUS_MAX  1
@@ -57,10 +68,6 @@
 
 #define WIDTH 0.736
 #define LENGTH 0.833
-
-
-
-
 
 // #define ROTATION_TRANSLATION 0
 // #define CRABE 1
@@ -80,45 +87,12 @@ struct wheels_normal_kinematic_cmds {
     _Float64 angle_2;
 };
 
-enum MOTION_MODE {
-    NORMAL = 0,
-    LATERAL = 1
-};
-
 enum ROVER_MODE {
     OFF = 0,
-    MANUAL = 1,
-    AUTO = 2
+    ACKERMANN = 1,
+    OMNI_DIRECTIONAL = 2,
+    AUTO = 3
 };
-
-//store the rover mode and motion mode of the rover for gamepad interface and cmd_vel_manager
-struct shared_rover_state {
-    MOTION_MODE motion_mode = NORMAL;
-    ROVER_MODE rover_mode = OFF;
-};
-
-//extern shared_rover_state current_rover_state;
-
-const std::string NAV_AUTO_START = "NAV_AUTONOMOUS_START";
-const std::string NAV_AUTO_END = "NAV_AUTONOMOUS_END";
-const std::string NAV_LATERAL_KINEMATIC = "NAV_LATERAL_KINEMATIC";
-const std::string NAV_NORMAL_KINEMATIC = "NAV_NORMAL_KINEMATIC";
-
-inline static shared_rover_state current_rover_state = {NORMAL, OFF};
-
-
-
-
-
-
-// enum ModeType {
-//     TRANSLATION_ONLY = 0,
-//     GET_ROTATION_POSITION = 1,
-//     ROTATION_ONLY = 2,
-//     GET_TRANSLATION_POSITION = 3,
-//     ROTATION_TRANSLATION = 4,
-//     CRABE = 10
-// };
 
 
 

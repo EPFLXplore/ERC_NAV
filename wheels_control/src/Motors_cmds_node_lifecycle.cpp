@@ -39,21 +39,15 @@ Function used from motors.hpp:  - connected()
 
 using namespace std::chrono_literals;
 
-const int nb_wheels(4);
-const _Float64 dist_wheels(1);
-const _Float64 limit_angle(0);
-const _Float64 dt(0);
-const _Float64 limit_variation_angle(0);
-const _Float64 limit_variation_drive(0);
+//const _Float64 dt(0);
 
-std::string mode_deplacement = "";
-bool depassement_courrant = 0;
-bool fault_state = false;
+std::string mode_deplacement = ""; // to be removed if not using check on mode
+bool fault_state = false; // ??
 
 _Float64 motors_cmds[8];
-bool safemode = true;
-long current_motor_stat[NB_MOTORS];
-int encoder_resolution;
+bool safemode = true; // needed?
+
+int encoder_resolution; // NEEDED?
 std::vector<NAV_Motor> motors;
 struct gateway_struct *gateway;
 std::vector<unsigned short> motor_ids = {
@@ -68,9 +62,6 @@ std::vector<unsigned short> motor_ids = {
 std::unordered_set<int> DRIVING_MOTORS = {FRONT_LEFT_DRIVE, FRONT_RIGHT_DRIVE, BACK_RIGHT_DRIVE, BACK_LEFT_DRIVE};
 std::unordered_set<int> STEERING_MOTORS = {FRONT_LEFT_STEER, FRONT_RIGHT_STEER, BACK_RIGHT_STEER, BACK_LEFT_STEER};
 
-std::map<unsigned short, int> mot_id2msg_idx;
-bool verbose = true;
-
 void publish_motors_position();
 
 class MotorCmdsLifecycle : public rclcpp_lifecycle::LifecycleNode
@@ -79,11 +70,7 @@ public:
     MotorCmdsLifecycle()
         : rclcpp_lifecycle::LifecycleNode("NAV_motor_cmds"), count_(0)
     {
-        // add all motors
-        int i = 0;
         bool homing;
-        
-
         this->declare_parameter("homing", true);
 
         if (this->get_parameter("homing", homing))
@@ -129,20 +116,20 @@ public:
             "/NAV/motor_nav_status", 10);
 
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
-            "NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
+            "/NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
 
+        // Listens on CS to reset the motors
         reset_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetNavMotors",
             std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
         );
 
+        // Listens on the CS to home the motors
         reset_home_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetHomeNavMotors",
             std::bind(&MotorCmdsLifecycle::handle_reset_home_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
         );
         
-        RCLCPP_INFO(get_logger(), "END CONNEXION", 4);
-
         // Get the size of the vector
         std::size_t size = motors.size();
         RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%d'", size);
@@ -567,9 +554,7 @@ int main(int argc, char *argv[])
             std::make_shared<MotorCmdsLifecycle>();
 
         exe.add_node(motor_cmds_node->get_node_base_interface());
-
         exe.spin();
-        // rclcpp::spin(std::make_shared<MotorCmdsLifecycle>());
     }
     catch (const std::exception &e)
     {
