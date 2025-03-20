@@ -1,6 +1,4 @@
-# NAV_workspace_2023
-
-Warning: the code is not finish and have compilation error
+# NAV_workspace_2025
 
 ## Organisation of the repository
 
@@ -16,6 +14,8 @@ The repository is organized as followed:
 - The obstacle_detection directory contains the code for the lidar and camera obstacle detection separately.
 - The path_planning directory contains the nav2 code that creates global and local costmaps and generates a path to the goal. A controller publishes velocity commands (type Twist) to follow the path.
 - The wheels_control directory contains all the code for the manual and autonomous kinematics of the wheels and the control of the motors.
+
+### For more documentation see the Notion : https://www.notion.so/xplore-doc/Navigation-128d2c11ab574c95a9be0790afa76d48
 
 ### Set/reset lidar connection
 
