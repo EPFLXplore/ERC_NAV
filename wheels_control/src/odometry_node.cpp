@@ -116,7 +116,7 @@ private:
         //dynamic slip factor : the more you turn the more you slip sideways
         //if you turn right you will slip and move a bit to the left
         //we want a 3 degree error at 30 degrees of steering angle
-        double slip_factor = (10.0/30.0) * (0.25)*(std::fabs(wheel_angles_[0]) + std::fabs(wheel_angles_[1]) + std::fabs(wheel_angles_[2]) + std::fabs(wheel_angles_[3]));
+        double slip_factor = (6.0/30.0) * (0.25)*(std::fabs(wheel_angles_[0]) + std::fabs(wheel_angles_[1]) + std::fabs(wheel_angles_[2]) + std::fabs(wheel_angles_[3]));
         //RCLCPP_INFO(this->get_logger(), "slip factor %f", slip_factor);
         
         //check here if the +-1 signs are correct for the slip factor

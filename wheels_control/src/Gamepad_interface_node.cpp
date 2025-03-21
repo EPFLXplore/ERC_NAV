@@ -150,7 +150,7 @@ class GamepadInterface : public rclcpp::Node
 
       } else if (current_rover_state == ROVER_MODE::ACKERMANN)
       {
-        RCLCPP_INFO(this->get_logger(), "ebntered");
+       // RCLCPP_INFO(this->get_logger(), "ebntered");
         if (std::abs(msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]) > JOYSTICK_THRESHOLD)
         {
 

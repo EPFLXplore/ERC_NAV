@@ -9,10 +9,8 @@ class MovingAverageFilterNode(Node):
     def __init__(self):
         super().__init__('moving_average_filter_node')
 
-        self.window_size = 10  # Sliding window size for moving average
+        self.window_size = 25  # Sliding window size for moving average
         #100hz --> 0.01s per value --> 0.15s of data for it to be considered valid
-
-        self.alpha = 0.6       # alpha = 1: no filtering, alpha = 0.01: strong filtering
 
         self.accel_windows = {'x': deque(maxlen=self.window_size), 
                               'y': deque(maxlen=self.window_size), 
@@ -38,7 +36,7 @@ class MovingAverageFilterNode(Node):
         )
         self.publisher = self.create_publisher(
             Imu,
-            '/ouster_imu_lowpass',
+            '/imu/data_raw',
             qos_profile
         )
 
@@ -67,10 +65,20 @@ class MovingAverageFilterNode(Node):
 
     def apply_filters(self, windows, prev_values):
         filtered = {}
+        # Assuming constant dt of 0.01 s (i.e. 100 Hz sampling rate)
+        dt = 0.01  
+        cutoff_frequency = 1.0  # [Hz]
+        RC = 1 / (2 * 3.14159 * cutoff_frequency)
+        # Compute the smoothing factor alpha from the cutoff frequency and dt
+        alpha = dt / (RC + dt)
+        
         for axis in ['x', 'y', 'z']:
-            moving_avg = sum(windows[axis]) / len(windows[axis])
-            filtered[axis] = self.alpha * moving_avg + (1 - self.alpha) * prev_values[axis]
-            prev_values[axis] = filtered[axis]
+            # Use the most recent measurement from the deque (if available)
+            current_sample = windows[axis][-1] if windows[axis] else 0.0
+            # First order low pass filter: y[n] = y[n-1] + alpha * (x[n] - y[n-1])
+            filtered_value = prev_values[axis] + alpha * (current_sample - prev_values[axis])
+            filtered[axis] = filtered_value
+            prev_values[axis] = filtered_value
         return filtered
 
 
