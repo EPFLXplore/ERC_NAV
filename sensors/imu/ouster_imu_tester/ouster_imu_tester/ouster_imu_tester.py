@@ -67,7 +67,7 @@ class MovingAverageFilterNode(Node):
         filtered = {}
         # Assuming constant dt of 0.01 s (i.e. 100 Hz sampling rate)
         dt = 0.01  
-        cutoff_frequency = 1.0  # [Hz]
+        cutoff_frequency = 1.5  # [Hz]
         RC = 1 / (2 * 3.14159 * cutoff_frequency)
         # Compute the smoothing factor alpha from the cutoff frequency and dt
         alpha = dt / (RC + dt)

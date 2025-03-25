@@ -16,18 +16,18 @@ local_ekf_filter_node:
     debug_out_file: local_ekf_debug.txt
 
     #LIORF odometry
-    odom0: /liorf/mapping/odometry
-    odom0_config: [true,  true,  true,      # x, y, z               (position)
-                    true, true, true,        # roll, pitch, yaw      (orientation)
-                    false, false, false,     # vx, vy, vz            (position velocity)
-                    false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
-                    false, false, false]     # ax, ay, az            (position acceleration)
-    odom0_differential: false
-    odom0_relative: false
-    odom0_queue_size: 10
-    odom0_pose_rejection_threshold: 1.5  #lower this parameter if you want outliers to be aggressively removed. Currently used to filter liorfs output in case the lidar data is blocked
-    
-    odom0_nodelay: true
+    #odom0: /liorf/mapping/odometry
+    #odom0_config: [true,  true,  true,      # x, y, z               (position)
+    #                true, true, true,        # roll, pitch, yaw      (orientation)
+    #                false, false, false,     # vx, vy, vz            (position velocity)
+    #                false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
+    #                false, false, false]     # ax, ay, az            (position acceleration)
+    #odom0_differential: false
+    #odom0_relative: false
+    #odom0_queue_size: 10
+    #odom0_pose_rejection_threshold: 1.0  #lower this parameter if you want outliers to be aggressively removed. Currently used to filter liorfs output in case the lidar data is blocked
+    #odom0_twist_rejection_threshold: 1.0
+    #odom0_nodelay: true
     # smooth_lagged_data: true
     # history_length: 1.5
 
@@ -40,18 +40,19 @@ local_ekf_filter_node:
                   true, true, true]     # ax, ay, az            (position acceleration)
     imu0_nodelay: true
     imu0_linear_acceleration_rejection_threshold: 1.3
-
+    imu0_twist_rejection_threshold: 1.0
     imu0_remove_gravitational_acceleration: true
     imu0_differential: true
 
     #Wheel Odometry node from wheels_control --> returns 2D speeds and positions of the rover (x, y, yaw, vx, vy, vyaw)
-    #odom1_config: [true,  true,  false,      # x, y, z               (position)
-    #               false, false, true,        # roll, pitch, yaw      (orientation)
-    #               true, true, false,     # vx, vy, vz            (position velocity)
-    #               false, false, true,     # vroll, vpitch, vyaw   (rotational velocity)
-    #               false, false, false]     # ax, ay, az            (position acceleration)
+    odom0: /wheel_odom
+    odom0_config: [true,  true,  false,      # x, y, z               (position)
+                   false, false, true,        # roll, pitch, yaw      (orientation)
+                   true, true, false,     # vx, vy, vz            (position velocity)
+                   false, false, true,     # vroll, vpitch, vyaw   (rotational velocity)
+                   false, false, false]     # ax, ay, az            (position acceleration)
     
-    #odom1_differential: true
+    odom0_differential: true
 
 # [ADVANCED] The process noise covariance matrix can be difficult to tune, and can vary for each application, so it is
 # exposed as a configuration parameter. This matrix represents the noise we add to the total error after each
@@ -64,18 +65,18 @@ local_ekf_filter_node:
     process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                 0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
                                 0.0,  0.0,  0.07, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.2,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,  0.0,  0.0,
                                 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.1,  0.0,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05,  0.0,
-                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.05]
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.08]
 
 
 

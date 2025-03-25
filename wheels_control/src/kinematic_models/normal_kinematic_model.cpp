@@ -40,8 +40,8 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI); //    ????????????
 
 
-    _Float64 max_linear_velocity = 0.5; // in m/s 
-    _Float64 max_angular_velocity = 0.5; // in rad/s
+    _Float64 max_linear_velocity = 0.7; // in m/s 
+    _Float64 max_angular_velocity = 0.7; // in rad/s
     _Float64 max_ratation_radius = 1; // in m
 
     // limit the linear velocity

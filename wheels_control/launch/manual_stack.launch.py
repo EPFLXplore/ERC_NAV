@@ -149,9 +149,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
             liorf_launch,
+            imu_filter_node,
             imu_madgwick_filter,
             imu_covariance_modif_node,
-            local_ekf_node,
+            #local_ekf_node,
         ]
     )
 
