@@ -31,7 +31,7 @@ public:
         get_parameter("cmdvelManualTopic", cmdvelManualTopic);
         declare_parameter("cmdvelAutonomTopic", "/NAV/auto_cmd_vel");
         get_parameter("cmdvelAutonomTopic", cmdvelAutonomTopic);
-        declare_parameter("joynavTopic", "/CS/NAV_gamepad");
+        declare_parameter("joynavTopic", "/ROVER/NAV_gamepad");
         get_parameter("joynavTopic", joynavTopic); 
 
     }

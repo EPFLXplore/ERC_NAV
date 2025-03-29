@@ -1,6 +1,6 @@
 /*
-Last updated:       22/11/2024
-Rewritting author:  Cyril Goffin
+Last updated:       29/03/2024
+Rewritting author:  Cyril Goffin, Tomas Anderegg, Arno Laurie
 Description:        Computes the wheels velocity commands and the steering angle commands 
                     based on the gamepad inputs.
 */
@@ -9,8 +9,13 @@ Description:        Computes the wheels velocity commands and the steering angle
 #include <iostream>
 #include <thread>
 #include <chrono>
-
+#include <memory>
+#include <string>
+#include "wheels_control/utility.hpp"
+#include "custom_msg/msg/motorcmds.hpp" 
+#include "custom_msg/msg/wheelstatus.hpp"
 #include "wheels_control/normal_kinematic_model.hpp"
+#include "wheels_control/definition.hpp"
 
 RoverNormalKinematicModel::RoverNormalKinematicModel() : motor_cmds(true),
                                                          en_rotation_quoi(false),
@@ -26,7 +31,7 @@ void RoverNormalKinematicModel::init(motors_obj motors_position, _Float64 wheels
     current_motors_position = motors_position;
 }
 
-motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z)
+motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z, bool crab_mode_active)
 {
 
     _Float64 r_ = 0;
@@ -42,38 +47,48 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
 
     _Float64 max_linear_velocity = 0.7; // in m/s 
     _Float64 max_angular_velocity = 0.7; // in rad/s
-    _Float64 max_ratation_radius = 1; // in m
+    _Float64 min_rotation_radius = 0.7; // in m
 
-    // limit the linear velocity
-    if (std::abs(v_x) > max_linear_velocity)
-    {
-        v_x = (v_x / std::abs(v_x)) * max_linear_velocity;
-    }
 
-    // limit the angular velocity
-    if (std::abs(omega_z) > max_angular_velocity)
-    {
-        omega_z = (omega_z / std::abs(omega_z)) * max_angular_velocity;
-    }
+    // scale the normalized joystick inputs
+    // if(std::abs(v_x) > 1.0){
+    //     if(v_x >= 0){
+    //         v_x = 1.0;
+    //     }else{
+    //         v_x = -1.0;
+    //     }
+    // }
+    
+    v_x = max_linear_velocity * v_x;
+
+    // scale the normalized joystick inputs
+    // if(std::abs(omega_z) > 1.0){ //a check si besoin pour le omni mode
+    //     if(omega_z >= 0){
+    //         omega_z = 1.0;
+    //     }else{
+    //         omega_z = -1.0;
+    //     }
+    // }
+
+    omega_z = max_angular_velocity * omega_z;
 
     // 3 DIFFERENT CASES: ONLY ROTATION ON ITSELF, ONLY TRANSLATION, TRANSLATION AND ROTATION
-    if (omega_z != 0)
+    if (std::abs(omega_z) > 1e-6)
     {
         r_ = v_x / omega_z;
 
-        if (r_ != 0)
+        if (std::abs(r_) > 1e-5)
         {
             // TRANSLATION AND ROTATION (curve motion)
             current_motors_cmds.info = "translation and rotation";
 
             _Float64 sign_r = std::abs(r_) / r_;
-            _Float64 velocity_sign = std::abs(v_x) / v_x; // equivalent to   _Float64 velocity_sign = v_x >= 0 ? 1 : -1;    ?? 
+            _Float64 velocity_sign = std::abs(v_x) / v_x;
 
-            if (std::abs(r_) < max_ratation_radius)
+            if (std::abs(r_) < min_rotation_radius) // if the turn is too sharp as defined by the minimum rotation radius
             {
-                r_ = max_ratation_radius * sign_r;
-
-                omega_z = std::abs(omega_z) / omega_z * v_x; // ?????????????????????
+                r_ = min_rotation_radius * sign_r;
+                omega_z = v_x / r_;
             }
 
             alpha_ext = atan2((LENGTH / 2), (std::abs(r_) + WIDTH / 2));
@@ -85,18 +100,25 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
             v_ext = std::abs(omega_z) * r_ext * velocity_sign;
             v_int = std::abs(omega_z) * r_int * velocity_sign;
         }
-        else if (r_ == 0)
-        {
+        else if(std::abs(v_x) < 1e-5 && std::abs(v_y) < 1e-5 && std::abs(omega_z) > 1e-5 && crab_mode_active) 
+        {//for now this condition is also true when the wheels are homing themselves which sucks
             // ROTATION ON ITSELF
             current_motors_cmds.info = "self rotation";
-
-            en_rotation_quoi = true;
 
             alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
             alpha_int = -alpha_ext;
 
+            //TODO: Add sens de rotation with value of r_z from gamepad
+
             v_ext = (std::abs(omega_z));
             v_int = -(std::abs(omega_z));
+        }
+        else
+        {
+            alpha_ext = 0.0;
+            alpha_int = 0.0;
+            v_int = 0.0;
+            v_ext = 0.0;
         }
     }
     else
@@ -114,7 +136,6 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
 
     if (omega_z >= 0)
     {
-
         wheels_current_commands.angle_1 = alpha_int * conversion_angle;
         wheels_current_commands.angle_2 = alpha_ext * conversion_angle;
 
@@ -123,50 +144,49 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     }
     else
     {
-
         wheels_current_commands.angle_2 = -alpha_int * conversion_angle;
         wheels_current_commands.angle_1 = -alpha_ext * conversion_angle;
 
         wheels_current_commands.velocity_2 = v_int * conversion_speed;
         wheels_current_commands.velocity_1 = v_ext * conversion_speed;
-        wheels_current_commands.velocity_1 = v_ext * conversion_speed;
 
-        wheels_current_commands.velocity_1 = v_ext * conversion_speed;
     }
 
-    if (en_rotation_quoi)
-    {
-        if (v_x != 0)
-        {
-            if (check_steering_position_for_translation(motors_position))
-            {
-                en_rotation_quoi = false;
-            }
-            else
-            {
-                wheels_current_commands.angle_2 = 0;
-                wheels_current_commands.angle_1 = 0;
+    // if (en_rotation_quoi)
+    // {
+    //     if (std::abs(v_x) > 1e-5)
+    //     {
+    //         if (check_steering_position_for_translation(motors_position))
+    //         {
+    //             en_rotation_quoi = false;
+    //         }
+    //         else
+    //         {
+    //             wheels_current_commands.angle_2 = 0;
+    //             wheels_current_commands.angle_1 = 0;
 
-                wheels_current_commands.velocity_2 = 0;
-                wheels_current_commands.velocity_1 = 0;
-                current_motors_cmds.info = "fail checking translation";
-            }
-        }
-        else if (v_x == 0)
-        {
-            if (check_steering_position_for_rotation(motors_position))
-            {
+    //             wheels_current_commands.velocity_2 = 0;
+    //             wheels_current_commands.velocity_1 = 0;
+    //             current_motors_cmds.info = "fail checking translation";
+    //         }
+    //     }
+    //     else
+    //     {
+    //         if (check_steering_position_for_rotation(motors_position))
+    //         {
 
-                std::cout << "rotation " << std::endl;
-            }
-            else
-            {
-                wheels_current_commands.velocity_2 = 0;
-                wheels_current_commands.velocity_1 = 0;
-                current_motors_cmds.info = "fail checking rotation";
-            }
-        }
-    }
+    //             //std::cout << "[Rotation Check Passed] Aligning wheels for in-place rotation.\n";
+    //             //RCLCPP_INFO(this->get_logger(), "Acker Classic");
+
+    //         }
+    //         else
+    //         {
+    //             wheels_current_commands.velocity_2 = 0;
+    //             wheels_current_commands.velocity_1 = 0;
+    //             current_motors_cmds.info = "fail checking rotation";
+    //         }
+    //     }
+    // }
 
     rotation_translation(wheels_current_commands);
 

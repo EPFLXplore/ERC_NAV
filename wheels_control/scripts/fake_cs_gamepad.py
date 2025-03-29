@@ -4,7 +4,7 @@
 pkg:    wheels_commands
 node:   NAV_interface_cs_gamepad
 topics: 
-        publish:    /CS/NAV_gamepad 
+        publish:    /ROVER/NAV_gamepad 
         subscribe:  
         
 description:  
@@ -46,7 +46,7 @@ class FakeGamepadPublisher(Node):
         self.axes = [0.0] * 8  # Assuming 8 axes
         self.buttons = [0] * 17  # Assuming 17 buttons
 
-        self.NAV_gampad_pub = self.create_publisher(Joy, '/CS/NAV_gamepad', 10)
+        self.NAV_gampad_pub = self.create_publisher(Joy, '/ROVER/NAV_gamepad', 10)
 
         timer_period = 0.1  # seconds
         self.timer = Inft_Timer(timer_period, self.timer_callback_pub)

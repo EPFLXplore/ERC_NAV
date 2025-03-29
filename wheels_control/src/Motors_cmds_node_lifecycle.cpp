@@ -110,7 +110,7 @@ public:
         this->homing = false;
 
         timer_ = this->create_wall_timer(
-            100ms, std::bind(&MotorCmdsLifecycle::motors_param_callback, this));
+            50ms, std::bind(&MotorCmdsLifecycle::motors_param_callback, this));
 
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
             "/NAV/motor_nav_status", 10);
@@ -259,21 +259,31 @@ public:
 
     void motors_param_callback()
     {
+        static unsigned int current_poll_counter = 0;
+        
+        current_poll_counter++;
         auto message_nav = custom_msg::msg::MotorStatus();
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
+            
             int id = motor->get_id();
             unsigned int error_code = 0;
             bool debug_verbose = true;
-            bool has_fault = motor->is_faulty(debug_verbose);
+            bool has_fault = motor->is_faulty(debug_verbose); //TODO: check how much publishing rate this eats
             message_nav.fault_state[id-1] = has_fault;
             current_faulty_motors[id-1] = has_fault;
 
             if (motor->connected())
             {                
-                message_nav.state[id-1] = motor->connected();
-                message_nav.current[id-1] = (double)motor->get_current_is();
-                message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
+                //Put the motor current callback at a lower requency because it severly diminishes the publishing rate
+
+                message_nav.state[id-1] = true; //motor->connected();
+                
+                if(current_poll_counter > 10){
+                    current_poll_counter = 0;
+                    message_nav.current[id-1] = (double)motor->get_current_is();
+                    message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
+                }
 
                 // IDs [0,1,2,3] are the nodes for the driving
                 // IDs [4,5,6,7] are the nodes for the steering
@@ -291,6 +301,7 @@ public:
         }    
 
         pub_motor_nav_status->publish(message_nav);
+
     }
 
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)
@@ -310,9 +321,17 @@ public:
         //RCLCPP_INFO(get_logger(), "drive3 sent: %f", motors_cmds[3]);
 
         motors_cmds[4] = msg->steer[0];
+        //RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
+
         motors_cmds[5] = msg->steer[1];
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
+
         motors_cmds[6] = msg->steer[2];
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
+
         motors_cmds[7] = msg->steer[3];
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
+
 
         do
         {

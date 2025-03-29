@@ -17,7 +17,7 @@ class JoyRemapperNode(Node):
         # Publisher to the /CS/NAV_gamepad topic
         self.publisher = self.create_publisher(
             Joy,
-            '/CS/NAV_gamepad',
+            '/ROVER/NAV_gamepad',
             10
         )
 

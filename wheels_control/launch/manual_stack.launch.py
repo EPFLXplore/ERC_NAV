@@ -148,10 +148,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
-            liorf_launch,
-            imu_filter_node,
-            imu_madgwick_filter,
-            imu_covariance_modif_node,
+            # liorf_launch,
+            # imu_filter_node,
+            # imu_madgwick_filter,
+            # imu_covariance_modif_node,
             #local_ekf_node,
         ]
     )
@@ -175,8 +175,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         motor_cmds_node,
         description_launch,
         wheel_odom_node,
-        ouster_launch,
-        delayed_launch,
+        #ouster_launch,
+        #delayed_launch,
         #nav_cameras_launch,
         #delayed_aruco_launch
     ]

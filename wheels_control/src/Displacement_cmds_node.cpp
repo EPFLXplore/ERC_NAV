@@ -3,7 +3,7 @@ pkg:    wheels_commands
 node:   NAV_displacement_cmds
 topics:
         publish:    /NAV/displacement
-        subscribe:  /CS/NAV_gamepad  - /NAV/absolute_encoders - /NAV/cmd_vel_final  -
+        subscribe:  /ROVER/NAV_gamepad  - /NAV/absolute_encoders - /NAV/cmd_vel_final  -
 
 description:  - Take the rover velocity and compute the position of the steering and the velocity of the driving
               - published the motors commands every delta time (500ms)
@@ -92,6 +92,11 @@ public:
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
+      
+    // Listens to the gamepad topic of the CS to see if we are going crab mode to avoid the wheels going in crabe mode when homing
+    sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
+      "/ROVER/NAV_gamepad", 10, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
+          
     
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
@@ -106,6 +111,15 @@ public:
 private:
   bool go_left = false;
   bool go_right = false;
+  bool crab_mode = false;
+
+  void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg){
+    if(msg->buttons[GP_BUTTON_JOYSTICK_LEFT] == 1){
+      crab_mode = true;
+    }else{
+      crab_mode = false;
+    }
+  }
 
   /**
   * @brief Callback function for the state of the rover
@@ -139,7 +153,11 @@ private:
 
     /*Run the kinematics manager to compute the motion*/
     if (current_rover_state == ROVER_MODE::ACKERMANN) {
-      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z);
+      // RCLCPP_INFO(get_logger(), "kinevx sent: %f", v_x);
+      // RCLCPP_INFO(get_logger(), "kinevy sent: %f", v_y);
+      // RCLCPP_INFO(get_logger(), "kinery sent: %f", r_z);
+
+      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, crab_mode);
    
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       current_motors_cmds = lateralKinematicModel.run(go_left, go_right);
@@ -164,6 +182,11 @@ private:
         current_motors_cmds.steer[2],
         -current_motors_cmds.steer[3] // steering motor mounted in reverse
     };
+    // RCLCPP_INFO(get_logger(), "steer0 sent: %f", current_motors_cmds.steer[0]);
+    // RCLCPP_INFO(get_logger(), "steer1 sent: %f", -current_motors_cmds.steer[1]);
+    // RCLCPP_INFO(get_logger(), "steer2 sent: %f", current_motors_cmds.steer[2]);
+    // RCLCPP_INFO(get_logger(), "steer3 sent: %f", -current_motors_cmds.steer[3]);
+
 
     message.modedeplacement = current_rover_state;
     message.info = "to be removed";
@@ -194,6 +217,8 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr sub_topic_absolute_encoders;
+  rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
+
 };
 
 int main(int argc, char *argv[])

@@ -1,0 +1,42 @@
+
+        if (std::abs(r_) > 1e-5)
+        {
+            // TRANSLATION AND ROTATION (curve motion)
+            current_motors_cmds.info = "translation and rotation";
+
+            _Float64 sign_r = std::abs(r_) / r_;
+            _Float64 velocity_sign = std::abs(v_x) / v_x;
+
+            if (std::abs(r_) < min_rotation_radius) // if the turn is too sharp as defined by the minimum rotation radius
+            {
+                r_ = min_rotation_radius * sign_r;
+                omega_z = v_x / r_;
+            }
+
+            alpha_ext = atan2((LENGTH / 2), (std::abs(r_) + WIDTH / 2));
+            alpha_int = atan2((LENGTH / 2), (std::abs(r_) - WIDTH / 2));
+
+            _Float64 r_ext = std::sqrt((std::abs(r_) + WIDTH / 2) * (std::abs(r_) + WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
+            _Float64 r_int = std::sqrt((std::abs(r_) - WIDTH / 2) * (std::abs(r_) - WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
+
+            v_ext = std::abs(omega_z) * r_ext * velocity_sign;
+            v_int = std::abs(omega_z) * r_int * velocity_sign;
+        }
+        else if(std::abs(v_x) > 1e-5)
+        {
+            // ROTATION ON ITSELF
+            current_motors_cmds.info = "self rotation";
+
+            en_rotation_quoi = true;
+
+            alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
+            alpha_int = -alpha_ext;
+
+            v_ext = (std::abs(omega_z));
+            v_int = -(std::abs(omega_z));
+        }else{
+            alpha_ext = 0.0;
+            alpha_int = 0.0;
+            v_int = 0.0;
+            v_ext = 0.0;
+        }
