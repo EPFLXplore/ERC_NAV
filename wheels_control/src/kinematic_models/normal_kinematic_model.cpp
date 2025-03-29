@@ -31,7 +31,7 @@ void RoverNormalKinematicModel::init(motors_obj motors_position, _Float64 wheels
     current_motors_position = motors_position;
 }
 
-motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z, bool crab_mode_active)
+motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z, _Float64 speed_rover, bool crab_mode_active)
 {
 
     _Float64 r_ = 0;
@@ -45,7 +45,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI); //    ????????????
 
 
-    _Float64 max_linear_velocity = 0.7; // in m/s 
+    _Float64 max_linear_velocity = speed_rover; // in m/s 
     _Float64 max_angular_velocity = 0.7; // in rad/s
     _Float64 min_rotation_radius = 0.7; // in m
 

@@ -19,6 +19,7 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "wheels_control/utility.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "sensor_msgs/msg/joy.hpp"
 
@@ -35,6 +36,7 @@ using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+float speed_rover = 0.7; // initial value inside the kinematics model
 
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
@@ -96,7 +98,10 @@ public:
     // Listens to the gamepad topic of the CS to see if we are going crab mode to avoid the wheels going in crabe mode when homing
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
       "/ROVER/NAV_gamepad", 10, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
-          
+
+    sub_speed_rover = this->create_subscription<std_msgs::msg::Float32>(
+        "/ROVER/change_NAV_speed", 1, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
+
     
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
@@ -145,6 +150,11 @@ private:
     }
   }
 
+  void callback_speed_rover(const std_msgs::msg::Float32::SharedPtr msg)
+  {
+    speed_rover = msg.data
+  }
+
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     float r_z = msg->angular.z;
@@ -153,11 +163,7 @@ private:
 
     /*Run the kinematics manager to compute the motion*/
     if (current_rover_state == ROVER_MODE::ACKERMANN) {
-      // RCLCPP_INFO(get_logger(), "kinevx sent: %f", v_x);
-      // RCLCPP_INFO(get_logger(), "kinevy sent: %f", v_y);
-      // RCLCPP_INFO(get_logger(), "kinery sent: %f", r_z);
-
-      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, crab_mode);
+      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
    
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       current_motors_cmds = lateralKinematicModel.run(go_left, go_right);

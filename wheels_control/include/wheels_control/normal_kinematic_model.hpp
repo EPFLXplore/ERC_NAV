@@ -34,7 +34,7 @@ public:
 
     void init(motors_obj motors_position, _Float64 wheels_angle);
 
-    motors_obj run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 r_z, bool crab_mode_active);
+    motors_obj run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 r_z, _Float64 speed_rover, bool crab_mode_active);
 };
 
 #endif // ROVER_NORMAL_KINEMATIC_MODEL_HPP
