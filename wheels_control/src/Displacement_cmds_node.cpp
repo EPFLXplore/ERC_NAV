@@ -163,6 +163,10 @@ private:
 
     /*Run the kinematics manager to compute the motion*/
     if (current_rover_state == ROVER_MODE::ACKERMANN || current_rover_state == ROVER_MODE::AUTO) {
+      if(current_rover_state == ROVER_MODE::AUTO && v_x < 0){
+        r_z = -r_z;
+      }
+
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
    
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
