@@ -269,7 +269,7 @@ public:
             int id = motor->get_id();
             unsigned int error_code = 0;
             bool debug_verbose = true;
-            bool has_fault = motor->is_faulty(debug_verbose); //TODO: check how much publishing rate this eats
+            bool has_fault = false; //motor->is_faulty(debug_verbose); //TODO: check how much publishing rate this eats
             message_nav.fault_state[id-1] = has_fault;
             current_faulty_motors[id-1] = has_fault;
 

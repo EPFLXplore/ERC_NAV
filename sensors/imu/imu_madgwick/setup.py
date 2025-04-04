@@ -17,13 +17,14 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='xplore',
-    maintainer_email='xplore@todo.todo',
+    maintainer_email='arno.laurie@epfl.ch',
     description='TODO: Package description',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'imu_covariance_modifier = imu_madgwick.imu_covariance_modifier:main',
+            'arduino_imu_node = imu_madgwick.arduino_kalman_reader:main',
         ],
     },
 )

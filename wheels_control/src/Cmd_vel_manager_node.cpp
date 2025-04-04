@@ -71,6 +71,8 @@ class CmdvelManager : public rclcpp::Node
       if (msg->data == "Auto")
       {
         current_rover_state = ROVER_MODE::AUTO;
+        RCLCPP_INFO(this->get_logger(), "went auto mode");
+
       }
       else if (msg->data == "Ackermann")
       {
@@ -111,9 +113,14 @@ class CmdvelManager : public rclcpp::Node
 
     void callback_cmd_vel_auto(const geometry_msgs::msg::Twist::SharedPtr msg)
     {
-      
+      RCLCPP_INFO(this->get_logger(), "calback before");
+
+      //RCLCPP_INFO(this->get_logger(), "before call, rover mode: %s", current_rover_state);
+
       if (current_rover_state == ROVER_MODE::AUTO)
       {
+        RCLCPP_INFO(this->get_logger(), "callback after");
+
 
         auto message = geometry_msgs::msg::Twist(); 
 

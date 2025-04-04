@@ -38,12 +38,12 @@ class ImuCovarianceModifier(Node):
         new_msg.angular_velocity_covariance = [
             0.01, 0.0, 0.0,
             0.0, 0.01, 0.0,
-            0.0, 0.0, 0.01
+            0.0, 0.0, 0.025
         ]
         new_msg.linear_acceleration_covariance = [
-            0.03, 0.0, 0.0,
-            0.0, 0.03, 0.0,
-            0.0, 0.0, 0.03
+            0.05, 0.0, 0.0,
+            0.0, 0.05, 0.0,
+            0.0, 0.0, 0.05
         ]
         
         self.publisher_.publish(new_msg)

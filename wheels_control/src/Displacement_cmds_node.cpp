@@ -152,7 +152,7 @@ private:
 
   void callback_speed_rover(const std_msgs::msg::Float32::SharedPtr msg)
   {
-    speed_rover = msg.data
+    speed_rover = msg->data;
   }
 
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -162,7 +162,7 @@ private:
     float v_y = msg->linear.y;
 
     /*Run the kinematics manager to compute the motion*/
-    if (current_rover_state == ROVER_MODE::ACKERMANN) {
+    if (current_rover_state == ROVER_MODE::ACKERMANN || current_rover_state == ROVER_MODE::AUTO) {
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
    
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
@@ -224,7 +224,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr sub_topic_absolute_encoders;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
-
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_speed_rover;
 };
 
 int main(int argc, char *argv[])

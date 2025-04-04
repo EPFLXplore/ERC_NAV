@@ -2,9 +2,9 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>imu_madgwick</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="xplore@todo.todo">xplore</maintainer>
+  <version>1.0.0</version>
+  <description>Ouster IMU Covariance modifier for the local EKF and also reads and publishes the Arduino Nano 9 axis IMU</description>
+  <maintainer email="arno.laurie@epfl.ch">xplore</maintainer>
   <license>Apache-2.0</license>
 
   <test_depend>ament_copyright</test_depend>

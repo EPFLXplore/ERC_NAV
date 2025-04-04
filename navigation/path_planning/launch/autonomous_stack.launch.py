@@ -52,7 +52,6 @@ def generate_launch_description():
         'collision_monitor',
         'bt_navigator',
         'waypoint_follower',
-        'docking_server',
     ]
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
@@ -92,7 +91,7 @@ def generate_launch_description():
 
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
-        default_value=os.path.join(bringup_dir, 'params', 'nav2_params_real_2025.yaml'),
+        default_value=os.path.join(bringup_dir, 'config', 'nav2_params_real_2025.yaml'),
         description='Full path to the ROS2 parameters file to use for all launched nodes',
     )
 
@@ -172,6 +171,14 @@ def generate_launch_description():
                 remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
             ),
             Node(
+                package='nav2_map_server',
+                executable='map_server',
+                name='map_server',
+                output='screen',
+                parameters=[configured_params],
+                #remapping needed ??
+            )
+            Node(
                 package='nav2_bt_navigator',
                 executable='bt_navigator',
                 name='bt_navigator',
@@ -209,17 +216,6 @@ def generate_launch_description():
                 package='nav2_collision_monitor',
                 executable='collision_monitor',
                 name='collision_monitor',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings,
-            ),
-            Node(
-                package='opennav_docking',
-                executable='opennav_docking',
-                name='docking_server',
                 output='screen',
                 respawn=use_respawn,
                 respawn_delay=2.0,
@@ -302,13 +298,7 @@ def generate_launch_description():
                         parameters=[configured_params],
                         remappings=remappings,
                     ),
-                    ComposableNode(
-                        package='opennav_docking',
-                        plugin='opennav_docking::DockingServer',
-                        name='docking_server',
-                        parameters=[configured_params],
-                        remappings=remappings,
-                    ),
+
                     ComposableNode(
                         package='nav2_lifecycle_manager',
                         plugin='nav2_lifecycle_manager::LifecycleManager',

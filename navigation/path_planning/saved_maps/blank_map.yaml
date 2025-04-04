@@ -1,0 +1,6 @@
+image: blank_map.pgm
+resolution: 0.05  # each pixel is 5cm
+origin: [-10.0, -10.0, 0.0]  # map origin in meters (x, y, yaw)
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.2

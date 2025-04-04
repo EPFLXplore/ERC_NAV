@@ -144,15 +144,23 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output='screen',
     )
 
+    arduino_imu_pub = launch_ros.actions.Node(
+        package='imu_madgwick',
+        executable='arduino_imu_node',
+        name='arduino_imu_node',
+        output='screen',
+    )
+
     delayed_launch = TimerAction(
         period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
-            # liorf_launch,
-            # imu_filter_node,
-            # imu_madgwick_filter,
-            # imu_covariance_modif_node,
-            #local_ekf_node,
+            liorf_launch,
+            imu_filter_node,
+            imu_madgwick_filter,
+            imu_covariance_modif_node,
+            arduino_imu_pub,
+            local_ekf_node,
         ]
     )
 
@@ -168,15 +176,15 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     return [
         motor_cmds_arg,
         homing_arg,
-        cs_interface,
+        #cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
         description_launch,
         wheel_odom_node,
-        #ouster_launch,
-        #delayed_launch,
+        ouster_launch,
+        delayed_launch,
         #nav_cameras_launch,
         #delayed_aruco_launch
     ]

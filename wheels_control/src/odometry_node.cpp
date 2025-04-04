@@ -22,7 +22,7 @@ const double gear_ratio = 1.0/53;
 const double steer_ang_scaling = 30.0/6075; //measured experimentally, increments = 65536 = 2^16
 const double deg_to_rad = M_PI/(180.0);
 const double ANGLE_THRESHOLD = 1.0 * deg_to_rad;
-const double ROTATION_ANGLE_THRESHOLD = 25.0 * deg_to_rad;
+const double ROTATION_ANGLE_THRESHOLD = 0.62;
 const double SPEED_EPSILON = 0.02; // m/s
 
 
@@ -138,11 +138,16 @@ private:
         bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
         bool all_angles_tiny = avg_abs_angle < (ANGLE_THRESHOLD*0.1);
         // Check for in-place rotation (symmetrical opposing angles, opposing speeds)
-        bool possible_rotation = (std::abs(a_fl + a_bl) < ANGLE_THRESHOLD) &&
-                                 (std::abs(a_fr + a_br) < ANGLE_THRESHOLD) &&
-                                 (std::abs(v_fl + v_bl) < SPEED_EPSILON)   &&
-                                 (std::abs(v_fr + v_br) < SPEED_EPSILON)   &&
-                                 (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
+        // bool possible_rotation = (std::abs(a_fl + a_bl) < ANGLE_THRESHOLD) &&
+        //                          (std::abs(a_fr + a_br) < ANGLE_THRESHOLD) &&
+        //                          (std::abs(v_fl + v_bl) < SPEED_EPSILON)   &&
+        //                          (std::abs(v_fr + v_br) < SPEED_EPSILON)   &&
+        //                          (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
+        
+        bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
+
+        //RCLCPP_INFO(this->get_logger(), "avg speed z: %f", avg_speed);
+        //RCLCPP_INFO(this->get_logger(), "avg_abs_ang: %f", avg_abs_angle);
 
 
         if (all_angles_small) {
@@ -158,10 +163,12 @@ private:
 
             // In-place rotation
             double v_rot = (v_fr - v_fl + v_br - v_bl) / 4.0;
+            
             // Estimate radius of rotation circle
             double r = std::sqrt((LENGTH / 2.0) * (LENGTH / 2.0) + (WIDTH / 2.0) * (WIDTH / 2.0));
             omega_z = v_rot / r;
             //RCLCPP_INFO(this->get_logger(), "omega z: %f", omega_z);
+            //RCLCPP_INFO(this->get_logger(), "v_rot: %f", v_rot);
 
             v_x = 0.0;
             v_y = 0.0;
@@ -219,9 +226,9 @@ private:
                     R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
                 }
                     
-                //double R = (R_geo + R_vel) / 2.0;
+                double R = (R_geo + R_vel) / 2.0;
 
-                v_x = omega_z * R_vel;
+                v_x = omega_z * R;
 
 
                 v_y = 0.0;
@@ -235,6 +242,7 @@ private:
 
         pos_x_ += world_vx * dt;
         pos_y_ += world_vy * dt;
+
         if(going_left){
             if(avg_speed>=0){
                 pos_theta_ += dt * std::abs(omega_z);
@@ -247,6 +255,8 @@ private:
             }else{
                 pos_theta_ += dt * std::abs(omega_z);
             }
+        }else{ //in place rotation
+            pos_theta_ += dt * omega_z;
         }
 
 
@@ -267,11 +277,13 @@ private:
         odom.twist.twist.linear.y = world_vy;
         odom.twist.twist.angular.z = omega_z;
 
-        double yaw_uncertainty = 0.005 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
-        
+        double yaw_uncertainty = 0.05 + 0.03*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
+        //RCLCPP_INFO(this->get_logger(), "yaw cov: %f", yaw_uncertainty);
+
+
         std::array<double, 36> pose_covariance = {
-            0.07, 0, 0, 0, 0, 0,
-            0, 0.07, 0, 0, 0, 0,
+            0.04, 0, 0, 0, 0, 0,
+            0, 0.04, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
@@ -279,8 +291,8 @@ private:
         };	
 
         std::array<double, 36> twist_covariance = {
-                    0.07, 0, 0, 0, 0, 0,
-                    0, 0.07, 0, 0, 0, 0,
+                    0.04, 0, 0, 0, 0, 0,
+                    0, 0.04, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,

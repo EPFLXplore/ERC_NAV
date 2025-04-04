@@ -80,6 +80,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-slam-toolbox \
     ros-${ROS_DISTRO}-test-msgs \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
+    ros-${ROS_DISTRO}-joint-state-publisher \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
     ros-${ROS_DISTRO}-librealsense2*\
