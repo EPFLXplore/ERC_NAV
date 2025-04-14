@@ -21,7 +21,7 @@ class RoverLateralKinematicModel
 
         //void init(motors_obj motors_position, _Float64 wheels_angle);
 
-        motors_obj run(bool left, bool right);
+        motors_obj run(double v_x, double r_z);
 };
 
 #endif // ROVER_LATERAL_KINEMATIC_MODEL_HPP

@@ -28,6 +28,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcanberra-gtk3-module \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+#installing GLIM for ros2 humble, ubuntu 22.04, CUDA 12.2 (last detected with nvcc --version in the docker on the 14th april 2025)
+RUN curl -s https://koide3.github.io/ppa/setup_ppa.sh | sudo bash
+# Manually setup PPA for Ubuntu 22.04
+RUN curl -s --compressed "https://koide3.github.io/ppa/ubuntu2204/KEY.gpg" | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/koide3_ppa.gpg >/dev/null
+RUN echo "deb [signed-by=/etc/apt/trusted.gpg.d/koide3_ppa.gpg] https://koide3.github.io/ppa/ubuntu2204 ./" | sudo tee /etc/apt/sources.list.d/koide3_ppa.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libiridescence-dev \
+    libboost-all-dev \
+    libglfw3-dev \
+    libmetis-dev \
+    libgtsam-points-cuda12.2-dev \
+    ros-humble-glim-ros-cuda12.2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 
 # Clone the librealsense repository with submodules
 RUN git clone https://github.com/IntelRealSense/librealsense.git /librealsense \

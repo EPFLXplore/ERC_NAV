@@ -168,9 +168,9 @@ private:
       }
 
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
-   
+
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
-      current_motors_cmds = lateralKinematicModel.run(go_left, go_right);
+      current_motors_cmds = lateralKinematicModel.run(v_x, r_z);
     }
 
     send_kinematic_msg();

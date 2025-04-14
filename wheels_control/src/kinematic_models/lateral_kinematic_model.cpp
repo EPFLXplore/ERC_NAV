@@ -7,44 +7,24 @@
 
 
 
-motors_obj RoverLateralKinematicModel::run(bool left, bool right)
+motors_obj RoverLateralKinematicModel::run(double v_x, double r_z)
 {
-    //RCLCPP_INFO(get_logger(), "Left%d", left);   
-    //RCLCPP_INFO(get_logger(), "Right%d", right);                   
-    RCLCPP_INFO(rclcpp::get_logger("SC_motor_cmds"),"Left%d", left);
-    RCLCPP_INFO(rclcpp::get_logger("SC_motor_cmds"),"Right%d", right);
-
-
+                  
+    //RCLCPP_INFO(rclcpp::get_logger("omnidrive"),"kinematics vx%f", v_x);
+    //RCLCPP_INFO(rclcpp::get_logger("omnidrive"),"kinematics angle%f", r_z);
 
     _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI);
     _Float64 conversion_speed = 3600; // for 1m.s
-    float alpha = 1.57 * conversion_angle;
-    float v_x = 0;
-    // float vel;
-    if(left == right){
-       v_x=0;
-    }
-    else {
-        if (left){
-            v_x = -3600/8;
-        }
-        else{
-            v_x = 3600/8;  
-        }
-    }
 
+    const double max_speed = 0.8; //m/s
+    double omni_speed = max_speed * v_x; 
+    float alpha = (-1.0) * (r_z) * conversion_angle;
 
     current_motors_cmds.steer[FRONT_LEFT] = alpha;
     current_motors_cmds.steer[FRONT_RIGHT] = -alpha;
     current_motors_cmds.steer[BACK_RIGHT] = alpha;
     current_motors_cmds.steer[BACK_LEFT] = -alpha;
 
-    // if(check_steering_position_for_translation(motors_position)){
-    //     vel=v_x;
-    // }
-    // else{
-    //     vel=0;
-    // }
     current_motors_cmds.drive[FRONT_LEFT] = v_x;
     current_motors_cmds.drive[FRONT_RIGHT] = v_x;
     current_motors_cmds.drive[BACK_RIGHT] = v_x;

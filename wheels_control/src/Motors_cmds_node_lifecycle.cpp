@@ -552,6 +552,8 @@ private:
             if (motor->connected())
                 motor->set_output_state(false);
         }
+        RCLCPP_INFO_ONCE(get_logger(), "Disconnect motors called");
+
         close_gateway(gateway);
         motors.clear();
     }

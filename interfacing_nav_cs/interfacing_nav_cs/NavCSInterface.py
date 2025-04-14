@@ -190,10 +190,7 @@ class NavCSInterface(Node):
         pkg_share_dir = get_package_share_directory(pkg_name)
         nav2_ros_share_dir = get_package_share_directory("nav2_bringup")
 
-        map_server_params_config_path = os.path.join(
-            pkg_share_dir, "config", "map_server_params.yaml"
-        )
-        nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params_real.yaml")
+        nav2_params_config_path = os.path.join(pkg_share_dir, "config", "nav2_params_real_2025.yaml")
 
         # ------------- Launch Commands -------------
         self.start_nav2_cmd = IncludeLaunchDescription(
@@ -203,8 +200,6 @@ class NavCSInterface(Node):
             launch_arguments={
                 "use_sim_time": "false",
                 "autostart": "true",
-                "params_file": nav2_params_config_path,
-                "map": map_server_params_config_path,
             }.items(),
         )
 
@@ -332,4 +327,3 @@ def main(args=None):
 if __name__ == '__main__':
     main()
         
-

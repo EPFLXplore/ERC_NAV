@@ -163,12 +163,69 @@ class GamepadInterface : public rclcpp::Node
           v_y = 0;
         }
         
-        if (joy_left_vert >= JOYSTICK_THRESHOLD) //[0, pi]
+        if (std::fabs(joy_left_vert)>= JOYSTICK_THRESHOLD || std::fabs(joy_left_horiz) >= JOYSTICK_THRESHOLD) //[0, pi]
         {
-          r_z = atan2(joy_left_vert, joy_left_horiz);
-        } else
-        {
-          r_z = M_PI - atan2(joy_left_vert, joy_left_horiz);
+          //atan2 : -pi, pi
+          //atan : -pi/2, pi/2
+          // RCLCPP_INFO(this->get_logger(), "angle up: %.3f", r_z*180/3.1415);
+          // RCLCPP_INFO(this->get_logger(), "angle up after: %.3f", r_z*180/3.1415);
+          
+          static float prev_angle = 0.0; 
+          static bool cw_turn = false;
+          static bool ccw_turn = false;
+          float curr_angle = atan2(joy_left_horiz, joy_left_vert); //output in [-pi; pi]
+          // if(curr_angle < 0){
+          //   curr_angle += 2*M_PI; //output [0;2pi], front = 0°, left = 90°
+          // }
+
+          float delta_angle = curr_angle - prev_angle;
+          float delta_angle_v2  = fmod((curr_angle - prev_angle + M_PI), 2*M_PI) - M_PI;
+
+          // if(delta_angle < -90.0 * (M_PI/180.0)){
+          //   RCLCPP_INFO(this->get_logger(), "delta angle negative");
+
+          //   curr_angle += 2*M_PI;
+          //   delta_angle = curr_angle - prev_angle;
+          // }else if(delta_angle > 90.0 * (M_PI/180.0)){
+          //   RCLCPP_INFO(this->get_logger(), "delta angle positive");
+
+          //   curr_angle -= 2*M_PI;
+          //   delta_angle = curr_angle - prev_angle;
+          // }
+
+          // float test_delta = fmod(((180.0/M_PI)*(curr_angle - prev_angle) + 540.0), 360.0)- 180.0;
+          // RCLCPP_INFO(this->get_logger(), "test delta: %.3f", test_delta);
+          
+          if(cw_turn && curr_angle < 0){
+            curr_angle += 2*M_PI;
+          }else if(ccw_turn && curr_angle > 0){
+            curr_angle -= 2*M_PI;
+          }
+          
+          if(delta_angle > 3.0 * (M_PI/180.0) && delta_angle < 90.0 * (M_PI/180.0)){
+            RCLCPP_INFO(this->get_logger(), "CW turn");
+
+            cw_turn = true;
+            ccw_turn = false;
+            //r_z = prev_angle + std::fabs(delta_angle);
+
+          }else if(delta_angle < -3.0 * (M_PI/180.0) && delta_angle > -90.0 * (M_PI/180.0)){
+            RCLCPP_INFO(this->get_logger(), "CCW turn");
+
+            ccw_turn = true;
+            cw_turn = false;
+            //r_z = prev_angle - std::fabs(delta_angle);
+
+          }else{
+            r_z = prev_angle;
+          }
+
+          
+          RCLCPP_INFO(this->get_logger(), "curr angle: %.3f", curr_angle);
+
+          r_z = curr_angle;
+          prev_angle = curr_angle;
+
         }
       
       } else if (current_rover_state == ROVER_MODE::ACKERMANN)
@@ -309,6 +366,7 @@ class GamepadInterface : public rclcpp::Node
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_manual; 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
+
 
     size_t count_;
     ROVER_MODE current_rover_state;

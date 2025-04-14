@@ -33,7 +33,7 @@ class ImuCovarianceModifier(Node):
         new_msg.orientation_covariance = [
             0.04, 0.0, 0.0,
             0.0, 0.04, 0.0,
-            0.0, 0.0, 0.04
+            0.0, 0.0, 0.041
         ]
         new_msg.angular_velocity_covariance = [
             0.01, 0.0, 0.0,

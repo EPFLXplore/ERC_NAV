@@ -176,7 +176,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     return [
         motor_cmds_arg,
         homing_arg,
-        #cs_interface,
+        cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,
@@ -185,7 +185,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         wheel_odom_node,
         ouster_launch,
         delayed_launch,
-        #nav_cameras_launch,
+        nav_cameras_launch,
         #delayed_aruco_launch
     ]
 

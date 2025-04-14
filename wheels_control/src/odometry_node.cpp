@@ -122,12 +122,15 @@ private:
         double v_br = wheel_speeds_[2];
         double v_bl = wheel_speeds_[3];
 
+        
+
         //double avg_angle_front = (a_fl + a_fr) / 2.0;
         //double avg_angle_back  = (a_bl + a_br) / 2.0;
         double avg_abs_angle = (std::fabs(a_fl) + std::fabs(a_fr) + std::fabs(a_br) + std::fabs(a_bl)) / 4.0;
         double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
         bool going_right = false;
         bool going_left = false;
+        bool going_straight = false;
         //RCLCPP_INFO(this->get_logger(), "avg abs angle %f", avg_abs_angle);
 
     
@@ -157,8 +160,10 @@ private:
             v_x = v_avg;
             v_y = 0.0;
             omega_z = 0.0;
+            going_straight = true;
             //RCLCPP_INFO(this->get_logger(), "speed %f", v_avg);
         } else if (possible_rotation) {
+            going_straight = false;
             //RCLCPP_INFO(this->get_logger(), "rotation sur place");
 
             // In-place rotation
@@ -173,7 +178,7 @@ private:
             v_x = 0.0;
             v_y = 0.0;
         } else {
-
+            going_straight = false;
             // Curved translation (double Ackermann)
             // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
             double alpha_ext = a_fr;
@@ -226,7 +231,7 @@ private:
                     R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
                 }
                     
-                double R = (R_geo + R_vel) / 2.0;
+                double R = R_geo;
 
                 v_x = omega_z * R;
 
@@ -236,6 +241,12 @@ private:
         }
 
         // Transform velocities to world frame
+        if(going_left){
+            v_x = -v_x;
+        }
+        v_x = 0.95 * v_x;
+        
+
         double world_vx = v_x * std::cos(pos_theta_) - v_y * std::sin(pos_theta_);
         double world_vy = v_x * std::sin(pos_theta_) + v_y * std::cos(pos_theta_);
 
@@ -244,21 +255,28 @@ private:
         pos_y_ += world_vy * dt;
 
         if(going_left){
+            //RCLCPP_INFO(this->get_logger(), "going left: ");
+
             if(avg_speed>=0){
+                //RCLCPP_INFO(this->get_logger(), "going left forwards: ");
                 pos_theta_ += dt * std::abs(omega_z);
             }else{
+                //RCLCPP_INFO(this->get_logger(), "going left backwards: ");
                 pos_theta_ -= dt * std::abs(omega_z);
             }
         }else if(going_right){
+            //RCLCPP_INFO(this->get_logger(), "going right: ");
+
             if(avg_speed>=0){
+                //RCLCPP_INFO(this->get_logger(), "going right forwards: ");
                 pos_theta_ -= dt * std::abs(omega_z);
             }else{
+                //RCLCPP_INFO(this->get_logger(), "going right backwards: ");
                 pos_theta_ += dt * std::abs(omega_z);
             }
         }else{ //in place rotation
             pos_theta_ += dt * omega_z;
         }
-
 
         //normalize [-pi, pi]
         if (pos_theta_ > M_PI) {
