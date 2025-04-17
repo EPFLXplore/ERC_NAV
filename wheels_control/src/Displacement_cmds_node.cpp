@@ -32,6 +32,13 @@ description:  - Take the rover velocity and compute the position of the steering
 #include "wheels_control/normal_kinematic_model_slow.hpp"
 #include "wheels_control/lateral_kinematic_model.hpp"
 
+//use the ros logger instead of cout from iostream
+#include "rclcpp/rclcpp.hpp"
+void log_info(const std::string &msg){
+    RCLCPP_INFO(rclcpp::get_logger("motors"), "%s", msg.c_str());
+}
+
+
 using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};

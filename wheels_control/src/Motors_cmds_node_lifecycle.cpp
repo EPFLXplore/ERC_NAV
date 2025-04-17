@@ -321,16 +321,16 @@ public:
         //RCLCPP_INFO(get_logger(), "drive3 sent: %f", motors_cmds[3]);
 
         motors_cmds[4] = msg->steer[0];
-        //RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
+        RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
 
         motors_cmds[5] = msg->steer[1];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
+        RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
 
         motors_cmds[6] = msg->steer[2];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
+        RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
 
         motors_cmds[7] = msg->steer[3];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
+        RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
 
 
         do

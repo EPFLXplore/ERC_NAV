@@ -357,7 +357,7 @@ class GamepadInterface : public rclcpp::Node
       message.angular.y = 0;
 
       message.angular.z = -filter_steering(r_z, buffer_z);
-      //RCLCPP_INFO(this->get_logger(), "Final gpd interf : vx: %.3f, vy: %.3f, rz: %.3f", message.linear.x, message.linear.y, message.angular.z);
+      //RCLCPP_INFO(this->get_logger(), "Final gamepad : vx: %.3f, vy: %.3f, rz: %.3f", message.linear.x, message.linear.y, message.angular.z);
 
 
       pub_cmd_vel_manual->publish(message);

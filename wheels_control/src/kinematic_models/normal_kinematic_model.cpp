@@ -17,6 +17,13 @@ Description:        Computes the wheels velocity commands and the steering angle
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/definition.hpp"
 
+
+//use the ros logger instead of cout from iostream
+#include "rclcpp/rclcpp.hpp"
+void log_info_acker(const std::string &msg){
+    RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "%s", msg.c_str());
+}
+
 RoverNormalKinematicModel::RoverNormalKinematicModel() : motor_cmds(true),
                                                          en_rotation_quoi(false),
                                                          wheels_angle_for_rotation(0),
@@ -42,8 +49,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 alpha_int = 0.0;
 
     _Float64 conversion_speed = 3600; // 1800; // for 0.5m.s                       ????????????
-    _Float64 conversion_angle = (pow(2, TOUR_RESOLUTION_BITS)) / (2 * M_PI); //    ????????????
-
+    _Float64 conversion_angle = (pow(2, STEERING_RESOLUTION_BITS)) / (2 * M_PI);
 
     _Float64 max_linear_velocity = speed_rover; // in m/s 
     _Float64 max_angular_velocity = 0.7; // in rad/s
@@ -99,9 +105,13 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
 
             v_ext = std::abs(omega_z) * r_ext * velocity_sign;
             v_int = std::abs(omega_z) * r_int * velocity_sign;
+
+            //log_info_acker("Alpha Ext (steering angle for outer wheels): " + std::to_string(alpha_ext*57.2957));
+            //log_info_acker("Alpha Int (steering angle for inner wheels): " + std::to_string(alpha_int*57.2957));
+
         }
         else if(std::abs(v_x) < 1e-5 && std::abs(v_y) < 1e-5 && std::abs(omega_z) > 1e-5 && crab_mode_active) 
-        {//for now this condition is also true when the wheels are homing themselves which sucks
+        {//this condition may also be true when the wheels are homing themselves, havent checked in depth, too tired
             // ROTATION ON ITSELF
             current_motors_cmds.info = "self rotation";
 
@@ -151,42 +161,6 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
         wheels_current_commands.velocity_1 = v_ext * conversion_speed;
 
     }
-
-    // if (en_rotation_quoi)
-    // {
-    //     if (std::abs(v_x) > 1e-5)
-    //     {
-    //         if (check_steering_position_for_translation(motors_position))
-    //         {
-    //             en_rotation_quoi = false;
-    //         }
-    //         else
-    //         {
-    //             wheels_current_commands.angle_2 = 0;
-    //             wheels_current_commands.angle_1 = 0;
-
-    //             wheels_current_commands.velocity_2 = 0;
-    //             wheels_current_commands.velocity_1 = 0;
-    //             current_motors_cmds.info = "fail checking translation";
-    //         }
-    //     }
-    //     else
-    //     {
-    //         if (check_steering_position_for_rotation(motors_position))
-    //         {
-
-    //             //std::cout << "[Rotation Check Passed] Aligning wheels for in-place rotation.\n";
-    //             //RCLCPP_INFO(this->get_logger(), "Acker Classic");
-
-    //         }
-    //         else
-    //         {
-    //             wheels_current_commands.velocity_2 = 0;
-    //             wheels_current_commands.velocity_1 = 0;
-    //             current_motors_cmds.info = "fail checking rotation";
-    //         }
-    //     }
-    // }
 
     rotation_translation(wheels_current_commands);
 
