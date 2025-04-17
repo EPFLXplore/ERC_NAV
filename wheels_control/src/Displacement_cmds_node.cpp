@@ -108,7 +108,6 @@ public:
 
     sub_speed_rover = this->create_subscription<std_msgs::msg::Float32>(
         "/ROVER/change_NAV_speed", 1, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
-
     
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
@@ -175,7 +174,6 @@ private:
       }
 
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
-
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       current_motors_cmds = lateralKinematicModel.run(v_x, r_z);
     }

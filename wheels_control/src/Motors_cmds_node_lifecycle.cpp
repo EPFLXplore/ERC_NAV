@@ -225,7 +225,7 @@ public:
                 response->message = "ERR: at least one of the motors was not successfully reset";
             }
             
-        }else{
+        } else {
             RCLCPP_WARN(get_logger(), "Nav Motor Reset request denied.");
             response->success = false;
             response->message = "Nav Motor Reset request denied.";
