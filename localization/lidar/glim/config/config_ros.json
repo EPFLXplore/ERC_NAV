@@ -40,7 +40,7 @@
     "points_time_offset": 0.0,
     "acc_scale": 9.77,
     // TF config
-    "imu_frame_id": "imu_link",
+    "imu_frame_id": "lidar_link",
     "lidar_frame_id": "lidar_link",
     "base_frame_id": "base_link",
     "odom_frame_id": "odom",

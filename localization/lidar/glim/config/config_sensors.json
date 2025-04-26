@@ -44,9 +44,9 @@
   */
   "sensors": {
     // IMU config
-    "imu_acc_noise": 0.05,
-    "imu_gyro_noise": 0.05,
-    "imu_int_noise": 0.005,
+    "imu_acc_noise": 0.1,
+    "imu_gyro_noise": 0.1,
+    "imu_int_noise": 0.5,
     "imu_bias_noise": 1e-3,
     // LiDAR config
     "global_shutter_lidar": false,
