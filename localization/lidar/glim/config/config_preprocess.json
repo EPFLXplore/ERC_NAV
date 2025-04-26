@@ -30,7 +30,7 @@
     "crop_bbox_frame": "lidar",
     "crop_bbox_min": [-1.0, -1.0, -1.0],
     "crop_bbox_max": [1.0, 1.0, 1.0],
-    "k_correspondences": 10,
+    "k_correspondences": 20,
     "num_threads": 2
   }
 }
