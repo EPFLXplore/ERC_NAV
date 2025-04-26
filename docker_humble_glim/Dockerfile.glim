@@ -1,0 +1,46 @@
+FROM dustynv/ros:humble-desktop-l4t-r36.2.0 AS base
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Clean up any dirty OpenCV first (important to avoid 4.8-dirty problem)
+RUN apt-get update && apt-get remove -y 'libopencv*' 'opencv*' || true
+
+# Set up Koide's PPA for GLIM
+RUN curl -sSL "https://koide3.github.io/ppa/ubuntu2204/KEY.gpg" | gpg --dearmor | tee /etc/apt/trusted.gpg.d/koide3_ppa.gpg > /dev/null && \
+    echo "deb [signed-by=/etc/apt/trusted.gpg.d/koide3_ppa.gpg] https://koide3.github.io/ppa/ubuntu2204 ./" > /etc/apt/sources.list.d/koide3_ppa.list
+
+# Install GLIM and all required dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-desktop \
+    libopencv-dev \
+    libboost-all-dev libglfw3-dev libmetis-dev \
+    libiridescence-dev \
+    libgtsam-points-cuda12.2-dev \
+    ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-glim-ros-cuda12.2 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Environment
+ENV ROS_DISTRO=humble
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+
+ENV USERNAME=xplore
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+# Create non-root user
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd -s /bin/bash --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && apt-get update && apt-get install -y sudo \
+    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
+
+WORKDIR /home/${USERNAME}/dev_ws/
+
+# Default entry
+CMD ["bash"]
