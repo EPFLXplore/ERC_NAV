@@ -175,6 +175,7 @@ private:
 
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
+      //log_info("v_x displace" + std::to_string(v_x));
       current_motors_cmds = lateralKinematicModel.run(v_x, r_z);
     }
 

@@ -156,77 +156,181 @@ class GamepadInterface : public rclcpp::Node
         {
           v_x = R2_val;
           v_y = 0;
+          //RCLCPP_INFO(this->get_logger(), "vx omni begin r2: %.3f", v_x);
+
 
         } else if(L2_val >= JOYSTICK_THRESHOLD)
         {
           v_x = -L2_val;
           v_y = 0;
+          //RCLCPP_INFO(this->get_logger(), "vx omni begin l2: %.3f", v_x);
+
         }
+
+
         
         if (std::fabs(joy_left_vert)>= JOYSTICK_THRESHOLD || std::fabs(joy_left_horiz) >= JOYSTICK_THRESHOLD) //[0, pi]
         {
-          //atan2 : -pi, pi
-          //atan : -pi/2, pi/2
+
           // RCLCPP_INFO(this->get_logger(), "angle up: %.3f", r_z*180/3.1415);
           // RCLCPP_INFO(this->get_logger(), "angle up after: %.3f", r_z*180/3.1415);
-          
-          static float prev_angle = 0.0; 
-          static bool cw_turn = false;
+          const float PI = 3.14159265358979323846f;
+          const float DELTA_THRESHOLD = 0.096;
+          const float RAD_TO_DEG = 180.0f / PI;
+          const double TURN_THRESHOLD = 300.0f; // this should be the thrshold that once you attain we can consider that we passed a turn
+      
+          static float prev_angle = 0.0f;
+          static float prev_delta = 0.0f;
+          static float prev_wrapped_angle = 0.0f;
           static bool ccw_turn = false;
-          float curr_angle = atan2(joy_left_horiz, joy_left_vert); //output in [-pi; pi]
-          // if(curr_angle < 0){
-          //   curr_angle += 2*M_PI; //output [0;2pi], front = 0°, left = 90°
+          static bool cw_turn = false;
+          static int num_turns = 0;
+      
+          float remainder = 0.0f;
+      
+          // if (reset) {
+          //     prev_angle = 0.0f;
+          //     prev_delta = 0.0f;
+          //     prev_wrapped_angle = 0.0f;
+          //     ccw_turn = false;
+          //     cw_turn = false;
+          //     num_turns = 0;
+          //     return 0.0f;
           // }
+      
+          if (std::abs(joy_left_vert) >= JOYSTICK_THRESHOLD && std::abs(joy_left_horiz) >= JOYSTICK_THRESHOLD) {
+              float curr_angle = std::atan2(joy_left_horiz, joy_left_vert); // [-pi, pi]
+              //RCLCPP_INFO(this->get_logger(), "curent: : %.3f", curr_angle*180/3.1415);
 
-          float delta_angle = curr_angle - prev_angle;
-          float delta_angle_v2  = fmod((curr_angle - prev_angle + M_PI), 2*M_PI) - M_PI;
+              float delta_angle = curr_angle - prev_angle;
+              //RCLCPP_INFO(this->get_logger(), "delta: : %.3f", delta_angle*180/3.1415);
 
-          // if(delta_angle < -90.0 * (M_PI/180.0)){
-          //   RCLCPP_INFO(this->get_logger(), "delta angle negative");
+              float sign_curr_prev = curr_angle * prev_angle;
+              if(sign_curr_prev == 0){
+                //RCLCPP_INFO(this->get_logger(), "turn case equal");
 
-          //   curr_angle += 2*M_PI;
-          //   delta_angle = curr_angle - prev_angle;
-          // }else if(delta_angle > 90.0 * (M_PI/180.0)){
-          //   RCLCPP_INFO(this->get_logger(), "delta angle positive");
+                r_z = prev_angle;
+              }
+              else if (sign_curr_prev > 0 && fabs(delta_angle) > DELTA_THRESHOLD) {
+                  cw_turn = delta_angle > DELTA_THRESHOLD;
 
-          //   curr_angle -= 2*M_PI;
-          //   delta_angle = curr_angle - prev_angle;
-          // }
+                  ccw_turn = delta_angle <= -DELTA_THRESHOLD;
 
-          // float test_delta = fmod(((180.0/M_PI)*(curr_angle - prev_angle) + 540.0), 360.0)- 180.0;
-          // RCLCPP_INFO(this->get_logger(), "test delta: %.3f", test_delta);
-          
-          if(cw_turn && curr_angle < 0){
-            curr_angle += 2*M_PI;
-          }else if(ccw_turn && curr_angle > 0){
-            curr_angle -= 2*M_PI;
+                  if(cw_turn){
+                    //RCLCPP_INFO(this->get_logger(), "case 0, CW TURN");
+                  }
+                  if(ccw_turn){
+                    //RCLCPP_INFO(this->get_logger(), "case 0, CCW TURN");
+                  }
+
+                  //RCLCPP_INFO(this->get_logger(), "turn case 0");
+
+              } else {
+                  float curr_deg = curr_angle * RAD_TO_DEG; // de base on a: < < > >
+                  //RCLCPP_INFO(this->get_logger(), "curent case 5: : %.3f", curr_deg);
+                  //RCLCPP_INFO(this->get_logger(), "delta case 5: %.3f", delta_angle*180/3.1415); 
+                  if (delta_angle < -DELTA_THRESHOLD && curr_deg < -90) {
+                      //RCLCPP_INFO(this->get_logger(), "turn case 1");
+
+                      cw_turn = true;
+                      ccw_turn = false;
+                  } else if (delta_angle < -DELTA_THRESHOLD && curr_deg > -90) {
+                      //RCLCPP_INFO(this->get_logger(), "turn case 2");
+
+                      cw_turn = false;
+                      ccw_turn = true;
+                  } else if (delta_angle > DELTA_THRESHOLD && curr_deg > 90) {
+                      //RCLCPP_INFO(this->get_logger(), "turn case 3");
+
+                      cw_turn = false;
+                      ccw_turn = true;
+                  } else if (delta_angle > DELTA_THRESHOLD && curr_deg < 90) {
+                      //RCLCPP_INFO(this->get_logger(), "turn case 4");
+
+                      cw_turn = true;
+                      ccw_turn = false;
+                  }else{
+                      //RCLCPP_INFO(this->get_logger(), "turn case 5");
+
+
+                  }
+              }
+      
+              float wrapped_angle = curr_angle + num_turns * 2 * PI;
+              if (cw_turn && curr_angle < 0 && std::fmod(std::abs(prev_wrapped_angle), 2 * PI) > 0) {
+                  //RCLCPP_INFO(this->get_logger(), "wrapped clockwise");
+
+                  wrapped_angle = curr_angle + 2 * PI + num_turns * 2 * PI;
+              } else if (ccw_turn && curr_angle > 0 && std::fmod(std::abs(prev_wrapped_angle), 2 * PI) < 0) {
+                  //RCLCPP_INFO(this->get_logger(), "wrapped anti-clockwise");
+
+                  wrapped_angle = curr_angle - 2 * PI + num_turns * 2 * PI;
+              }
+      
+              float wrapped_deg = wrapped_angle * RAD_TO_DEG;
+              if (cw_turn && (prev_wrapped_angle* RAD_TO_DEG) > (TURN_THRESHOLD + num_turns * 360) && curr_angle > 0) {
+                  num_turns += 1;
+                  //RCLCPP_INFO(this->get_logger(), "increased turns number");
+
+              } else if (ccw_turn && (prev_wrapped_angle* RAD_TO_DEG) < (-TURN_THRESHOLD + num_turns * 360) && curr_angle < 0) {
+                  num_turns -= 1;
+                  //RCLCPP_INFO(this->get_logger(), "decreased turns number");
+
+              }
+      
+              prev_angle = curr_angle;
+              prev_delta = delta_angle;
+              prev_wrapped_angle = wrapped_angle;
+      
+              //return wrapped_angle * RAD_TO_DEG;
+              //RCLCPP_INFO(this->get_logger(), "in wrapped");
+
+              r_z = wrapped_angle;
+              
+          } 
+            // else if (std::abs(prev_delta * RAD_TO_DEG) > 30 &&
+            //          std::abs(joy_left_vert) <= JOYSTICK_THRESHOLD &&
+            //          std::abs(joy_left_horiz) <= JOYSTICK_THRESHOLD) {
+            //   if(prev_wrapped_angle > 0) {
+            //       remainder = std::fmod(std::abs(prev_wrapped_angle), 2 * PI) * RAD_TO_DEG;
+            //   }
+            //   else {
+            //       remainder = -std::fmod(std::abs(prev_wrapped_angle), 2 * PI) * RAD_TO_DEG;
+            //   }
+      
+            //   float desired_angle = 0.0f;
+      
+            //   //std::cout << "Remainder: " << remainder << "\n";
+            //   RCLCPP_INFO(this->get_logger(), "Remainder : %.3f", remainder);
+
+            //   //std::cout << "Num Turns: " << num_turns << "\n";
+            //   RCLCPP_INFO(this->get_logger(), "Num turns : %.3f", num_turns);
+
+              
+              // if (remainder > 180 && num_turns >= 0) {
+              //     desired_angle = (num_turns + 1) * 2 * PI;
+              // } else if (remainder > 180 && num_turns <= 0) {
+              //     desired_angle = (num_turns - 1) * 2 * PI;
+              // } else if (remainder < -180 && num_turns <= 0) {
+              //     desired_angle = (num_turns - 1) * 2 * PI;
+              // } else if (remainder > -180 && num_turns >= 0) {
+              //     desired_angle = (num_turns + 1) * 2 * PI;
+              // } else {
+              //     desired_angle = num_turns * 2 * PI;
+              // }
+              // r_z = desired_angle;
+          //} 
+          else {
+            RCLCPP_INFO(this->get_logger(), "keeping prev wrapped angle");
+
+            r_z = prev_wrapped_angle;
           }
-          
-          if(delta_angle > 3.0 * (M_PI/180.0) && delta_angle < 90.0 * (M_PI/180.0)){
-            RCLCPP_INFO(this->get_logger(), "CW turn");
 
-            cw_turn = true;
-            ccw_turn = false;
-            //r_z = prev_angle + std::fabs(delta_angle);
+          //RCLCPP_INFO(this->get_logger(), "r_z omni: : %.3f", r_z*180/3.1415);
 
-          }else if(delta_angle < -3.0 * (M_PI/180.0) && delta_angle > -90.0 * (M_PI/180.0)){
-            RCLCPP_INFO(this->get_logger(), "CCW turn");
 
-            ccw_turn = true;
-            cw_turn = false;
-            //r_z = prev_angle - std::fabs(delta_angle);
+      }
 
-          }else{
-            r_z = prev_angle;
-          }
-
-          
-          RCLCPP_INFO(this->get_logger(), "curr angle: %.3f", curr_angle);
-
-          r_z = curr_angle;
-          prev_angle = curr_angle;
-
-        }
       
       } else if (current_rover_state == ROVER_MODE::ACKERMANN)
       {
@@ -349,6 +453,8 @@ class GamepadInterface : public rclcpp::Node
 
       
       auto message = geometry_msgs::msg::Twist(); 
+      //RCLCPP_INFO(this->get_logger(), "vx pre-final: %.3f", v_x);
+
       message.linear.x = filter(v_x, buffer_x);
       message.linear.y = v_y;
       message.linear.z = 0;

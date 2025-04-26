@@ -321,16 +321,16 @@ public:
         //RCLCPP_INFO(get_logger(), "drive3 sent: %f", motors_cmds[3]);
 
         motors_cmds[4] = msg->steer[0];
-        RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
+        //RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
 
         motors_cmds[5] = msg->steer[1];
-        RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
 
         motors_cmds[6] = msg->steer[2];
-        RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
 
         motors_cmds[7] = msg->steer[3];
-        RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
+        //RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
 
 
         do
@@ -379,7 +379,7 @@ public:
 
                         if ((id == FRONT_LEFT_DRIVE) || (id == BACK_LEFT_DRIVE) || (id == FRONT_RIGHT_DRIVE) || (id == BACK_RIGHT_DRIVE))
                         {
-                            // RCLCPP_INFO(get_logger(), "FRONT_LEFT_DRIVE MOTOR : '%f'",motors_cmds[id-1]);
+                            //RCLCPP_INFO(get_logger(), "PRINT DRIVE MOTOR : '%f'",motors_cmds[id-1]);
 
                             motor->set_velocity_ref(motors_cmds[id - 1]);
                         }
