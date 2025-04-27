@@ -45,8 +45,8 @@
     // Registration error factors
     "registration_error_factor_type": "VGICP_GPU",
     "keyframe_randomsampling_rate": 1.0,
-    "keyframe_voxel_resolution": 0.25,
-    "keyframe_voxelmap_levels": 3,
+    "keyframe_voxel_resolution": 0.2,
+    "keyframe_voxelmap_levels":23,
     "keyframe_voxelmap_scaling_factor": 2.0,
     // Post processing
     "submap_downsample_resolution": 0.1,

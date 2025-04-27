@@ -8,6 +8,18 @@ import time
 import numpy as np
 import math
 
+
+def truncate(val, decimals=4):
+    factor = 10 ** decimals
+    return math.trunc(val * factor) / factor
+
+def process_accel(value):
+    if abs(value) < 0.008:
+        return 0.0
+    else:
+        return truncate(value)
+
+
 def rpy_to_quaternion(roll, pitch, yaw):
     """Convert roll, pitch, yaw (in degrees) to a quaternion."""
     # Convert from degrees to radians.
@@ -123,6 +135,12 @@ class IMUSerialNode(Node):
             corrected_accel = np.array([ax, ay, az]) - self.accel_offsets
             corrected_gyro = np.array([gx, gy, gz]) - self.gyro_offsets
 
+            corrected_accel = np.array([
+                process_accel(corrected_accel[0]),
+                process_accel(corrected_accel[1]),
+                process_accel(corrected_accel[2])
+            ])
+
             # Apply a lowpass filter on the yaw of the orientation.
             yaw_lowpass_cutoff = 10.0  # 2.5 Hz cutoff frequency.
             RC = 1.0 / (2 * math.pi * yaw_lowpass_cutoff)
@@ -152,7 +170,7 @@ class IMUSerialNode(Node):
             # Use the corrected linear acceleration values.
             msg.linear_acceleration.x = corrected_accel[0]
             msg.linear_acceleration.y = corrected_accel[1]
-            msg.linear_acceleration.z = corrected_accel[2]
+            msg.linear_acceleration.z = corrected_accel[2] + 9.77
 
             # Use the corrected angular velocity values.
             msg.angular_velocity.x = corrected_gyro[0]
@@ -174,7 +192,7 @@ class IMUSerialNode(Node):
                 0.0, 0.0, 0.025
             ]
             msg.linear_acceleration_covariance = [
-                0.04, 0.0, 0.0,
+                0.02, 0.0, 0.0,
                 0.0, 0.04, 0.0,
                 0.0, 0.0, 0.04
             ]

@@ -4,15 +4,16 @@
 XAUTH=/tmp/.docker.xauth
 
 echo "Preparing Xauthority data..."
-xauth_list=$(xauth nlist :0 | tail -n 1 | sed -e 's/^..../ffff/')
+# Always create the file if missing
 if [ ! -f $XAUTH ]; then
-    if [ ! -z "$xauth_list" ]; then
-        echo $xauth_list | xauth -f $XAUTH nmerge -
-    else
-        touch $XAUTH
-    fi
-    chmod a+r $XAUTH
+    touch $XAUTH
 fi
+
+# Always (re)populate the Xauthority with the real SSH xauth cookie
+xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
+
+# Make sure it’s readable
+chmod a+r $XAUTH
 
 echo "Done."
 echo ""
@@ -42,7 +43,7 @@ docker run -it \
     --net=host \
     --runtime=nvidia \
     --gpus all \
-    -e DISPLAY=unix$DISPLAY \
+    -e DISPLAY=$DISPLAY \
     -e QT_X11_NO_MITSHM=1 \
     -e XAUTHORITY=$XAUTH \
     --env GAZEBO_RESOURCE_PATH=/usr/share/gazebo-11 \

@@ -15,6 +15,8 @@ local_ekf_filter_node:
     debug: false
     debug_out_file: local_ekf_debug.txt
 
+    smooth_lagged_data: true
+    history_length: 1.5
     #LIORF odometry
     # odom0: /liorf/mapping/odometry
     # odom0_config: [true,  true,  true,      # x, y, z               (position)
@@ -28,15 +30,14 @@ local_ekf_filter_node:
     # odom0_pose_rejection_threshold: 1.0  #lower this parameter if you want outliers to be aggressively removed. Currently used to filter liorfs output in case the lidar data is blocked
     # odom0_twist_rejection_threshold: 1.0
     # odom0_nodelay: true
-    # smooth_lagged_data: true
-    # history_length: 1.5
+
 
     #IMU output from the madgwick filter with custom covariance values
     # imu0: /imu/modified
     # imu0_config: [false, false, false,     # x, y, z               (position)
     #               false, false, false,      # roll, pitch, yaw      (orientation)
     #               false, false, false,       # vx, vy, vz            (position velocity)
-    #               false, false, true,      # vroll, vpitch, vyaw   (rotational velocity)
+    #               false, false, false,      # vroll, vpitch, vyaw   (rotational velocity)
     #               true, true, false]     # ax, ay, az            (position acceleration)
     # imu0_nodelay: true
     # imu0_queue_size: 2
@@ -47,30 +48,45 @@ local_ekf_filter_node:
     # imu0_differential: true
 
     #Arduino 9-axis IMU : we fuse yaw, ax, ay, gz
-    imu0: /imu_nano
-    imu0_config: [false, false, false,     # x, y, z               (position)
-                  false, false, true,      # roll, pitch, yaw      (orientation)
-                  false, false, false,       # vx, vy, vz            (position velocity)
-                  false, false, true,      # vroll, vpitch, vyaw   (rotational velocity)
-                  true, true, false]     # ax, ay, az            (position acceleration)
-    imu0_nodelay: true
-    imu0_queue_size: 2
-    imu0_relative: true
-    imu0_linear_acceleration_rejection_threshold: 2.0
-    imu0_twist_rejection_threshold: 2.0
-    imu0_remove_gravitational_acceleration: false
+    # imu0: /imu_nano
+    # imu0_config: [false, false, false,     # x, y, z               (position)
+    #               true, true, true,      # roll, pitch, yaw      (orientation)
+    #               false, false, false,       # vx, vy, vz            (position velocity)
+    #               false, false, false,      # vroll, vpitch, vyaw   (rotational velocity)
+    #               false, false, false]     # ax, ay, az            (position acceleration)
+    # imu0_nodelay: true
+    # imu0_queue_size: 2
+    # imu0_relative: true
+    # imu0_linear_acceleration_rejection_threshold: 1.0
+    # imu0_twist_rejection_threshold: 1.5
+    # imu0_remove_gravitational_acceleration: false
 
     #Wheel Odometry node from wheels_control --> returns 2D speeds and positions of the rover (x, y, yaw, vx, vy, vyaw)
-    odom0: /wheel_odom
-    odom0_config: [true,  true,  false,      # x, y, z               (position)
-                   false, false, false,        # roll, pitch, yaw      (orientation)
-                   true, false, false,     # vx, vy, vz            (position velocity)
+    # odom0: /wheel_odom
+    # odom0_config: [true,  true,  false,      # x, y, z               (position)
+    #                false, false, false,        # roll, pitch, yaw      (orientation)
+    #                true, false, false,     # vx, vy, vz            (position velocity)
+    #                false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
+    #                false, false, false]     # ax, ay, az            (position acceleration)
+    
+    # odom0_differential: false
+    # odom0_relative: true
+    # odom0_queue_size: 1
+
+    # GLIM Odometry
+    odom0: /odom_glim_repub
+    odom0_config: [true,  true,  true,      # x, y, z               (position)
+                   false, false, true,        # roll, pitch, yaw      (orientation)
+                   false, false, false,     # vx, vy, vz            (position velocity)
                    false, false, false,     # vroll, vpitch, vyaw   (rotational velocity)
                    false, false, false]     # ax, ay, az            (position acceleration)
-    
     odom0_differential: false
-    odom0_relative: true
-    odom0_queue_size: 1
+    odom0_relative: false
+    odom0_queue_size: 5
+    odom0_pose_rejection_threshold: 1.0  #lower this parameter if you want outliers to be aggressively removed. Currently used to filter liorfs output in case the lidar data is blocked
+    odom0_twist_rejection_threshold: 1.0
+    odom0_nodelay: true
+
 
 # [ADVANCED] The process noise covariance matrix can be difficult to tune, and can vary for each application, so it is
 # exposed as a configuration parameter. This matrix represents the noise we add to the total error after each

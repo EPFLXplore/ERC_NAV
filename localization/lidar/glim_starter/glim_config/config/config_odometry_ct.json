@@ -20,7 +20,7 @@
     "ivox_min_points_dist": 0.1,
     "ivox_lru_thresh": 200,
     // CT-GICP params
-    "max_correspondence_distance": 2.0,
+    "max_correspondence_distance": 10.0,
     "location_consistency_inf_scale": 1e-3,
     "constant_velocity_inf_scale": 1e3,
     "lm_max_iterations": 8,
