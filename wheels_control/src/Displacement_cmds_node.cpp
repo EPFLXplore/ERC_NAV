@@ -67,7 +67,7 @@ _Float64 get_wheels_angle_inc_for_rotation()
   _Float64 angle_of_rotation_increment = 0;
 
   angle_of_rotation_radians = atan(WIDTH / LENGTH);
-  angle_of_rotation_increment = (angle_of_rotation_radians * (pow(2, TOUR_RESOLUTION_BITS))) / (2 * M_PI);
+  angle_of_rotation_increment = (angle_of_rotation_radians * (pow(2, STEERING_RESOLUTION_BITS))) / (2 * M_PI);
 
   return angle_of_rotation_increment;
 }
@@ -110,7 +110,7 @@ public:
         "/ROVER/change_NAV_speed", 1, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
     
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
-    wheels_angle_for_rotation_with_translation = (20 * (pow(2, 16))) / (360);
+    wheels_angle_for_rotation_with_translation = (20 * (pow(2, STEERING_RESOLUTION_BITS))) / (360);
 
     current_rover_state = ROVER_MODE::OFF;
     

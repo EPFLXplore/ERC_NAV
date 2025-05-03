@@ -142,7 +142,7 @@ class IMUSerialNode(Node):
             ])
 
             # Apply a lowpass filter on the yaw of the orientation.
-            yaw_lowpass_cutoff = 10.0  # 2.5 Hz cutoff frequency.
+            yaw_lowpass_cutoff = 10.0  # Hz cutoff frequency.
             RC = 1.0 / (2 * math.pi * yaw_lowpass_cutoff)
             dt = 0.025  # Timer period in seconds.
             alpha = dt / (RC + dt)

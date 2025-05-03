@@ -66,9 +66,8 @@
 #define MIN_DESIRED_RADIUS 1
 #define PI_IN_INCR 16384
 
-
 #define WIDTH 0.75
-#define LENGTH 0.865
+#define LENGTH 0.835
 
 // #define ROTATION_TRANSLATION 0
 // #define CRABE 1

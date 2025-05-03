@@ -36,7 +36,7 @@ const int windowSizeSteering = 50;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 static ROVER_MODE previous_rover_mode = ROVER_MODE::OFF;
-
+const double CMD_TIMEOUT = 0.4; //seconds
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -56,6 +56,12 @@ class GamepadInterface : public rclcpp::Node
         "/NAV/NAV_mode", 1, std::bind(&GamepadInterface::callback_state_mode, this, std::placeholders::_1));
     
       current_rover_state = ROVER_MODE::OFF;
+
+      last_command_time = this->now();
+
+      timeout_timer = this->create_wall_timer(
+        100ms, std::bind(&GamepadInterface::check_command_timeout, this));
+      
     }
 
     double apply_deadzone(double value, double deadzone = 0.2){
@@ -108,6 +114,28 @@ class GamepadInterface : public rclcpp::Node
 
   private:
 
+    void check_command_timeout()
+    {
+      rclcpp::Time now = this->now();
+      rclcpp::Duration elapsed = now - last_command_time;
+
+      if (elapsed.seconds() > CMD_TIMEOUT)
+      {
+        geometry_msgs::msg::Twist stop_msg;
+        stop_msg.linear.x = 0.0;
+        stop_msg.linear.y = 0.0;
+        stop_msg.linear.z = 0.0;
+        stop_msg.angular.x = 0.0;
+        stop_msg.angular.y = 0.0;
+        stop_msg.angular.z = 0.0;
+
+        pub_cmd_vel_manual->publish(stop_msg);
+        buffer_x.clear();
+        buffer_z.clear();
+      }
+    }
+
+
     /**
     * @brief Callback function for the state of the rover
     */
@@ -142,8 +170,8 @@ class GamepadInterface : public rclcpp::Node
       float v_y = 0;
       float r_z = 0;
 
-      float R2_val = apply_deadzone(msg->axes[GP_AXIS_R2], 0.1);
-      float L2_val = apply_deadzone(msg->axes[GP_AXIS_L2], 0.1);
+      float R2_val = apply_deadzone(msg->axes[GP_AXIS_R2], 0.08);
+      float L2_val = apply_deadzone(msg->axes[GP_AXIS_L2], 0.08);
       float joy_left_vert = apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_VERTICAL]);
       float joy_left_horiz = apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]);
 
@@ -467,12 +495,16 @@ class GamepadInterface : public rclcpp::Node
 
 
       pub_cmd_vel_manual->publish(message);
+      last_command_time = this->now();
+
     }
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_manual; 
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_cs_gamepad;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_state_system;
 
+    rclcpp::Time last_command_time;
+    rclcpp::TimerBase::SharedPtr timeout_timer;
 
     size_t count_;
     ROVER_MODE current_rover_state;

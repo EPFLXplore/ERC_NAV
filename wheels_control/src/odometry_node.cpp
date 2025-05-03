@@ -16,13 +16,13 @@
 
 using std::placeholders::_1;
 
-const double WHEEL_RADIUS = 0.1325; //measured experimentally
+const double WHEEL_RADIUS = 0.12; //measured experimentally
 const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
 const double gear_ratio = 1.0/53;
-const double steer_ang_scaling = 30.0/6075; //measured experimentally, increments = 65536 = 2^16
+const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
 const double deg_to_rad = M_PI/(180.0);
-const double ANGLE_THRESHOLD = 1.0 * deg_to_rad;
-const double ROTATION_ANGLE_THRESHOLD = 0.62;
+const double ANGLE_THRESHOLD = 0.8 * deg_to_rad;
+const double ROTATION_ANGLE_THRESHOLD = 0.642;//max mean ackerman angle is 36.6°=0.639
 const double SPEED_EPSILON = 0.02; // m/s
 
 
@@ -84,10 +84,10 @@ private:
         // #define BACK_RIGHT_STEER 7  --> index 2 here
         // #define BACK_LEFT_STEER 8   --> index 3 here
 
-        wheel_angles_[0] = (msg->position[0] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[1] = (msg->position[1] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[2] = (msg->position[2] * steer_ang_scaling) * deg_to_rad;
-        wheel_angles_[3] = (msg->position[3] * steer_ang_scaling) * deg_to_rad;
+        wheel_angles_[0] = (msg->position[0] * incr_to_rad);// * deg_to_rad;
+        wheel_angles_[1] = (msg->position[1] * incr_to_rad);// * deg_to_rad;
+        wheel_angles_[2] = (msg->position[2] * incr_to_rad);// * deg_to_rad;
+        wheel_angles_[3] = (msg->position[3] * incr_to_rad);// * deg_to_rad;
 
         //the wheels have slip rings, so one might as well have an angle between [-PI, PI]
         for(unsigned int i=0; i<4; i++){
@@ -212,6 +212,7 @@ private:
             }
 
 	        if(std::abs(alpha_ext)>0 && std::abs(alpha_int)>0){
+                //RCLCPP_INFO(this->get_logger(), "ackerman");
 
                 double r_ext = std::sqrt(std::pow(WIDTH / 2.0 + LENGTH / (2.0 * std::tan(alpha_ext)), 2) + std::pow(LENGTH / 2.0, 2));
                 double r_int = std::sqrt(std::pow(WIDTH / 2.0 - LENGTH / (2.0 * std::tan(alpha_int)), 2) + std::pow(LENGTH / 2.0, 2));
@@ -222,6 +223,8 @@ private:
                 double omega_int = v_int / r_int;
 
                 omega_z = (omega_ext + omega_int) / 2.0;
+                //RCLCPP_INFO(this->get_logger(), "omega z ackerman: %f", omega_z);
+
                 double R_vel = 0.0;
 
                 if(std::abs(omega_z)<1e-6){
@@ -285,6 +288,9 @@ private:
             pos_theta_ += 2 * M_PI;
         }
 
+        //RCLCPP_INFO(this->get_logger(), "yaw wheel odom: %f", pos_theta_ *180/M_PI);
+
+
         nav_msgs::msg::Odometry odom;
         odom.header.stamp = this->get_clock()->now();
         odom.header.frame_id = "odom";
@@ -295,13 +301,13 @@ private:
         odom.twist.twist.linear.y = world_vy;
         odom.twist.twist.angular.z = omega_z;
 
-        double yaw_uncertainty = 0.05 + 0.03*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
+        double yaw_uncertainty = 0.6 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
         //RCLCPP_INFO(this->get_logger(), "yaw cov: %f", yaw_uncertainty);
 
 
         std::array<double, 36> pose_covariance = {
-            0.04, 0, 0, 0, 0, 0,
-            0, 0.04, 0, 0, 0, 0,
+            0.05, 0, 0, 0, 0, 0,
+            0, 0.05, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0,
@@ -309,8 +315,8 @@ private:
         };	
 
         std::array<double, 36> twist_covariance = {
-                    0.04, 0, 0, 0, 0, 0,
-                    0, 0.04, 0, 0, 0, 0,
+                    0.03, 0, 0, 0, 0, 0,
+                    0, 0.03, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 0,

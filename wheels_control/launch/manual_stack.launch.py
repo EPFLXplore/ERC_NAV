@@ -121,7 +121,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         parameters=[local_ekf_file_path]
     )
 
-
     imu_filter_node = launch_ros.actions.Node(
         package='ouster_imu_tester',
         executable='ouster_imu_tester',
@@ -155,7 +154,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
-            liorf_launch,
+            #liorf_launch,
             imu_filter_node,
             imu_madgwick_filter,
             imu_covariance_modif_node,
