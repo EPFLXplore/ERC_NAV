@@ -5,23 +5,24 @@ from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
-import xacro
+# import xacro
+
 
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco')
     rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
-    xacro_file_path = os.path.join(package_dir, 'urdf', 'simple_dual_camera.urdf.xacro')
+    # xacro_file_path = os.path.join(package_dir, 'urdf', 'simple_dual_camera.urdf.xacro')
 
     sim = LaunchConfiguration('sim', default='false')
     multiview = LaunchConfiguration('multiview', default='true')
     initial_pose = LaunchConfiguration('initial_pose', default='start')
     x = LaunchConfiguration('x', default='0.0')
     y = LaunchConfiguration('y', default='0.0')
-    rviz = LaunchConfiguration('rviz', default='true')
-    description = LaunchConfiguration('description', default='true')
+    rviz = LaunchConfiguration('rviz', default='false')
+    # description = LaunchConfiguration('description', default='true')
 
     # Process Xacro file
-    robot_description = xacro.process_file(xacro_file_path).toxml()
+    # robot_description = xacro.process_file(xacro_file_path).toxml()
 
     return LaunchDescription([
         Node(
@@ -59,12 +60,30 @@ def generate_launch_description():
             condition=IfCondition(rviz)
         ),
 
+        # Static transform publisher for left realsense camera
         Node(
-            package='robot_state_publisher',
-            executable='robot_state_publisher',
-            name='robot_state_publisher',
-            output='screen',
-            parameters=[{'robot_description': robot_description}],
-            condition=IfCondition(description)
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_tf_left_realsense',
+            arguments=['-0.3', '0.05', '0.645', '0', '0.5585', '1.9199', 'base_link_fake', 'left_realsense_camera_link'],
+            output='screen'
         ),
+
+        # Static transform publisher for right realsense camera
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='static_tf_right_realsense',
+            arguments=['-0.3', '-0.05', '0.645', '0', '0.38397', '-1.9199', 'base_link_fake', 'right_realsense_camera_link'],
+            output='screen'
+        ),
+
+        # Node(
+        #     package='robot_state_publisher',
+        #     executable='robot_state_publisher',
+        #     name='robot_state_publisher',
+        #     output='screen',
+        #     parameters=[{'robot_description': robot_description}],
+        #     condition=IfCondition(description)
+        # ),
     ])

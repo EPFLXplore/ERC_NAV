@@ -27,7 +27,7 @@ class ArucoNode(rclpy.node.Node):
         # Declare and read parameters
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
-        self.base_frame = "base_link"
+        self.base_frame = "base_link_fake"
         self.declare_parameter('sim', False) 
         sim = self.get_parameter('sim').get_parameter_value().bool_value  
 

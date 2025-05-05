@@ -25,6 +25,9 @@ class MultiViewArucoNode(Node):
         #half of the aruco box depth
         self.aruco_box_offset = 0.125
 
+        self.cam_params_received = {"left": False, "right": False}
+        self.params_initialized = False
+        self.sync_started = False
         
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
@@ -47,17 +50,17 @@ class MultiViewArucoNode(Node):
 
             self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
             # self.declare_parameter("camera_info_topic_1", '/NAV/camera_info_102122061110')
-            self.declare_parameter("camera_frame_1", "realsense1-frame")
+            self.declare_parameter("camera_frame_1", "left_realsense_camera_link")
 
             self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
             # self.declare_parameter("camera_info_topic_2", '/NAV/camera_info_135322062945')
-            self.declare_parameter("camera_frame_2", "realsense2-frame")
+            self.declare_parameter("camera_frame_2", "right_realsense_camera_link")
 
             # self.declare_parameter("marker_size", .125)
             self.declare_parameter("marker_size", .144)
 
 
-        self.base_frame = "base_link"
+        self.base_frame = "base_link_fake"
     
         self.marker_size = self.get_parameter("marker_size").get_parameter_value().double_value
         dictionary_id_name = self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
@@ -67,7 +70,8 @@ class MultiViewArucoNode(Node):
         self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value)
 
         # Subsribers to camera info topic to get intrisic matrix and distortion
-        self.call_cam_params_server()
+        # self.call_cam_params_server()
+        # self.init_synchronizers_and_publishers()
 
         # self.info_sub_1 = self.create_subscription(CameraInfo, 
         #                                            self.get_parameter("camera_info_topic_1").get_parameter_value().string_value, 
@@ -84,7 +88,7 @@ class MultiViewArucoNode(Node):
 
         # synchronized call back that processes two images at the same time, slop = windows of time for sync 0.3 before
         self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
-        self.ts.registerCallback(self.synced_callback)
+        #self.ts.registerCallback(self.synced_callback)
 
         # Publishers
         self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
@@ -100,6 +104,31 @@ class MultiViewArucoNode(Node):
 
         self.aruco_dictionary = cv2.aruco.Dictionary_get(cv2.aruco.__getattribute__(dictionary_id_name))
         self.aruco_parameters = cv2.aruco.DetectorParameters_create()
+
+        self.timer = self.create_timer(0.5, self.wait_for_cameras_to_start)
+
+
+    def wait_for_cameras_to_start(self):
+        #self.get_logger().info("🔄 Waiting for both RealSense cameras to start...")
+
+        self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
+        self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
+
+        if not self.client_left.service_is_ready() or not self.client_right.service_is_ready():
+            self.get_logger().warn("Waiting for CameraParams services...")
+            return
+
+        self.timer.cancel()
+
+        request_left = CameraParams.Request()
+        future_left = self.client_left.call_async(request_left)
+        future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
+
+        request_right = CameraParams.Request()
+        future_right = self.client_right.call_async(request_right)
+        future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
+
+
 
 
     def call_cam_params_server(self):
@@ -129,8 +158,16 @@ class MultiViewArucoNode(Node):
             future: The future result from the service call.
             camera: "left" or "right" to differentiate which camera the response belongs to.
         """
+        
+        if self.params_initialized:
+            return  # Already initialized, ignore further responses
         try:
             response = future.result()
+            # Sanity check: skip if fx/fy/cx/cy are zero or distortion is empty
+            if response.fx == 0 or response.fy == 0 or response.cx == 0 or response.cy == 0 or len(response.distortion_coefficients) == 0:
+                #self.get_logger().warn(f"❌ Invalid camera intrinsics received from {camera} camera! Retrying...")
+                self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
+                return
 
             # Store distortion coefficients
             distortion = np.array(response.distortion_coefficients)
@@ -152,9 +189,18 @@ class MultiViewArucoNode(Node):
 
             self.get_logger().info(f"Intrinsic Matrix ({camera}):\n{intrinsic_mat}")
             self.get_logger().info(f"Distortion Coefficients ({camera}): {distortion}")
+            self.cam_params_received[camera] = True
+
 
         except Exception as e:
             self.get_logger().error(f"Service call failed for {camera} camera: {e}")
+
+        if all(self.cam_params_received.values()) and not self.sync_started:
+            self.get_logger().info("✅ Both camera intrinsics received, starting synchronizer...")
+            self.ts.registerCallback(self.synced_callback)
+            self.params_initialized = True
+            self.sync_started = True
+
 
 
     # def info_callback_1(self, info_msg):
@@ -170,6 +216,28 @@ class MultiViewArucoNode(Node):
     #     self.destroy_subscription(self.info_sub_2)
 
 
+    def init_synchronizers_and_publishers(self):
+        self.get_logger().info("🧩 Initializing image subscribers, synchronizer, and publishers...")
+
+        # Load topics and frames from parameters
+        image_topic_1 = self.get_parameter("image_topic_1").get_parameter_value().string_value
+        image_topic_2 = self.get_parameter("image_topic_2").get_parameter_value().string_value
+        self.camera_frame_1 = self.get_parameter("camera_frame_1").get_parameter_value().string_value
+        self.camera_frame_2 = self.get_parameter("camera_frame_2").get_parameter_value().string_value
+
+        # Reinitialize synchronized image subscribers
+        self.image_sub_1 = Subscriber(self, CompressedImage, image_topic_1)
+        self.image_sub_2 = Subscriber(self, CompressedImage, image_topic_2)
+
+        # Time synchronizer with a slop of 0.3 seconds
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
+        # self.ts.registerCallback(self.synced_callback)  #registered later in the callback_cam_params to make sure we start only if both cameras are started
+
+        # Publishers
+        self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
+        self.markers_pub = self.create_publisher(ArucoMarkers, 'aruco_markers', 10)
+
+        self.get_logger().info("✅ Synchronizer and publishers initialized.")
 
     def synced_callback(self, img_msg_1, img_msg_2):
         #self.get_logger().info("Callback")

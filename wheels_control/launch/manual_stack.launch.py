@@ -72,6 +72,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_odometry_node",
     )
 
+    odom_preprocessor = launch_ros.actions.Node(
+        package="odom_preprocessor",
+        executable="odom_preprocessor",
+        name="odom_preprocessor",
+    )
+
     # ------------- Ouster Launch File -------------
     ouster_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
@@ -180,12 +186,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        description_launch,
+        #description_launch,
         wheel_odom_node,
         ouster_launch,
         delayed_launch,
+        odom_preprocessor,
         nav_cameras_launch,
-        #delayed_aruco_launch
+        delayed_aruco_launch
     ]
 
 def generate_launch_description():

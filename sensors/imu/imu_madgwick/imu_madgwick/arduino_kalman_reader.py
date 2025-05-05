@@ -46,7 +46,7 @@ class IMUSerialNode(Node):
         super().__init__('arduino_imu_node')
 
         self.publisher_ = self.create_publisher(Imu, '/imu_nano', 10)
-        self.timer_ = self.create_timer(0.025, self.read_serial_data)
+        self.timer_ = self.create_timer(0.01, self.read_serial_data)
         self.serial_conn = self.find_arduino_serial()
 
         # Flag to determine when calibration offsets have been set.
@@ -144,7 +144,7 @@ class IMUSerialNode(Node):
             # Apply a lowpass filter on the yaw of the orientation.
             yaw_lowpass_cutoff = 10.0  # Hz cutoff frequency.
             RC = 1.0 / (2 * math.pi * yaw_lowpass_cutoff)
-            dt = 0.025  # Timer period in seconds.
+            dt = 0.01  # Timer period in seconds.
             alpha = dt / (RC + dt)
             
             if self.filtered_yaw is None:
