@@ -60,7 +60,7 @@ class MultiViewArucoNode(Node):
             self.declare_parameter("marker_size", .144)
 
 
-        self.base_frame = "base_link_fake"
+        self.base_frame = "base_link"
     
         self.marker_size = self.get_parameter("marker_size").get_parameter_value().double_value
         dictionary_id_name = self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
@@ -87,7 +87,7 @@ class MultiViewArucoNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         # synchronized call back that processes two images at the same time, slop = windows of time for sync 0.3 before
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.5)
         #self.ts.registerCallback(self.synced_callback)
 
         # Publishers
@@ -279,8 +279,8 @@ class MultiViewArucoNode(Node):
 
         if marker_ids is not None:
             cv2.aruco.drawDetectedMarkers(cv_image, corners, marker_ids)
-            cv2.imshow("Detected ArUco Markers", cv_image)
-            cv2.waitKey(1)  # Allow OpenCV window refresh
+            #cv2.imshow("Detected ArUco Markers", cv_image)
+            #cv2.waitKey(1)  # Allow OpenCV window refresh
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
             self.get_logger().info(f"Markers detected: {marker_ids}")
 

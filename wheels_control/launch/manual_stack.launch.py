@@ -12,6 +12,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
+    global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
     config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
     
     # ------------- Launch Arguments -------------
@@ -127,6 +128,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         parameters=[local_ekf_file_path]
     )
 
+    global_ekf_node = launch_ros.actions.Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='global_ekf_filter_node',
+        output='screen',
+        parameters=[global_ekf_file_path]
+    )
+
     imu_filter_node = launch_ros.actions.Node(
         package='ouster_imu_tester',
         executable='ouster_imu_tester',
@@ -164,8 +173,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             imu_filter_node,
             imu_madgwick_filter,
             imu_covariance_modif_node,
-            arduino_imu_pub,
+            #arduino_imu_pub,
             local_ekf_node,
+            global_ekf_node,
         ]
     )
 
@@ -186,7 +196,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        #description_launch,
+        description_launch,
         wheel_odom_node,
         ouster_launch,
         delayed_launch,

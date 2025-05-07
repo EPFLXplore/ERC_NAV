@@ -66,10 +66,16 @@ class PoseEstimatorNode(Node):
 
         #if self.sim:
             # known absolute positions of landmarks (only x,y)
+
+        # ArUco ID 51 → index 0
+        # ArUco ID 52 → index 1
+        # ArUco ID 53 → index 2
+        # ...
+        #the position is relative to the map frame which is initially the starting position of the rover.
         self.landmark_poses = [
-                (2.0, 1.0),
-                (2.125, -0.875),
-                (2.875, 0.0),
+                (-1.08, 4.2),
+                (-5.13, -0.17),
+                (-2.24, 4.0),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -96,9 +102,13 @@ class PoseEstimatorNode(Node):
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.header.frame_id = 'map'
         # odom_msg.pose.pose.position = Point(self.x_estimate, self.y_estimate, 0.0)
-        odom_msg.pose.pose.position = Point(x=self.count, y=self.count, z=0.0)
-        odom_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-        odom_msg.pose.covariance = [0.0] * 36  
+        #odom_msg.pose.pose.position = Point(x=self.count, y=self.count, z=0.0)
+        odom_msg.pose.pose.position.x = self.x_estimate
+        odom_msg.pose.pose.position.y = self.y_estimate
+        odom_msg.pose.pose.position.z = 0.0
+
+        #odom_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        #odom_msg.pose.covariance = [0.0] * 36  
 
         # Twist
         odom_msg.child_frame_id = 'base_link'

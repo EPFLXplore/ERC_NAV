@@ -61,22 +61,23 @@ def generate_launch_description():
         ),
 
         # Static transform publisher for left realsense camera
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_tf_left_realsense',
-            arguments=['-0.3', '0.05', '0.645', '0', '0.5585', '1.9199', 'base_link_fake', 'left_realsense_camera_link'],
-            output='screen'
-        ),
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='static_tf_left_realsense',
+        #     arguments=['-0.3', '0.05', '0.645', '0', '0.3491', '1.9199', 'base_link', 'left_realsense_camera_link'],
+        #     output='screen'
+        # ),
 
-        # Static transform publisher for right realsense camera
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='static_tf_right_realsense',
-            arguments=['-0.3', '-0.05', '0.645', '0', '0.38397', '-1.9199', 'base_link_fake', 'right_realsense_camera_link'],
-            output='screen'
-        ),
+        # # Static transform publisher for right realsense camera
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='static_tf_right_realsense',
+        #     arguments=['-0.3', '-0.05', '0.645', '0', '0.3491', '-1.9199', 'base_link', 'right_realsense_camera_link'],
+        #     output='screen'
+        # ),
+
 
         # Node(
         #     package='robot_state_publisher',
