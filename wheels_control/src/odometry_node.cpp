@@ -247,7 +247,7 @@ private:
         if(going_left){
             v_x = -v_x;
         }
-        v_x = 0.95 * v_x;
+        v_x = 0.985 * v_x;
         
 
         double world_vx = v_x * std::cos(pos_theta_) - v_y * std::sin(pos_theta_);
@@ -297,8 +297,12 @@ private:
         odom.child_frame_id = "base_link";
         odom.pose.pose.position.x = pos_x_;
         odom.pose.pose.position.y = pos_y_;
-        odom.twist.twist.linear.x = world_vx;
-        odom.twist.twist.linear.y = world_vy;
+        // odom.twist.twist.linear.x = world_vx;
+        // odom.twist.twist.linear.y = world_vy;
+        // odom.twist.twist.angular.z = omega_z;
+
+        odom.twist.twist.linear.x = v_x;
+        odom.twist.twist.linear.y = v_y;
         odom.twist.twist.angular.z = omega_z;
 
         double yaw_uncertainty = 0.6 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;

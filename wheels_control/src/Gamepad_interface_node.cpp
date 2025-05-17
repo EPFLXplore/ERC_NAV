@@ -205,16 +205,16 @@ class GamepadInterface : public rclcpp::Node
           const float PI = 3.14159265358979323846f;
           const float DELTA_THRESHOLD = 0.096;
           const float RAD_TO_DEG = 180.0f / PI;
-          const double TURN_THRESHOLD = 300.0f; // this should be the thrshold that once you attain we can consider that we passed a turn
+          // const double TURN_THRESHOLD = 300.0f; // this should be the thrshold that once you attain we can consider that we passed a turn
       
           static float prev_angle = 0.0f;
           static float prev_delta = 0.0f;
           static float prev_wrapped_angle = 0.0f;
           static bool ccw_turn = false;
           static bool cw_turn = false;
-          static int num_turns = 0;
+          // static int num_turns = 0;
       
-          float remainder = 0.0f;
+          // float remainder = 0.0f;
       
           // if (reset) {
           //     prev_angle = 0.0f;
@@ -258,53 +258,44 @@ class GamepadInterface : public rclcpp::Node
                   //RCLCPP_INFO(this->get_logger(), "curent case 5: : %.3f", curr_deg);
                   //RCLCPP_INFO(this->get_logger(), "delta case 5: %.3f", delta_angle*180/3.1415); 
                   if (delta_angle < -DELTA_THRESHOLD && curr_deg < -90) {
-                      //RCLCPP_INFO(this->get_logger(), "turn case 1");
+                      // RCLCPP_INFO(this->get_logger(), "turn case 1");
 
                       cw_turn = true;
                       ccw_turn = false;
                   } else if (delta_angle < -DELTA_THRESHOLD && curr_deg > -90) {
-                      //RCLCPP_INFO(this->get_logger(), "turn case 2");
+                      // RCLCPP_INFO(this->get_logger(), "turn case 2");
 
                       cw_turn = false;
                       ccw_turn = true;
                   } else if (delta_angle > DELTA_THRESHOLD && curr_deg > 90) {
-                      //RCLCPP_INFO(this->get_logger(), "turn case 3");
+                      // RCLCPP_INFO(this->get_logger(), "turn case 3");
 
                       cw_turn = false;
                       ccw_turn = true;
                   } else if (delta_angle > DELTA_THRESHOLD && curr_deg < 90) {
-                      //RCLCPP_INFO(this->get_logger(), "turn case 4");
+                      // RCLCPP_INFO(this->get_logger(), "turn case 4");
 
                       cw_turn = true;
                       ccw_turn = false;
                   }else{
-                      //RCLCPP_INFO(this->get_logger(), "turn case 5");
+                      // RCLCPP_INFO(this->get_logger(), cw_turn, "turn case 8", ccw_turn);
 
 
                   }
               }
       
-              float wrapped_angle = curr_angle + num_turns * 2 * PI;
+              float wrapped_angle = curr_angle; 
               if (cw_turn && curr_angle < 0 && std::fmod(std::abs(prev_wrapped_angle), 2 * PI) > 0) {
-                  //RCLCPP_INFO(this->get_logger(), "wrapped clockwise");
+                  // RCLCPP_INFO(this->get_logger(), "wrapped clockwise");
 
-                  wrapped_angle = curr_angle + 2 * PI + num_turns * 2 * PI;
+                  wrapped_angle = curr_angle + 2 * PI; 
               } else if (ccw_turn && curr_angle > 0 && std::fmod(std::abs(prev_wrapped_angle), 2 * PI) < 0) {
                   //RCLCPP_INFO(this->get_logger(), "wrapped anti-clockwise");
 
-                  wrapped_angle = curr_angle - 2 * PI + num_turns * 2 * PI;
+                  wrapped_angle = curr_angle - 2 * PI;
               }
       
               float wrapped_deg = wrapped_angle * RAD_TO_DEG;
-              if (cw_turn && (prev_wrapped_angle* RAD_TO_DEG) > (TURN_THRESHOLD + num_turns * 360) && curr_angle > 0) {
-                  num_turns += 1;
-                  //RCLCPP_INFO(this->get_logger(), "increased turns number");
-
-              } else if (ccw_turn && (prev_wrapped_angle* RAD_TO_DEG) < (-TURN_THRESHOLD + num_turns * 360) && curr_angle < 0) {
-                  num_turns -= 1;
-                  //RCLCPP_INFO(this->get_logger(), "decreased turns number");
-
-              }
       
               prev_angle = curr_angle;
               prev_delta = delta_angle;
@@ -349,7 +340,7 @@ class GamepadInterface : public rclcpp::Node
               // r_z = desired_angle;
           //} 
           else {
-            RCLCPP_INFO(this->get_logger(), "keeping prev wrapped angle");
+            // RCLCPP_INFO(this->get_logger(), "keeping prev wrapped angle");
 
             r_z = prev_wrapped_angle;
           }

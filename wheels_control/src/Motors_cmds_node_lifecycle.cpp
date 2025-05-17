@@ -281,8 +281,8 @@ public:
                 
                 if(current_poll_counter > 10){
                     current_poll_counter = 0;
-                    message_nav.current[id-1] = (double)motor->get_current_is();
-                    message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
+                    //message_nav.current[id-1] = (double)motor->get_current_is();
+                    //message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
                 }
 
                 // IDs [0,1,2,3] are the nodes for the driving
