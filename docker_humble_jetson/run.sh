@@ -36,6 +36,9 @@ parent_dir=$(dirname "$current_dir")
 USERNAME=xplore
 
 
+    # -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \
+    # -e CYCLONEDDS_URI="file:///home/xplore/cyclonedds.xml" \
+
 docker run -it \
     --name nav_humble_jetson \
     --rm \
@@ -55,6 +58,8 @@ docker run -it \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_jetson_home_volume:/home/xplore \
+    -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \
+    -e CYCLONEDDS_URI="file:///home/xplore/cyclonedds.xml" \
     --add-host=os-122140001125.local:169.254.55.220 \
     ghcr.io/epflxplore/nav:humble-jetson \
     /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; export PYTHONPATH=/home/xplore/dev_ws/install/rover_pkg/lib/python3.10/site-packages:/home/xplore/dev_ws/install/custom_msg/local/lib/python3.10/dist-packages:/opt/ros/humble/install/local/lib/python3.10/dist-packages:/opt/ros/humble/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages; /bin/bash"

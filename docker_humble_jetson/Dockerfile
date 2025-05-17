@@ -117,7 +117,9 @@ RUN apt-get update && apt-get install -y \
     ros-humble-ament-flake8 \
     ros-humble-ament-pep257 \
     ros-humble-ros2launch \
-    ros-humble-pcl-msgs
+    ros-humble-pcl-msgs \
+    iputils-ping
+
 
 # Add USB rules for oak-d
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
@@ -127,6 +129,13 @@ RUN /etc/init.d/udev restart
 # Add Lidar Host
 # RUN echo "169.254.55.220  os-122140001125.local" >> /etc/hosts
 # Can be replaced with the --add-host argument https://docs.docker.com/reference/cli/docker/container/run/#add-host
+
+
+#Setting up the CycloneDDS Config to allow ROS2 to communicate with both the Olive X1 IMU USB-Etherner itnerface and the Jetson's Ethernet interface
+# COPY docker_humble_jetson/cyclonedds.xml /home/${USERNAME}/cyclonedds.xml
+# ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+#     CYCLONEDDS_URI="file:///home/${USERNAME}/cyclonedds.xml"
+#^ this is done at runtime in the run.sh
 
 USER $USERNAME
 
