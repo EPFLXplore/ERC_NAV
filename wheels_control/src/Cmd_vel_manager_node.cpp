@@ -18,6 +18,7 @@ description:
 #include <string>
 #include "wheels_control/utility.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include "std_msgs/msg/string.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "sensor_msgs/msg/joy.hpp"
@@ -150,14 +151,15 @@ class CmdvelManager : public rclcpp::Node
 
 int main(int argc, char * argv[])
 {
-
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<CmdvelManager>());
+
+  auto node = std::make_shared<CmdvelManager>();
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+
+  RCLCPP_INFO(node->get_logger(), "Spinning cmd_vel_manager with MultiThreadedExecutor");
+  executor.spin();
 
   rclcpp::shutdown();
-
   return 0;
-
 }
-
-

@@ -37,6 +37,7 @@ Function used from motors.hpp:  - connected()
 #include "custom_msg/msg/motor_status.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 
+
 using namespace std::chrono_literals;
 
 //const _Float64 dt(0);
@@ -109,31 +110,44 @@ public:
 
         this->homing = false;
 
+        // auto timer_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        // auto sub_service_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
         timer_ = this->create_wall_timer(
-            50ms, std::bind(&MotorCmdsLifecycle::motors_param_callback, this));
+            50ms,
+            std::bind(&MotorCmdsLifecycle::motors_param_callback, this)
+        );
 
+        auto qos = rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort();
+        
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
-            "/NAV/motor_nav_status", 10);
+            "/NAV/motor_nav_status", qos);
 
+
+        // subscription into sub_service_group
+        // rclcpp::SubscriptionOptions sub_opts;
+        // sub_opts.callback_group = sub_service_group;
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
-            "/NAV/displacement", 1, std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1));
+            "/NAV/displacement", 1,
+            std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1)
+        );
 
-        // Listens on CS to reset the motors
         reset_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetNavMotors",
-            std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
+            std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this,
+                        std::placeholders::_1, std::placeholders::_2)
         );
 
-        // Listens on the CS to home the motors
         reset_home_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetHomeNavMotors",
-            std::bind(&MotorCmdsLifecycle::handle_reset_home_nav_motors, this, std::placeholders::_1, std::placeholders::_2)
+            std::bind(&MotorCmdsLifecycle::handle_reset_home_nav_motors, this,
+                        std::placeholders::_1, std::placeholders::_2)
         );
-        
+            
         // Get the size of the vector
         std::size_t size = motors.size();
         RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%d'", size);
-        RCLCPP_INFO(get_logger(), "Nav motors configured");
+        RCLCPP_INFO(get_logger(), "----> NAV MOTORS CONFIGURED <----");
 
         current_faulty_motors.resize(motors.size(), false);
 
@@ -257,51 +271,54 @@ public:
         }
     }
 
-    void motors_param_callback()
-    {
-        static unsigned int current_poll_counter = 0;
-        
-        current_poll_counter++;
+    void motors_param_callback(){ //right now runs at 10Hz
+        static unsigned int counter = 0;
+        counter++;
+        bool check_faults = (counter >= 20);
+        if(check_faults){
+            counter = 0;
+        }
+
         auto message_nav = custom_msg::msg::MotorStatus();
-        for (auto motor = motors.begin(); motor != motors.end(); motor++)
-        {
+
+        for (auto motor = motors.begin(); motor != motors.end(); motor++){
             
             int id = motor->get_id();
             unsigned int error_code = 0;
-            bool debug_verbose = true;
-            bool has_fault = false; //motor->is_faulty(debug_verbose); //TODO: check how much publishing rate this eats
-            message_nav.fault_state[id-1] = has_fault;
-            current_faulty_motors[id-1] = has_fault;
+            bool debug_verbose = false;
 
-            if (motor->connected())
-            {                
+            if (motor->connected()){
                 //Put the motor current callback at a lower requency because it severly diminishes the publishing rate
-
-                message_nav.state[id-1] = true; //motor->connected();
+                message_nav.state[id-1] = true;
                 
-                if(current_poll_counter > 10){
-                    current_poll_counter = 0;
+                if(check_faults){
                     //message_nav.current[id-1] = (double)motor->get_current_is();
-                    //message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
+                    message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
                 }
-
                 // IDs [0,1,2,3] are the nodes for the driving
                 // IDs [4,5,6,7] are the nodes for the steering
-                if (id > 4)
-                {
-                    message_nav.position[id-5] = (double)motor->get_position_is();
+                if (id > 4){
+                    message_nav.position[id-5] = (double)motor->get_position_is(); //takes max 6ms
                 }
                 else{
                     //this returns 1800 (approx) which is correct for the max speed.
                     //to get the actual value we need to divide by the gear ration 1:53
                     //which gives us again the 33.3 rpm
-                    message_nav.velocity[id-1] = motor->get_velocity_is();
+                    message_nav.velocity[id-1] = motor->get_velocity_is(); //takes max 6ms
                 }
+            }else{
+                message_nav.state[id-1] = false;
             }
-        }    
+
+            if(check_faults){
+                //RCLCPP_INFO(get_logger(), "checking for faults");
+                bool has_fault = motor->is_faulty(debug_verbose);
+                message_nav.fault_state[id-1] = has_fault;
+                current_faulty_motors[id-1] = has_fault;
+            }
+        }
 
         pub_motor_nav_status->publish(message_nav);
-
     }
 
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)
@@ -569,8 +586,7 @@ int main(int argc, char *argv[])
 
     try
     {
-        rclcpp::executors::SingleThreadedExecutor exe;
-
+        rclcpp::executors::MultiThreadedExecutor exe;
         std::shared_ptr<MotorCmdsLifecycle> motor_cmds_node =
             std::make_shared<MotorCmdsLifecycle>();
 

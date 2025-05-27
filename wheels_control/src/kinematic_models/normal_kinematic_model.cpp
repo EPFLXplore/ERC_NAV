@@ -66,6 +66,8 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     // }
     
     v_x = max_linear_velocity * v_x;
+    //RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "%f", max_linear_velocity);
+
 
     // scale the normalized joystick inputs
     // if(std::abs(omega_z) > 1.0){ //a check si besoin pour le omni mode

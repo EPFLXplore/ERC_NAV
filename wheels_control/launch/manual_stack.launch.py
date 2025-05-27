@@ -77,6 +77,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="odom_preprocessor",
         executable="odom_preprocessor",
         name="odom_preprocessor",
+        output='screen',
     )
 
     # ------------- Ouster Launch File -------------
@@ -151,6 +152,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
     )
 
+    imu_waveshare_repub = launch_ros.actions.Node(
+        package='imu_madgwick',
+        executable='waveshare_reader',
+        name='waveshare_reader',
+        output='screen',
+    )
+
     imu_covariance_modif_node = launch_ros.actions.Node(
         package='imu_madgwick',
         executable='imu_covariance_modifier',
@@ -170,12 +178,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         actions=[
             LogInfo(msg="Ouster started! Launching dependent nodes..."),
             #liorf_launch,
-            imu_filter_node,
-            imu_madgwick_filter,
-            imu_covariance_modif_node,
+            #imu_filter_node,
+            #imu_madgwick_filter,
+            #imu_waveshare_repub,
+            #imu_covariance_modif_node,
             #arduino_imu_pub,
-            local_ekf_node,
-            global_ekf_node,
+            #local_ekf_node,
+            #global_ekf_node,
         ]
     )
 
@@ -183,9 +192,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
             LogInfo(msg="Cameras started! Launching dependent nodes..."),
-            aruco_launch
+            #aruco_launch
         ]
     )
+
 
 
     return [
@@ -196,13 +206,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        description_launch,
+        #description_launch,
         wheel_odom_node,
-        ouster_launch,
+        #ouster_launch,
         delayed_launch,
-        odom_preprocessor,
+        #odom_preprocessor,
         nav_cameras_launch,
-        delayed_aruco_launch
+        #delayed_aruco_launch
     ]
 
 def generate_launch_description():

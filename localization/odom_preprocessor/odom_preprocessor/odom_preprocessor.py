@@ -41,6 +41,7 @@ class OdomPreprocessor(Node):
         qos_sensor = QoSProfile(depth=10)
         qos_sensor.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
+
         self.declare_parameter('beta_yaw_fusion', 0.75)
         self.declare_parameter('yaw_avg_window', 5)
         self.declare_parameter('startup_delay_sec', 2.0)

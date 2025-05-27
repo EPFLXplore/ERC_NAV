@@ -18,6 +18,7 @@ description:  - Take the rover velocity and compute the position of the steering
 #include <string>
 #include "wheels_control/utility.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -91,9 +92,11 @@ public:
     normalKinematicModel.motor_cmds = motor_cmds;
 
     pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", 10);
+    
+    auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{10}).best_effort();
 
     sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorStatus>(
-        "/NAV/motor_nav_status", 1, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
+        "/NAV/motor_nav_status", sub_qos, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
     // Listens on the NAVCSInterface for the actual mode of the rover
     sub_state_system = this->create_subscription<std_msgs::msg::String>(
@@ -159,6 +162,8 @@ private:
   void callback_speed_rover(const std_msgs::msg::Float32::SharedPtr msg)
   {
     speed_rover = msg->data;
+    //log_info("reeived CS Speed" + std::to_string(speed_rover));
+
   }
 
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -239,11 +244,15 @@ private:
 
 int main(int argc, char *argv[])
 {
-
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<DisplacementCmds>());
+
+  auto node = std::make_shared<DisplacementCmds>();
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+
+  RCLCPP_INFO(node->get_logger(), "Spinning displacement cmd node with MultiThreadedExecutor");
+  executor.spin();
 
   rclcpp::shutdown();
-
   return 0;
 }

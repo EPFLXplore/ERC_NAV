@@ -7,8 +7,11 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <sensor_msgs/msg/imu.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "custom_msg/msg/motor_status.hpp"
 #include "wheels_control/definition.hpp"
@@ -39,10 +42,14 @@ public:
           pos_theta_(0.0) {
 
         prev_time_ = this->get_clock()->now();
-
+        auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{10}).best_effort();
         subscription_ = this->create_subscription<custom_msg::msg::MotorStatus>(
-            "/NAV/motor_nav_status", 10,
+            "/NAV/motor_nav_status", sub_qos,
             std::bind(&ForwardKinematicsNode::publish_odometry, this, _1));
+
+        imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
+        "/olive/imu/id001/ahrs", 10,
+        std::bind(&ForwardKinematicsNode::imu_callback, this, std::placeholders::_1));
 
         odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
 
@@ -50,6 +57,17 @@ public:
     }
 
 private:
+
+
+    void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
+        tf2::Quaternion q;
+        tf2::fromMsg(msg->orientation, q);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        pos_theta_ = yaw;
+    }
+
 
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
 
@@ -72,7 +90,12 @@ private:
         wheel_speeds_[2] = msg->velocity[2] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
         wheel_speeds_[3] = msg->velocity[3] * rpm_to_ms * gear_ratio;
 
+        RCLCPP_INFO(this->get_logger(), "front left m/S: %f", wheel_speeds_[0]);
+        RCLCPP_INFO(this->get_logger(), "front right m/S: %f", wheel_speeds_[1]);
+        RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[2]);
+        RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[3]);
 
+        
         //in the definition.hpp file :
         // #define FRONT_LEFT_DRIVE 1
         // #define FRONT_RIGHT_DRIVE 2
@@ -103,190 +126,243 @@ private:
         // RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2] * (1/deg_to_rad));
         // RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3] * (1/deg_to_rad));
 
+        // auto now = this->get_clock()->now();
+        // double dt = (now - prev_time_).seconds();
+        // if (dt <= 0.0) dt = 1.0 / 100.0;
+
+        /////////////////////////////////// ICR Least Squares //////////////////////////////////
+
+        static const Eigen::Vector2d wheel_positions[4] = {
+            {  LENGTH/2.0,  WIDTH/2.0},   // 0 – front-left
+            {  LENGTH/2.0, -WIDTH/2.0},   // 1 – front-right
+            { -LENGTH/2.0, -WIDTH/2.0},   // 2 – back-right
+            { -LENGTH/2.0,  WIDTH/2.0}    // 3 – back-left
+        };
+
+        /* Build A·twist = b   (twist = [v_x v_y ω]ᵀ   in  base_link frame) */
+        Eigen::Matrix<double,8,3> A;
+        Eigen::Matrix<double,8,1> b;
+        for (int i = 0; i < 4; ++i){
+
+            double sa  = std::sin(wheel_angles_[i]);
+            double ca  = std::cos(wheel_angles_[i]);
+            double xw  = wheel_positions[i][0];
+            double yw  = wheel_positions[i][1];
+
+            /* lateral (no-slip) row */
+            A(2*i,0) = -sa;
+            A(2*i,1) =  ca;
+            A(2*i,2) =  sa*yw + ca*xw;
+            b(2*i)   =  0.0;
+
+            /* longitudinal speed row */
+            A(2*i+1,0) =  ca;
+            A(2*i+1,1) =  sa;
+            A(2*i+1,2) = -ca*yw + sa*xw;
+            b(2*i+1)   =  wheel_speeds_[i];
+        }
+
+        Eigen::Vector3d twist = A.colPivHouseholderQr().solve(b);
+        double v_x     = twist(0);     // body-frame forward
+        double v_y     = twist(1);     // body-frame left
+        double omega_z = twist(2);     // yaw rate
+
         auto now = this->get_clock()->now();
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
-        double a_fl = wheel_angles_[0];
-        double a_fr = wheel_angles_[1];
-        double a_br = wheel_angles_[2];
-        double a_bl = wheel_angles_[3];
+        double world_vx =  v_x*std::cos(pos_theta_) - v_y*std::sin(pos_theta_);
+        double world_vy =  v_x*std::sin(pos_theta_) + v_y*std::cos(pos_theta_);
 
-        // RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0]);
-        // RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1]);
-        // RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2]);
-        // RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3]);
+        pos_x_     += world_vx * dt;
+        pos_y_     += world_vy * dt;
 
-        double v_fl = wheel_speeds_[0];
-        double v_fr = wheel_speeds_[1];
-        double v_br = wheel_speeds_[2];
-        double v_bl = wheel_speeds_[3];
+        /* keep θ in (-π, π] */
+        pos_theta_ = std::atan2(std::sin(pos_theta_), std::cos(pos_theta_));
+
+        prev_time_ = now;
+
+        //////////////////////////////////////////////////////////////////////////////////
+
+        // double a_fl = wheel_angles_[0];
+        // double a_fr = wheel_angles_[1];
+        // double a_br = wheel_angles_[2];
+        // double a_bl = wheel_angles_[3];
+
+        // // RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0]);
+        // // RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1]);
+        // // RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2]);
+        // // RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3]);
+
+        // double v_fl = wheel_speeds_[0];
+        // double v_fr = wheel_speeds_[1];
+        // double v_br = wheel_speeds_[2];
+        // double v_bl = wheel_speeds_[3];
 
         
 
-        //double avg_angle_front = (a_fl + a_fr) / 2.0;
-        //double avg_angle_back  = (a_bl + a_br) / 2.0;
-        double avg_abs_angle = (std::fabs(a_fl) + std::fabs(a_fr) + std::fabs(a_br) + std::fabs(a_bl)) / 4.0;
-        double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
-        bool going_right = false;
-        bool going_left = false;
-        bool going_straight = false;
-        //RCLCPP_INFO(this->get_logger(), "avg abs angle %f", avg_abs_angle);
+        // //double avg_angle_front = (a_fl + a_fr) / 2.0;
+        // //double avg_angle_back  = (a_bl + a_br) / 2.0;
+        // double avg_abs_angle = (std::fabs(a_fl) + std::fabs(a_fr) + std::fabs(a_br) + std::fabs(a_bl)) / 4.0;
+        // double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
+        // bool going_right = false;
+        // bool going_left = false;
+        // bool going_straight = false;
+        // //RCLCPP_INFO(this->get_logger(), "avg abs angle %f", avg_abs_angle);
 
     
-        double v_x = 0.0;
-        double v_y = 0.0;
-        double omega_z = 0.0;
-        // Check for straight driving       
-        bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
-        bool all_angles_tiny = avg_abs_angle < (ANGLE_THRESHOLD*0.1);
-        // Check for in-place rotation (symmetrical opposing angles, opposing speeds)
-        // bool possible_rotation = (std::abs(a_fl + a_bl) < ANGLE_THRESHOLD) &&
-        //                          (std::abs(a_fr + a_br) < ANGLE_THRESHOLD) &&
-        //                          (std::abs(v_fl + v_bl) < SPEED_EPSILON)   &&
-        //                          (std::abs(v_fr + v_br) < SPEED_EPSILON)   &&
-        //                          (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
+        // double v_x = 0.0;
+        // double v_y = 0.0;
+        // double omega_z = 0.0;
+        // // Check for straight driving       
+        // bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
+        // bool all_angles_tiny = avg_abs_angle < (ANGLE_THRESHOLD*0.1);
+        // // Check for in-place rotation (symmetrical opposing angles, opposing speeds)
+        // // bool possible_rotation = (std::abs(a_fl + a_bl) < ANGLE_THRESHOLD) &&
+        // //                          (std::abs(a_fr + a_br) < ANGLE_THRESHOLD) &&
+        // //                          (std::abs(v_fl + v_bl) < SPEED_EPSILON)   &&
+        // //                          (std::abs(v_fr + v_br) < SPEED_EPSILON)   &&
+        // //                          (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
         
-        bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
+        // bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
 
-        //RCLCPP_INFO(this->get_logger(), "avg speed z: %f", avg_speed);
-        //RCLCPP_INFO(this->get_logger(), "avg_abs_ang: %f", avg_abs_angle);
+        // //RCLCPP_INFO(this->get_logger(), "avg speed z: %f", avg_speed);
+        // //RCLCPP_INFO(this->get_logger(), "avg_abs_ang: %f", avg_abs_angle);
 
 
-        if (all_angles_small) {
-	        //RCLCPP_INFO(this->get_logger(), "translation");
-            // Straight motion
-            double v_avg = (v_fl + v_fr + v_bl + v_br) / 4.0;
-            v_x = v_avg;
-            v_y = 0.0;
-            omega_z = 0.0;
-            going_straight = true;
-            //RCLCPP_INFO(this->get_logger(), "speed %f", v_avg);
-        } else if (possible_rotation) {
-            going_straight = false;
-            //RCLCPP_INFO(this->get_logger(), "rotation sur place");
+        // if (all_angles_small) {
+	    //     RCLCPP_INFO(this->get_logger(), "translation");
+        //     // Straight motion
+        //     double v_avg = (v_fl + v_fr + v_bl + v_br) / 4.0;
+        //     v_x = v_avg;
+        //     v_y = 0.0;
+        //     omega_z = 0.0;
+        //     going_straight = true;
+        //     RCLCPP_INFO(this->get_logger(), "speed AVG%f", v_avg);
+        // } else if (possible_rotation) {
+        //     going_straight = false;
+        //     //RCLCPP_INFO(this->get_logger(), "rotation sur place");
 
-            // In-place rotation
-            double v_rot = (v_fr - v_fl + v_br - v_bl) / 4.0;
+        //     // In-place rotation
+        //     double v_rot = (v_fr - v_fl + v_br - v_bl) / 4.0;
             
-            // Estimate radius of rotation circle
-            double r = std::sqrt((LENGTH / 2.0) * (LENGTH / 2.0) + (WIDTH / 2.0) * (WIDTH / 2.0));
-            omega_z = v_rot / r;
-            //RCLCPP_INFO(this->get_logger(), "omega z: %f", omega_z);
-            //RCLCPP_INFO(this->get_logger(), "v_rot: %f", v_rot);
+        //     // Estimate radius of rotation circle
+        //     double r = std::sqrt((LENGTH / 2.0) * (LENGTH / 2.0) + (WIDTH / 2.0) * (WIDTH / 2.0));
+        //     omega_z = v_rot / r;
+        //     //RCLCPP_INFO(this->get_logger(), "omega z: %f", omega_z);
+        //     //RCLCPP_INFO(this->get_logger(), "v_rot: %f", v_rot);
 
-            v_x = 0.0;
-            v_y = 0.0;
-        } else {
-            going_straight = false;
-            // Curved translation (double Ackermann)
-            // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
-            double alpha_ext = a_fr;
-            double alpha_int = -a_fl;
-            double v_ext = v_fr;
-            double v_int = v_fl;
+        //     v_x = 0.0;
+        //     v_y = 0.0;
+        // } else {
+        //     going_straight = false;
+        //     // Curved translation (double Ackermann)
+        //     // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
+        //     double alpha_ext = a_fr;
+        //     double alpha_int = -a_fl;
+        //     double v_ext = v_fr;
+        //     double v_int = v_fl;
 
-            if(a_fl >= 0 && a_fr >= 0 && a_fr > a_fl &&
-               a_bl <= 0 && a_br <= 0 && a_br < a_bl){
-                //going forwards right or backwards right
-                going_right = true;
-                going_left=false;
+        //     if(a_fl >= 0 && a_fr >= 0 && a_fr > a_fl &&
+        //        a_bl <= 0 && a_br <= 0 && a_br < a_bl){
+        //         //going forwards right or backwards right
+        //         going_right = true;
+        //         going_left=false;
 
-                v_ext = (0.5) * (v_fl + v_bl);
-                v_int = (0.5) * (v_fr + v_br);
+        //         v_ext = (0.5) * (v_fl + v_bl);
+        //         v_int = (0.5) * (v_fr + v_br);
 
-                alpha_int = (0.5) * (a_fl - a_bl);
-                alpha_ext = (0.5) * (a_fr - a_br);
+        //         alpha_int = (0.5) * (a_fl - a_bl);
+        //         alpha_ext = (0.5) * (a_fr - a_br);
 
-            }else if(a_bl >= 0 && a_br >= 0 && a_br < a_bl &&
-                a_fl <= 0 && a_fr <= 0 && a_fr > a_fl){
-                //going forwards left or backwards left
-                going_left = true;
-                going_right=false;
+        //     }else if(a_bl >= 0 && a_br >= 0 && a_br < a_bl &&
+        //         a_fl <= 0 && a_fr <= 0 && a_fr > a_fl){
+        //         //going forwards left or backwards left
+        //         going_left = true;
+        //         going_right=false;
 
-                v_int = (0.5) * (v_fl + v_bl);
-                v_ext = (0.5) * (v_fr + v_br);
+        //         v_int = (0.5) * (v_fl + v_bl);
+        //         v_ext = (0.5) * (v_fr + v_br);
 
-                alpha_ext = (0.5) * (a_fl - a_bl);
-                alpha_int = (0.5) * (a_fr - a_br);
-            }
+        //         alpha_ext = (0.5) * (a_fl - a_bl);
+        //         alpha_int = (0.5) * (a_fr - a_br);
+        //     }
 
-	        if(std::abs(alpha_ext)>0 && std::abs(alpha_int)>0){
-                //RCLCPP_INFO(this->get_logger(), "ackerman");
+	    //     if(std::abs(alpha_ext)>0 && std::abs(alpha_int)>0){
+        //         //RCLCPP_INFO(this->get_logger(), "ackerman");
 
-                double r_ext = std::sqrt(std::pow(WIDTH / 2.0 + LENGTH / (2.0 * std::tan(alpha_ext)), 2) + std::pow(LENGTH / 2.0, 2));
-                double r_int = std::sqrt(std::pow(WIDTH / 2.0 - LENGTH / (2.0 * std::tan(alpha_int)), 2) + std::pow(LENGTH / 2.0, 2));
+        //         double r_ext = std::sqrt(std::pow(WIDTH / 2.0 + LENGTH / (2.0 * std::tan(alpha_ext)), 2) + std::pow(LENGTH / 2.0, 2));
+        //         double r_int = std::sqrt(std::pow(WIDTH / 2.0 - LENGTH / (2.0 * std::tan(alpha_int)), 2) + std::pow(LENGTH / 2.0, 2));
                 
-                double R_geo = 0.25 * LENGTH * (1.0 / std::tan(alpha_ext) + 1.0 / std::tan(alpha_int));
+        //         double R_geo = 0.25 * LENGTH * (1.0 / std::tan(alpha_ext) + 1.0 / std::tan(alpha_int));
 
-                double omega_ext = v_ext / r_ext;
-                double omega_int = v_int / r_int;
+        //         double omega_ext = v_ext / r_ext;
+        //         double omega_int = v_int / r_int;
 
-                omega_z = (omega_ext + omega_int) / 2.0;
-                //RCLCPP_INFO(this->get_logger(), "omega z ackerman: %f", omega_z);
+        //         omega_z = (omega_ext + omega_int) / 2.0;
+        //         //RCLCPP_INFO(this->get_logger(), "omega z ackerman: %f", omega_z);
 
-                double R_vel = 0.0;
+        //         double R_vel = 0.0;
 
-                if(std::abs(omega_z)<1e-6){
-                    omega_z = 1e-6;
-                    R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-                }else{
-                    R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-                }
+        //         if(std::abs(omega_z)<1e-6){
+        //             omega_z = 1e-6;
+        //             R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
+        //         }else{
+        //             R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
+        //         }
                     
-                double R = R_geo;
+        //         double R = R_geo;
 
-                v_x = omega_z * R;
+        //         v_x = omega_z * R;
 
 
-                v_y = 0.0;
-	        }
-        }
+        //         v_y = 0.0;
+	    //     }
+        // }
 
-        // Transform velocities to world frame
-        if(going_left){
-            v_x = -v_x;
-        }
-        v_x = 0.985 * v_x;
+        // // Transform velocities to world frame
+        // if(going_left){
+        //     v_x = -v_x;
+        // }
         
 
-        double world_vx = v_x * std::cos(pos_theta_) - v_y * std::sin(pos_theta_);
-        double world_vy = v_x * std::sin(pos_theta_) + v_y * std::cos(pos_theta_);
+        // double world_vx = v_x * std::cos(pos_theta_) - v_y * std::sin(pos_theta_);
+        // double world_vy = v_x * std::sin(pos_theta_) + v_y * std::cos(pos_theta_);
 
 
-        pos_x_ += world_vx * dt;
-        pos_y_ += world_vy * dt;
+        // pos_x_ += world_vx * dt;
+        // pos_y_ += world_vy * dt;
 
-        if(going_left){
-            //RCLCPP_INFO(this->get_logger(), "going left: ");
+        // if(going_left){
+        //     //RCLCPP_INFO(this->get_logger(), "going left: ");
 
-            if(avg_speed>=0){
-                //RCLCPP_INFO(this->get_logger(), "going left forwards: ");
-                pos_theta_ += dt * std::abs(omega_z);
-            }else{
-                //RCLCPP_INFO(this->get_logger(), "going left backwards: ");
-                pos_theta_ -= dt * std::abs(omega_z);
-            }
-        }else if(going_right){
-            //RCLCPP_INFO(this->get_logger(), "going right: ");
+        //     if(avg_speed>=0){
+        //         //RCLCPP_INFO(this->get_logger(), "going left forwards: ");
+        //         pos_theta_ += dt * std::abs(omega_z);
+        //     }else{
+        //         //RCLCPP_INFO(this->get_logger(), "going left backwards: ");
+        //         pos_theta_ -= dt * std::abs(omega_z);
+        //     }
+        // }else if(going_right){
+        //     //RCLCPP_INFO(this->get_logger(), "going right: ");
 
-            if(avg_speed>=0){
-                //RCLCPP_INFO(this->get_logger(), "going right forwards: ");
-                pos_theta_ -= dt * std::abs(omega_z);
-            }else{
-                //RCLCPP_INFO(this->get_logger(), "going right backwards: ");
-                pos_theta_ += dt * std::abs(omega_z);
-            }
-        }else{ //in place rotation
-            pos_theta_ += dt * omega_z;
-        }
+        //     if(avg_speed>=0){
+        //         //RCLCPP_INFO(this->get_logger(), "going right forwards: ");
+        //         pos_theta_ -= dt * std::abs(omega_z);
+        //     }else{
+        //         //RCLCPP_INFO(this->get_logger(), "going right backwards: ");
+        //         pos_theta_ += dt * std::abs(omega_z);
+        //     }
+        // }else{ //in place rotation
+        //     pos_theta_ += dt * omega_z;
+        // }
 
-        //normalize [-pi, pi]
-        if (pos_theta_ > M_PI) {
-            pos_theta_ -= 2 * M_PI;
-        } else if (pos_theta_ < -M_PI) {
-            pos_theta_ += 2 * M_PI;
-        }
+        // //normalize [-pi, pi]
+        // if (pos_theta_ > M_PI) {
+        //     pos_theta_ -= 2 * M_PI;
+        // } else if (pos_theta_ < -M_PI) {
+        //     pos_theta_ += 2 * M_PI;
+        // }
 
         //RCLCPP_INFO(this->get_logger(), "yaw wheel odom: %f", pos_theta_ *180/M_PI);
 
@@ -305,7 +381,7 @@ private:
         odom.twist.twist.linear.y = v_y;
         odom.twist.twist.angular.z = omega_z;
 
-        double yaw_uncertainty = 0.6 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
+        double yaw_uncertainty = 0.1 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
         //RCLCPP_INFO(this->get_logger(), "yaw cov: %f", yaw_uncertainty);
 
 
@@ -339,6 +415,7 @@ private:
     }
 
     rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr subscription_;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     Eigen::VectorXd wheel_speeds_;
     Eigen::VectorXd wheel_angles_;
@@ -346,9 +423,14 @@ private:
     rclcpp::Time prev_time_;
 };
 
-int main(int argc, char *argv[]) {
-    rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<ForwardKinematicsNode>());
-    rclcpp::shutdown();
-    return 0;
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  auto odom_node = std::make_shared<ForwardKinematicsNode>();
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(odom_node);
+  RCLCPP_INFO(odom_node->get_logger(), "Spinning odometry with MultiThreadedExecutor");
+  executor.spin();
+  rclcpp::shutdown();
+  return 0;
 }

@@ -53,7 +53,6 @@ class PoseEstimatorNode(Node):
 
         timer_period = 2.0  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.count = 0.0
 
         # Initial guess for optimization
         if initial_pose == 'start':
@@ -73,11 +72,11 @@ class PoseEstimatorNode(Node):
         # ...
         #the position is relative to the map frame which is initially the starting position of the rover.
         self.landmark_poses = [
-                (-1.08, 4.2),
-                (-5.13, -0.17),
-                (-2.24, 4.0),
-                (999999, 999999),
-                (999999, 999999),
+                (-0.15999, 1.63999),
+                (6.34235, -1.15088),
+                (12.5352, 0.51241),
+                (11.28846, 11.16958),
+                (2.93746, 6.18086),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -101,8 +100,7 @@ class PoseEstimatorNode(Node):
         odom_msg = Odometry()
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.header.frame_id = 'map'
-        # odom_msg.pose.pose.position = Point(self.x_estimate, self.y_estimate, 0.0)
-        #odom_msg.pose.pose.position = Point(x=self.count, y=self.count, z=0.0)
+
         odom_msg.pose.pose.position.x = self.x_estimate
         odom_msg.pose.pose.position.y = self.y_estimate
         odom_msg.pose.pose.position.z = 0.0
@@ -122,7 +120,6 @@ class PoseEstimatorNode(Node):
 
         # Publish the message
         self.publisher_.publish(odom_msg)
-        self.count += 0.1
 
         
     def listener_callback(self, msg):

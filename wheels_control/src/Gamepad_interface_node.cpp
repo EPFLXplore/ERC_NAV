@@ -17,6 +17,7 @@ Rewritting author:  Cyril Goffin
 #include <string>
 #include "wheels_control/utility.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -505,9 +506,15 @@ class GamepadInterface : public rclcpp::Node
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<GamepadInterface>());
+
+  auto gamepad_node = std::make_shared<GamepadInterface>();
+
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(gamepad_node);
+
+  RCLCPP_INFO(gamepad_node->get_logger(), "Spinning gamepad interface with MultiThreadedExecutor");
+  executor.spin();
 
   rclcpp::shutdown();
-
   return 0;
 }

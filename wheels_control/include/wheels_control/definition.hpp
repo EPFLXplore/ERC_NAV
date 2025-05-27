@@ -67,7 +67,7 @@
 #define PI_IN_INCR 16384
 
 #define WIDTH 0.75
-#define LENGTH 0.835
+#define LENGTH 0.87
 
 // #define ROTATION_TRANSLATION 0
 // #define CRABE 1

@@ -15,8 +15,8 @@ using namespace std;
 
 #define MAX_DRIVE_ACCEL 900   // [rpm/S] // default :   900
 #define MAX_DRIVE_DECEL 3000  // [rpm/s] // default :  3000
-#define MAX_STEER_VEL 6   // [rpm]   // default : 10000
-#define MAX_STEER_ACCEL 30 // [rpm/s] // default : 10000
+#define MAX_STEER_VEL 7   // [rpm]   // default : 10000
+#define MAX_STEER_ACCEL 20 // [rpm/s] // default : 10000
 
 #ifndef ROSCPP_ROS_H
 #define CONNECTION_CHECK                                                   \
