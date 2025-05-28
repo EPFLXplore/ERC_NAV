@@ -90,10 +90,10 @@ private:
         wheel_speeds_[2] = msg->velocity[2] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
         wheel_speeds_[3] = msg->velocity[3] * rpm_to_ms * gear_ratio;
 
-        RCLCPP_INFO(this->get_logger(), "front left m/S: %f", wheel_speeds_[0]);
-        RCLCPP_INFO(this->get_logger(), "front right m/S: %f", wheel_speeds_[1]);
-        RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[2]);
-        RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[3]);
+        // RCLCPP_INFO(this->get_logger(), "front left m/S: %f", wheel_speeds_[0]);
+        // RCLCPP_INFO(this->get_logger(), "front right m/S: %f", wheel_speeds_[1]);
+        // RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[2]);
+        // RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[3]);
 
         
         //in the definition.hpp file :
