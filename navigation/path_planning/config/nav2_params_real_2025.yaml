@@ -3,11 +3,11 @@ bt_navigator:
     use_sim_time: false
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /odometry/filtered 
+    odom_topic: fused_nav_ekf_odom 
     enable_groot_monitoring: true
     groot_zmq_publisher_port: 1666
     groot_zmq_server_port: 1667
-    #/odometry/filtered is the output from the local EKF
+    #/fused_nav_ekf_odom is the output from the local EKF
  
     # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
     # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
@@ -499,7 +499,7 @@ velocity_smoother:
     min_velocity: [-0.26, 0.0, -1.0]
     max_accel: [1.0, 0.0, 3.2]
     max_decel: [-2.0, 0.0, -3.2]
-    odom_topic: "odometry/filtered"
+    odom_topic: "fused_nav_ekf_odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0

@@ -15,6 +15,9 @@
 #include <cmath>
 #include "custom_msg/msg/motor_status.hpp"
 #include "vector"
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
 
 #define IDX_X    0
 #define IDX_Y    1
@@ -392,6 +395,8 @@ public:
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       "/fused_nav_ekf_odom", 10);
 
+    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+
     last_time_ = now();
     timer_ = create_wall_timer(
       std::chrono::milliseconds(10),
@@ -548,12 +553,31 @@ private:
     out.pose.covariance[COV_YAW] = ekf_->P(IDX_YAW,IDX_YAW);
 
     ekf_pub_->publish(out);
+
+
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    transform_stamped.header.stamp = now;
+    transform_stamped.header.frame_id = "odom";
+    transform_stamped.child_frame_id = "base_link";
+
+    transform_stamped.transform.translation.x = ekf_->x(IDX_X);
+    transform_stamped.transform.translation.y = ekf_->x(IDX_Y);
+    transform_stamped.transform.translation.z = 0.0;
+
+    qt.setRPY(0, 0, ekf_->x(IDX_YAW));
+    qt.normalize();
+    transform_stamped.transform.rotation = tf2::toMsg(qt);
+
+    tf_broadcaster_->sendTransform(transform_stamped);
+
+
   }
 
   std::shared_ptr<ExtendedKalmanFilter2D> ekf_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr wheel_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    ekf_pub_;
   rclcpp::TimerBase::SharedPtr                             timer_;
