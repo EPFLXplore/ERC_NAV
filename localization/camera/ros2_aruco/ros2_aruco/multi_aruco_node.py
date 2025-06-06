@@ -47,16 +47,34 @@ class MultiViewArucoNode(Node):
             self.declare_parameter("marker_size", .15)
 
         else:
+            
+            #NAV Realsense Cameras
 
             self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
-            # self.declare_parameter("camera_info_topic_1", '/NAV/camera_info_102122061110')
             self.declare_parameter("camera_frame_1", "left_realsense_camera_link")
 
             self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
-            # self.declare_parameter("camera_info_topic_2", '/NAV/camera_info_135322062945')
             self.declare_parameter("camera_frame_2", "right_realsense_camera_link")
 
-            # self.declare_parameter("marker_size", .125)
+            #CS Cameras
+            #topic names:
+            # /ROVER/feed_camera_cs_0
+            # /ROVER/feed_camera_cs_1
+            # /ROVER/feed_camera_cs_2
+            # /ROVER/feed_camera_cs_3
+
+            self.declare_parameter("image_topic_3", '/ROVER/feed_camera_cs_0')
+            self.declare_parameter("camera_frame_3", "CS_cam_0")
+
+            self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
+            self.declare_parameter("camera_frame_4", "CS_cam_1")
+
+            self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_2')
+            self.declare_parameter("camera_frame_5", "CS_cam_2")
+
+            self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
+            self.declare_parameter("camera_frame_6", "CS_cam_3")
+
             self.declare_parameter("marker_size", .144)
 
 
@@ -65,59 +83,65 @@ class MultiViewArucoNode(Node):
         self.marker_size = self.get_parameter("marker_size").get_parameter_value().double_value
         dictionary_id_name = self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
 
-        # Subscribers
-        self.image_sub_1 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_1").get_parameter_value().string_value)
-        self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value)
-
-        # Subsribers to camera info topic to get intrisic matrix and distortion
-        # self.call_cam_params_server()
-        # self.init_synchronizers_and_publishers()
-
-        # self.info_sub_1 = self.create_subscription(CameraInfo, 
-        #                                            self.get_parameter("camera_info_topic_1").get_parameter_value().string_value, 
-        #                                            self.info_callback_1, 
-        #                                            qos_profile_sensor_data)
-        # self.info_sub_2 = self.create_subscription(CameraInfo, 
-        #                                            self.get_parameter("camera_info_topic_2").get_parameter_value().string_value, 
-        #                                            self.info_callback_2, 
-        #                                            qos_profile_sensor_data)
+        # Subscribers for nav and CS cameras
+        self.image_sub_1 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_1").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        #CS cams:
+        #self.image_sub_3 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_3").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        #self.image_sub_4 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_4").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        #self.image_sub_5 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_5").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        #self.image_sub_6 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_6").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
 
         # For tf transforms
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # synchronized call back that processes two images at the same time, slop = windows of time for sync 0.3 before
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.5)
-        #self.ts.registerCallback(self.synced_callback)
+        # synchronized callback that processes images at the same time, slop = window of time for synced images
+        #self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2, self.image_sub_3, self.image_sub_4, self.image_sub_5, self.image_sub_6], queue_size=2, slop=0.05)
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=2, slop=0.05)
 
         # Publishers
         self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
         self.markers_pub = self.create_publisher(ArucoMarkers, 'aruco_markers', 10)
 
         self.bridge = CvBridge()
-        self.info_msg_1 = None
-        self.info_msg_2 = None
         self.intrinsic_mat_1 = None
         self.intrinsic_mat_2 = None
         self.distortion_1 = None
         self.distortion_2 = None
+        
+        #We assume all Logitech Brio 100 cameras have the same parameters because fuck this I am NOT measuring all parameters for all cameras
 
+        # Reprojection RMS error: 0.3174
+        # Camera matrix (fx,  0, cx;
+        #                 0, fy, cy;
+        #                 0,  0,  1):
+        # [[2.85166130e+03 0.00000000e+00 1.26999005e+03]
+        # [0.00000000e+00 2.84698625e+03 4.62916150e+02]
+        # [0.00000000e+00 0.00000000e+00 1.00000000e+00]] 
+
+        # Distortion coefficients [k1, k2, p1, p2, k3]:
+        # [0.04712347 1.61133451 0.00499591 0.03045891 3.26455985]
+
+        self.distortion_cs = np.array([0.04712347, 1.61133451, 0.00499591, 0.03045891, 3.26455985])
+        self.intrinsic_mat_cs = np.array(
+            [[2.85166130e+03, 0, 1.26999005e+03], [0, 2.84698625e+03, 4.62916150e+02], [0, 0, 1]]
+        )
         self.aruco_dictionary = cv2.aruco.Dictionary_get(cv2.aruco.__getattribute__(dictionary_id_name))
         self.aruco_parameters = cv2.aruco.DetectorParameters_create()
 
+        # Camera Intrinsics acquisition
+        self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
+        self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
         self.timer = self.create_timer(0.5, self.wait_for_cameras_to_start)
 
 
     def wait_for_cameras_to_start(self):
-        #self.get_logger().info("🔄 Waiting for both RealSense cameras to start...")
-
-        self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
-        self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
-
-        if not self.client_left.service_is_ready() or not self.client_right.service_is_ready():
-            self.get_logger().warn("Waiting for CameraParams services...")
+        if not (self.client_left.service_is_ready() and self.client_right.service_is_ready()):
+            self.get_logger().debug("Waiting for CameraParams services…")
             return
 
+        # stop retry timer once services become available
         self.timer.cancel()
 
         request_left = CameraParams.Request()
@@ -129,118 +153,52 @@ class MultiViewArucoNode(Node):
         future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
 
 
-
-
-    def call_cam_params_server(self):
-        """Create a service client for CameraParams and request data for both cameras"""
-        self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
-        self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
-
-        while not self.client_left.wait_for_service(1.0):
-            self.get_logger().warn("Waiting for CameraParams service (Left Camera)...")
-        while not self.client_right.wait_for_service(1.0):
-            self.get_logger().warn("Waiting for CameraParams service (Right Camera)...")
-
-        request_left = CameraParams.Request()
-        future_left = self.client_left.call_async(request_left)
-        future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
-
-        request_right = CameraParams.Request()
-        future_right = self.client_right.call_async(request_right)
-        future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
-
-
     def callback_cam_params(self, future, camera):
-        """
-        Process the CameraParams service response and store the parameters.
-        
-        Args:
-            future: The future result from the service call.
-            camera: "left" or "right" to differentiate which camera the response belongs to.
-        """
-        
         if self.params_initialized:
-            return  # Already initialized, ignore further responses
+            return  # Already good
         try:
             response = future.result()
-            # Sanity check: skip if fx/fy/cx/cy are zero or distortion is empty
-            if response.fx == 0 or response.fy == 0 or response.cx == 0 or response.cy == 0 or len(response.distortion_coefficients) == 0:
-                #self.get_logger().warn(f"❌ Invalid camera intrinsics received from {camera} camera! Retrying...")
-                self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
-                return
-
-            # Store distortion coefficients
-            distortion = np.array(response.distortion_coefficients)
-
-            # Construct intrinsic matrix
-            intrinsic_mat = np.array([[response.fx, 0, response.cx],
-                                    [0, response.fy, response.cy],
-                                    [0, 0, 1]])
-
-            # Store parameters based on camera
-            if camera == "left":
-                self.distortion_1 = distortion
-                self.intrinsic_mat_1 = intrinsic_mat
-                self.get_logger().info("Received CameraParams for Left Camera.")
-            else:
-                self.distortion_2 = distortion
-                self.intrinsic_mat_2 = intrinsic_mat
-                self.get_logger().info("Received CameraParams for Right Camera.")
-
-            self.get_logger().info(f"Intrinsic Matrix ({camera}):\n{intrinsic_mat}")
-            self.get_logger().info(f"Distortion Coefficients ({camera}): {distortion}")
-            self.cam_params_received[camera] = True
-
-
         except Exception as e:
             self.get_logger().error(f"Service call failed for {camera} camera: {e}")
+            return
+
+        if (
+            response.fx == 0
+            or response.fy == 0
+            or response.cx == 0
+            or response.cy == 0
+            or len(response.distortion_coefficients) == 0
+        ):
+            #self.get_logger().warn(f"Invalid intrinsics from {camera} camera – retrying…")
+            self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
+            return
+
+        distortion = np.array(response.distortion_coefficients)
+        intrinsic_mat = np.array(
+            [[response.fx, 0, response.cx], [0, response.fy, response.cy], [0, 0, 1]]
+        )
+
+        if camera == "left":
+            self.distortion_1 = distortion
+            self.intrinsic_mat_1 = intrinsic_mat
+        else:
+            self.distortion_2 = distortion
+            self.intrinsic_mat_2 = intrinsic_mat
+
+        self.cam_params_received[camera] = True
+        self.get_logger().info(f"Received intrinsics for {camera} camera.")
 
         if all(self.cam_params_received.values()) and not self.sync_started:
-            self.get_logger().info("✅ Both camera intrinsics received, starting synchronizer...")
+            self.get_logger().info("Both camera intrinsics received – starting synchroniser  AHHHHHH")
             self.ts.registerCallback(self.synced_callback)
             self.params_initialized = True
             self.sync_started = True
 
 
-
-    # def info_callback_1(self, info_msg):
-    #     self.info_msg_1 = info_msg
-    #     self.intrinsic_mat_1 = np.reshape(np.array(self.info_msg_1.k), (3, 3))
-    #     self.distortion_1 = np.array(self.info_msg_1.d)
-    #     self.destroy_subscription(self.info_sub_1)
-
-    # def info_callback_2(self, info_msg):
-    #     self.info_msg_2 = info_msg
-    #     self.intrinsic_mat_2 = np.reshape(np.array(self.info_msg_2.k), (3, 3))
-    #     self.distortion_2 = np.array(self.info_msg_2.d)
-    #     self.destroy_subscription(self.info_sub_2)
-
-
-    def init_synchronizers_and_publishers(self):
-        self.get_logger().info("🧩 Initializing image subscribers, synchronizer, and publishers...")
-
-        # Load topics and frames from parameters
-        image_topic_1 = self.get_parameter("image_topic_1").get_parameter_value().string_value
-        image_topic_2 = self.get_parameter("image_topic_2").get_parameter_value().string_value
-        self.camera_frame_1 = self.get_parameter("camera_frame_1").get_parameter_value().string_value
-        self.camera_frame_2 = self.get_parameter("camera_frame_2").get_parameter_value().string_value
-
-        # Reinitialize synchronized image subscribers
-        self.image_sub_1 = Subscriber(self, CompressedImage, image_topic_1)
-        self.image_sub_2 = Subscriber(self, CompressedImage, image_topic_2)
-
-        # Time synchronizer with a slop of 0.3 seconds
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=10, slop=0.3)
-        # self.ts.registerCallback(self.synced_callback)  #registered later in the callback_cam_params to make sure we start only if both cameras are started
-
-        # Publishers
-        self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
-        self.markers_pub = self.create_publisher(ArucoMarkers, 'aruco_markers', 10)
-
-        self.get_logger().info("✅ Synchronizer and publishers initialized.")
-
+    #def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6):
     def synced_callback(self, img_msg_1, img_msg_2):
-        #self.get_logger().info("Callback")
+
+        self.get_logger().warn("sycned callback 2 cams")
         
         if self.intrinsic_mat_1 is None or self.intrinsic_mat_2 is None:
             self.get_logger().warn("No camera info has been received!")
@@ -259,6 +217,10 @@ class MultiViewArucoNode(Node):
         # Populate the array of positions, by processing each image sequentially
         self.process_image(img_msg_1, self.intrinsic_mat_1, self.distortion_1, self.get_parameter("camera_frame_1").get_parameter_value().string_value, markers, pose_array)
         self.process_image(img_msg_2, self.intrinsic_mat_2, self.distortion_2, self.get_parameter("camera_frame_2").get_parameter_value().string_value, markers, pose_array)
+        # self.process_image(img_msg_3, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_3").get_parameter_value().string_value, markers, pose_array)
+        # self.process_image(img_msg_4, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_4").get_parameter_value().string_value, markers, pose_array)
+        # self.process_image(img_msg_5, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_5").get_parameter_value().string_value, markers, pose_array)
+        # self.process_image(img_msg_6, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_6").get_parameter_value().string_value, markers, pose_array)
 
         #self.get_logger().info("Publishing")
 
@@ -273,16 +235,24 @@ class MultiViewArucoNode(Node):
         marker_candidates = {}  # {marker_id: [(tvec, rot_matrix, yaw_deg)]}
         
         np_arr = np.frombuffer(img_msg.data, np.uint8)
-        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # Keep original detection method
+        cv_image = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)  # Keep original detection method
 
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
 
         if marker_ids is not None:
-            cv2.aruco.drawDetectedMarkers(cv_image, corners, marker_ids)
+
+            #cv2.aruco.drawDetectedMarkers(cv_image, corners, marker_ids)
             #cv2.imshow("Detected ArUco Markers", cv_image)
             #cv2.waitKey(1)  # Allow OpenCV window refresh
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
             self.get_logger().info(f"Markers detected: {marker_ids}")
+
+            # Transform position from camera frame to base_link frame
+            try:
+                transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
+            except tf2_ros.LookupException as ex:
+                self.get_logger().warn(f"Transform lookup failed (URDF probably isnt published lol): {ex}")
+                return
 
             all_markers = []  # Store all detected markers (ID, pose, yaw)
             distinct_ids = set()  # Track unique marker IDs
@@ -335,19 +305,20 @@ class MultiViewArucoNode(Node):
                 pose.position.x = adjusted_tvec[2]
                 pose.position.y = -adjusted_tvec[0]
                 pose.position.z = -adjusted_tvec[1]
+                
+                #The rotation matrix is the rotation from the camera to the aruco frame
+                #However we do not know how the arcuo frame is rotated with respect to the map frame so this isnt useful for pose estimation
+                
+                # quat = transformations.quaternion_from_matrix(rot_matrix)
+                # pose.orientation.x = quat[0]
+                # pose.orientation.y = quat[1]
+                # pose.orientation.z = quat[2]
+                # pose.orientation.w = quat[3]
 
-                quat = transformations.quaternion_from_matrix(rot_matrix)
-                pose.orientation.x = quat[0]
-                pose.orientation.y = quat[1]
-                pose.orientation.z = quat[2]
-                pose.orientation.w = quat[3]
-
-                # Transform position from camera frame to base_link frame
                 try:
-                    transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
                     pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
-                except tf2_ros.LookupException as ex:
-                    self.get_logger().warn(f"Transform lookup failed: {ex}")
+                except  tf2_ros.LookupException as ex:
+                    self.get_logger().warn(f"TF transform failed: {ex}")
                     return
 
                 # **ERC ID Mapping Logic (Preserved)**
@@ -363,116 +334,6 @@ class MultiViewArucoNode(Node):
         
 
 ########################################################################
-
-    # def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
-        
-    #     aruco_candidates = {}
-    #     # cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='mono8')
-    #     np_arr = np.frombuffer(img_msg.data, np.uint8)
-    #     cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR) #change to grayscale if performance is ass
-    #     corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
-        
-
-    #     if marker_ids is not None:
-
-    #         rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
-    #         self.get_logger().info(f"markers detect: {marker_ids}")
-    #         for i, marker_id in enumerate(marker_ids):
-
-
-    #             pose = Pose()
-    #             # pose.position.x = tvecs[i][0][2]
-    #             # self.get_logger().info(f"x: {pose.position.x}")
-    #             # pose.position.y = -tvecs[i][0][0]
-    #             # self.get_logger().info(f"y: {pose.position.y}")
-    #             # pose.position.z = -tvecs[i][0][1]
-
-    #             rot_matrix = np.eye(4)
-    #             rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
-
-
-    #             sy = math.sqrt(rot_matrix[0, 0]**2 + rot_matrix[1, 0]**2)
-    #             if sy < 1e-6:  # Prevent division by zero
-    #                 roll = math.atan2(-rot_matrix[1, 2], rot_matrix[1, 1])
-    #                 pitch = math.atan2(-rot_matrix[2, 0], sy)
-    #                 yaw = 0  # Gimbal lock case
-    #             else:
-    #                 roll = math.atan2(rot_matrix[2, 1], rot_matrix[2, 2])
-    #                 pitch = math.atan2(-rot_matrix[2, 0], sy)
-    #                 yaw = math.atan2(rot_matrix[1, 0], rot_matrix[0, 0])
-
-    #             yaw_deg = abs(math.degrees(yaw))  # Use absolute value to compare tilt
-    #             self.get_logger().info(f"Marker {marker_id} Yaw: {yaw_deg:.2f} degrees")
-
-    #             if marker_id in marker_candidates: #if it already exists
-    #                 prev_pose, prev_yaw = marker_candidates[marker_id]
-
-    #                 # Keep the marker with the lowest yaw angle (least distortion)
-    #                 if yaw_deg < prev_yaw:
-    #                     self.get_logger().info(f"Updating marker {marker_id} with better (lower) yaw angle: {yaw_deg:.2f} degrees")
-    #                     marker_candidates[marker_id] = (pose, yaw_deg)
-    #                 else:
-    #                     self.get_logger().info(f"Marker {marker_id} discarded due to higher yaw: {yaw_deg:.2f} degrees")
-    #             else:
-    #                 marker_candidates[marker_id] = (pose, yaw_deg)
-
-    #             face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
-    #             adjusted_tvec = tvecs[i][0] + rot_matrix[0:3, 0:3] @ face_to_center_offset
-                
-    #             #in ros2 frame
-    #             pose.position.x = adjusted_tvec[2]
-    #             pose.position.y = -adjusted_tvec[0]
-    #             pose.position.z = -adjusted_tvec[1]
-    #             self.get_logger().info(f"x: {pose.position.x}")
-    #             self.get_logger().info(f"y: {pose.position.y}")
-
-    #             quat = transformations.quaternion_from_matrix(rot_matrix)
-
-    #             pose.orientation.x = quat[0]
-    #             pose.orientation.y = quat[1]
-    #             pose.orientation.z = quat[2]
-    #             pose.orientation.w = quat[3]
-
-    #             # transform position from camera frame to base_link frame
-    #             try:
-    #                 transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
-    #                 pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
-    #             except tf2_ros.LookupException as ex:
-    #                 self.get_logger().warn(f"Transform lookup failed: {ex}")
-    #                 return
-
-    #             pose_array.poses.append(pose)
-    #             markers.poses.append(pose)
-    #             #self.get_logger().info(f"marker ID : {marker_id}")
-    #             erc_to_index = lambda erc_id: erc_id - 51 if 51 <= erc_id <= 65 else None
-    #             aruco_index = erc_to_index(marker_id[0])
-    #             self.get_logger().info(f"detect idndex: {aruco_index}")
-                
-    #             if aruco_index is not None:
-    #                 markers.marker_ids.append(aruco_index)
-    #             #aruco markers number map:
-    #             #erc nbr - aruco id
-    #             #1  - 51
-    #             #2  - 52
-    #             #3  - 53
-    #             #4  - 54
-    #             #5  - 55
-    #             #6  - 56
-    #             #7  - 57
-    #             #8  - 58
-    #             #9  - 59
-    #             #10 - 60
-    #             #11 - 61
-    #             #12 - 62
-    #             #13 - 63
-    #             #14 - 64
-    #             #15 - 65
-                
-    #     else:
-    #         #self.get_logger().info("NO MARKER DETECTED ")
-    #         return
-
-
 
             
 

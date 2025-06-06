@@ -30,8 +30,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Use homing",
     )
 
+    default_pub_urdf = "true"
+    pub_urdf_arg = DeclareLaunchArgument(
+        "pub_urdf",
+        default_value=default_pub_urdf,
+        description="Publish the URDF via the robot state publisher"
+    )
+
     motor_cmds = LaunchConfiguration("motor_cmds", default=default_motor_cmds)
     homing = LaunchConfiguration("homing", default=default_homing)
+    publish_urdf = LaunchConfiguration("pub_urdf", default=default_pub_urdf)
+    
 
     # ------------- Launch Nodes -------------
     cs_interface = launch_ros.actions.Node(
@@ -117,7 +126,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     description_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
             os.path.join(FindPackageShare("xplore_description").find("xplore_description"), "launch", "xplore_real.launch.py")
-        )
+        ),
+        condition=IfCondition(publish_urdf)
     )
 
     # ------------- Nodes to Start AFTER Ouster is Ready -------------
@@ -176,7 +186,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     delayed_launch = TimerAction(
         period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
-            LogInfo(msg="Ouster started! Launching dependent nodes..."),
+            LogInfo(msg="Ouster Driver started! Launching dependent nodes..."),
             #liorf_launch,
             #imu_filter_node,
             #imu_madgwick_filter,
@@ -191,28 +201,28 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     delayed_aruco_launch = TimerAction(
         period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
-            LogInfo(msg="Cameras started! Launching dependent nodes..."),
-            #aruco_launch
+            LogInfo(msg="Cameras started! Launching aruco nodes..."),
+            aruco_launch
         ]
     )
-
 
 
     return [
         motor_cmds_arg,
         homing_arg,
+        pub_urdf_arg,
         cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        #description_launch,
+        description_launch,
         wheel_odom_node,
-        #ouster_launch,
+        ouster_launch,
         delayed_launch,
         #odom_preprocessor,
         nav_cameras_launch,
-        #delayed_aruco_launch
+        delayed_aruco_launch
     ]
 
 def generate_launch_description():
