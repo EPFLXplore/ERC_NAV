@@ -56,6 +56,7 @@ docker run -it \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
+    -v /run/jtop.sock:/run/jtop.sock \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_jetson_home_volume:/home/xplore \
     -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \

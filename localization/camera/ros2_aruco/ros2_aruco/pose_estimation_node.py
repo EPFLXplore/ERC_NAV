@@ -168,7 +168,7 @@ class PoseEstimatorNode(Node):
             yaw_diff = angle_map - angle_rover
             yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
             yaw_offsets.append(yaw_diff)
-            self.get_logger().info(f"--> Yaw (deg): {yaw_diff:.3f} for ids {id1}-{id2}")
+            self.get_logger().info(f"--> Yaw (deg): {(yaw_diff*180/3.141592):.3f} for ids [{id1}-{id2}]")
 
         
         if len(yaw_offsets) > 0:

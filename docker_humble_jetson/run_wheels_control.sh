@@ -58,6 +58,7 @@ if [ "$container_status" == "false" ]; then
         -v $XAUTH:$XAUTH \
         -v /run/user/1000/at-spi:/run/user/1000/at-spi \
         -v /dev:/dev \
+        -v /run/jtop.sock:/run/jtop.sock \
         -v $parent_dir:/home/$USERNAME/dev_ws/src \
         -v nav_humble_jetson_home_volume:/home/$USERNAME \
         --add-host=os-122140001125.local:169.254.55.220 \

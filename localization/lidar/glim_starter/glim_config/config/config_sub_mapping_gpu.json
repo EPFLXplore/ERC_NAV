@@ -30,7 +30,7 @@
   "sub_mapping": {
     "so_name": "libsub_mapping.so",
     // General settings
-    "enable_imu": false,
+    "enable_imu": true,
     "enable_optimization": true,
     // Keyframe update strategy
     "max_num_keyframes": 15,

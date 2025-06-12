@@ -183,6 +183,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output='screen',
     )
 
+    custom_local_ekf_node = launch_ros.actions.Node(
+        package='local_nav_ekf',
+        executable='nav_ekf_node',
+        name='nav_custom_ekf',
+        output='screen',
+    )
+
+    olive_imu_restamp_node = launch_ros.actions.Node(
+        package='olive_imu_restamper',
+        executable='olive_imu_restamper_node',
+        name='olive_imu_restamper_node',
+        output='screen',
+    )
+
     delayed_launch = TimerAction(
         period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
         actions=[
@@ -205,6 +219,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             aruco_launch
         ]
     )
+    
+    jetson_stats = launch_ros.actions.Node(
+        package="jetson_stats",
+        executable="launch_stats"
+    )
 
 
     return [
@@ -217,12 +236,15 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         displacement_cmds_node,
         motor_cmds_node,
         description_launch,
+        olive_imu_restamp_node,
         wheel_odom_node,
+        custom_local_ekf_node,
         ouster_launch,
-        delayed_launch,
+        # delayed_launch,
         #odom_preprocessor,
         nav_cameras_launch,
-        delayed_aruco_launch
+        #delayed_aruco_launch,
+        jetson_stats
     ]
 
 def generate_launch_description():

@@ -44,10 +44,12 @@
   */
   "sensors": {
     // IMU config
-    "imu_acc_noise": 0.1,
-    "imu_gyro_noise": 0.1,
-    "imu_int_noise": 0.5,
-    "imu_bias_noise": 1e-3,
+    // accelerometer noise density [m/s²/sqrtHz] from datasheet 160ug/sqrtHz
+    // gyroscope noise density [rad/s /sqrtHz]  from dataseet 0.008°/s/sqrtHz
+    "imu_acc_noise": 0.00157,
+    "imu_gyro_noise": 0.0001396,
+    "imu_int_noise": 0.00157,
+    "imu_bias_noise": 0.0001,
     // LiDAR config
     "global_shutter_lidar": false,
     "T_lidar_imu": [

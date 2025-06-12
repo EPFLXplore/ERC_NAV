@@ -39,7 +39,7 @@ def generate_launch_description():
                 {'odom_topic': '/odom_glim_repub'},
                 {'odom_frame_id': 'odom'},
                 {'child_frame_id': 'base_link'},
-                {'lowpass_cutoff': 5.0},  # Hz
+                {'lowpass_cutoff': 15.0},  # Hz
                 {'position_covariance': [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.1]},
                 {'orientation_covariance': [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04]}
             ]

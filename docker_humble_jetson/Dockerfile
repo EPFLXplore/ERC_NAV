@@ -139,6 +139,9 @@ RUN /etc/init.d/udev restart
 
 USER $USERNAME
 
+# sudo is required for this package (documentation)
+RUN sudo pip install -U jetson-stats
+
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src
 

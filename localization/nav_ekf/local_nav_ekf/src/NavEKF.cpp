@@ -375,7 +375,7 @@ public:
     call_trigger(zero_pose_client_, "setZeroPose");
 
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-      "/olive/imu/id001/ahrs", 10,
+      "/olive/imu/id001/ahrs/restamped", 10,
       std::bind(&NavEKFNode::imu_callback, this, std::placeholders::_1));
 
     // odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
