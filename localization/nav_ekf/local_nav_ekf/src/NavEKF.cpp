@@ -526,47 +526,50 @@ private:
   }
 
   void aruco_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg){
+    const auto &cov = msg->pose.covariance;
+    bool bad_xy  = (cov[COV_XX]  > 100.0 || cov[COV_YY]  > 100.0);
+    bool bad_yaw = (cov[COV_YAW] > 100.0);
 
-    //map pose given by the ros2_aruco package
+    /*— rover pose in MAP Frame —*/
+    double x_map = msg->pose.pose.position.x;
+    double y_map = msg->pose.pose.position.y;
+
     tf2::Quaternion q_map;
     tf2::fromMsg(msg->pose.pose.orientation, q_map);
     double roll_map, pitch_map, yaw_map;
     tf2::Matrix3x3(q_map).getRPY(roll_map, pitch_map, yaw_map);
 
-    double x_map = msg->pose.pose.position.x;
-    double y_map = msg->pose.pose.position.y;
+    /*— Build map→base and odom→base TFs —*/
+    tf2::Transform T_map_base, T_odom_base;
 
-    //current EKF pose in odom frame
+    T_map_base.setOrigin( tf2::Vector3(x_map, y_map, 0.0) );
+    T_map_base.setRotation( q_map );
+
+    T_odom_base.setOrigin( tf2::Vector3(ekf_->x(IDX_X), ekf_->x(IDX_Y), 0.0) );
     tf2::Quaternion q_odom;
     q_odom.setRPY(0.0, 0.0, ekf_->x(IDX_YAW));
+    T_odom_base.setRotation( q_odom );
 
-    //calculate map --> base
-    tf2::Transform T_map_base, T_odom_base;
-    T_map_base.setOrigin({x_map, y_map, 0.0});
-    T_map_base.setRotation({q_map});
-
-    //calculate odom --> base
-    T_odom_base.setOrigin({ekf_->x(IDX_X), ekf_->x(IDX_Y), 0.0});
-    T_odom_base.setRotation(q_odom);
-
-    //calculate map --> odom by doing map-->base * base-> odom
+    //we do map->base * base->odom = map->odom
     map_to_odom_ = T_map_base * T_odom_base.inverse();
     map_to_odom_valid = true;
 
-    // snap EKF pose
-    if (!initialized_pose_from_aruco) {
-        ekf_->x(IDX_X)   = x_map;
-        ekf_->x(IDX_Y)   = y_map;
-        ekf_->x(IDX_YAW) = ExtendedKalmanFilter2D::normalize_angle(yaw_map);
-        initialized_pose_from_aruco = true;
+    /*— Snap EKF pose once (all variances must be good) —*/
+    if (!initialized_pose_from_aruco && !bad_xy && !bad_yaw) {
+      ekf_->x(IDX_X)   = x_map;
+      ekf_->x(IDX_Y)   = y_map;
+      ekf_->x(IDX_YAW) = ExtendedKalmanFilter2D::normalize_angle(yaw_map);
+      initialized_pose_from_aruco = true;
     }
 
-    ekf_->R_xy  << 1e-4, 0.0,
-                  0.0 , 1e-4;
-    ekf_->R_yaw  = 1e-4;
-    ekf_->updatePosition(x_map, y_map);
-    ekf_->updateYaw(yaw_map, ekf_->R_yaw);
+    /*— Set measurement variances —*/
+    ekf_->R_xy  <<  cov[COV_XX], 0.0,
+                  0.0,          cov[COV_YY];
+    double yaw_var = cov[COV_YAW];
 
+    /*— Fuse into EKF —*/
+    if (!bad_xy)   ekf_->updatePosition(x_map, y_map);
+    if (!bad_yaw)  ekf_->updateYaw(yaw_map, yaw_var);
   }
 
   void timer_callback() {
