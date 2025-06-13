@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from ros2_aruco_interfaces.msg import ArucoMarkers
-from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion, Point
+from geometry_msgs.msg import Quaternion
 from nav_msgs.msg import Odometry
 import math
 from scipy.optimize import least_squares
@@ -11,22 +11,22 @@ from itertools import combinations
 from scipy.spatial.transform import Rotation as R
 
 import numpy as np
-from scipy import stats
 
-def euclidean_distance(x1, y1, x2, y2):
-    p1 = np.array((x1 ,y1))
-    p2 = np.array((x2, y2))
-    return np.linalg.norm(p1-p2)
+
+# def euclidean_distance(x1, y1, x2, y2):
+#     p1 = np.array((x1 ,y1))
+#     p2 = np.array((x2, y2))
+#     return np.linalg.norm(p1-p2)
     
-# Mean Square Error
-# locations: [ (lat1, long1), ... ]
-# distances: [ distance1, ... ]
-def mse(x, locations, distances):
-    mse = 0.0
-    for location, distance in zip(locations, distances):
-        distance_calculated = euclidean_distance(x[0], x[1], location[0], location[1])
-        mse += math.pow(distance_calculated - distance, 2.0)
-    return mse / len(distances)
+# # Mean Square Error
+# # locations: [ (lat1, long1), ... ]
+# # distances: [ distance1, ... ]
+# def mse(x, locations, distances):
+#     mse = 0.0
+#     for location, distance in zip(locations, distances):
+#         distance_calculated = euclidean_distance(x[0], x[1], location[0], location[1])
+#         mse += math.pow(distance_calculated - distance, 2.0)
+#     return mse / len(distances)
 
 def yaw_to_quat(yaw):
     quat = R.from_euler('z', yaw).as_quat()  # x, y, z, w
@@ -36,19 +36,11 @@ class PoseEstimatorNode(Node):
     def __init__(self):
         super().__init__('pose_estimator_node')
 
-        self.declare_parameter('sim', False) 
-        self.declare_parameter('initial_pose', 'start') 
-        self.declare_parameter('x', 0.0) 
-        self.declare_parameter('y', 0.0) 
-
-        sim = self.get_parameter('sim').get_parameter_value().bool_value 
-        initial_pose = self.get_parameter('initial_pose').get_parameter_value().string_value 
-        x = self.get_parameter('x').get_parameter_value().double_value 
-        y = self.get_parameter('y').get_parameter_value().double_value 
-
         self.x_estimate = 0.0
         self.y_estimate = 0.0
         self.yaw_estimate = 0.0
+        self.triangulated_new_pose = False
+        self.measured_new_yaw = False
 
         self.subscription = self.create_subscription(
             ArucoMarkers,
@@ -56,23 +48,14 @@ class PoseEstimatorNode(Node):
             self.listener_callback,
             10)
         self.publisher_ = self.create_publisher(Odometry, 'aruco_odom', 10)
-        self.sim = sim
         self.subscription 
 
         # timer_period = 2.0  # seconds
         # self.timer = self.create_timer(timer_period, self.timer_callback)
 
         # Initial guess for optimization
-        if initial_pose == 'start':
-            self.initial_estimate = np.array([0.0, 0.0])
-        elif initial_pose == 'known':
-            self.initial_estimate = np.array([x, y])
-        else: # by default
-            self.initial_estimate = np.array([0.0, 0.0])
+        self.initial_estimate = np.array([0.0, 0.0])
 
-
-        #if self.sim: #fuck the simulation
-            # known absolute positions of landmarks (only x,y)
 
 
         # ArUco ID 51 → index 0
@@ -97,40 +80,10 @@ class PoseEstimatorNode(Node):
                 (999999, 999999),
                 (999999, 999999),
             ]
-            
-        # else: 
-        #     self.landmark_poses=[(63., 21.33), 
-        #             (63., -2.37),
-        #             (63., -21.33)]
-
-
-    # def timer_callback(self):
-
-    #     odom_msg = Odometry()
-    #     odom_msg.header.stamp = self.get_clock().now().to_msg()
-    #     odom_msg.header.frame_id = 'map'
-
-    #     odom_msg.pose.pose.position.x = self.x_estimate
-    #     odom_msg.pose.pose.position.y = self.y_estimate
-    #     odom_msg.pose.pose.position.z = 0.0
-
-    #     odom_msg.pose.pose.orientation = yaw_to_quat(self.yaw_estimate)
-    #     odom_msg.pose.covariance = [0.00001] * 36
-
-    #     # Publish the message
-    #     self.publisher_.publish(odom_msg)
-
         
     def listener_callback(self, msg):
         
         marker_ids = list(msg.marker_ids)
-        #print(f"marker ids pose est: {marker_ids}, msg: {msg.marker_ids}")
-
-        base_pose_msg = PoseWithCovarianceStamped()
-        base_pose_msg.header.stamp = self.get_clock().now().to_msg()
-        #base_pose_msg.header.frame_id = 'map'   #put me back later
-        base_pose_msg.header.frame_id = 'map'
-
 
         # Estimate the yaw using the detected arucos
 
@@ -140,6 +93,13 @@ class PoseEstimatorNode(Node):
 
         aruco_idx_pairs = list(combinations(range(len(marker_ids)), 2))
         yaw_offsets = [] #store the offsets of the rover odometry yaw compared to map yaw
+
+
+        #validate markers
+        valid_markers = []
+        for idx, pose in zip(msg.marker_ids, msg.poses):
+            if idx < len(self.landmark_poses) and self.landmark_poses[idx][0] < 9000:
+                valid_markers.append((idx, pose))
 
         for i, j in aruco_idx_pairs:
             id1 = marker_ids[i]
@@ -175,15 +135,14 @@ class PoseEstimatorNode(Node):
             avg_yaw = np.arctan2(np.mean(np.sin(yaw_offsets)), np.mean(np.cos(yaw_offsets)))
             self.get_logger().info(f"--> Estimated Yaw (deg): {(avg_yaw*180/3.141592):.3f}")
             self.yaw_estimate = avg_yaw
+            self.measured_new_yaw = True
 
 
         # Need 3 landmarks to triangulate pose
-        if len(marker_ids)>=3:
+        if len(valid_markers)>=3:
 
-            #self.get_logger().info('Estimating')
-
-            distance_estimates = [np.linalg.norm([pose.position.x, pose.position.y]) for pose in msg.poses]
-            landmarks_ordered = [self.landmark_poses[i] for i in marker_ids]
+            distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
+            landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
             base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'lm', args=(landmarks_ordered, distance_estimates))
 
@@ -195,6 +154,7 @@ class PoseEstimatorNode(Node):
 
             self.get_logger().info(f"--> X: {self.x_estimate}")
             self.get_logger().info(f"--> Y: {self.y_estimate}")
+            self.triangulated_new_pose = True
 
         # else:
         #     self.get_logger().info('Not enough markers detected')
@@ -204,11 +164,35 @@ class PoseEstimatorNode(Node):
         odom_msg = Odometry()
         odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.header.frame_id = 'map'
+        odom_msg.child_frame_id = 'base_link'
+        cov = [0.]*36
+
         odom_msg.pose.pose.position.x = self.x_estimate
         odom_msg.pose.pose.position.y = self.y_estimate
         odom_msg.pose.pose.orientation = yaw_to_quat(self.yaw_estimate)
-        odom_msg.pose.covariance = [0.002] * 36
 
+        if self.triangulated_new_pose:
+            cov[0] = cov[7] = 0.005    # var(x), var(y)
+            self.triangulated_new_pose = False
+        else:
+            #set very high covariance for x and y since we were not able to triangulate
+            cov[0] = cov[7] = 1e6
+        
+        if not hasattr(self, 'last_orientation'):
+            self.last_orientation = Quaternion(w=1.0)  # identity
+
+        if self.measured_new_yaw:
+            q = yaw_to_quat(self.yaw_estimate)
+            self.last_orientation = q
+            cov[35] = 0.002
+            self.measured_new_yaw = False
+        else:
+            q = self.last_orientation
+            cov[35] = 1e6
+        odom_msg.pose.pose.orientation = q
+
+                    
+        odom_msg.pose.covariance = cov
         self.publisher_.publish(odom_msg)
 
 

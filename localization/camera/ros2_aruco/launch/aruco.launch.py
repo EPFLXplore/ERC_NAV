@@ -13,11 +13,7 @@ def generate_launch_description():
     rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
     # xacro_file_path = os.path.join(package_dir, 'urdf', 'simple_dual_camera.urdf.xacro')
 
-    sim = LaunchConfiguration('sim', default='false')
     multiview = LaunchConfiguration('multiview', default='true')
-    initial_pose = LaunchConfiguration('initial_pose', default='start')
-    x = LaunchConfiguration('x', default='0.0')
-    y = LaunchConfiguration('y', default='0.0')
     rviz = LaunchConfiguration('rviz', default='false')
     # description = LaunchConfiguration('description', default='true')
 
@@ -48,7 +44,6 @@ def generate_launch_description():
             executable='pose_estimation_node',
             name='pose_estimation_node',
             output='screen',
-            parameters=[{'sim': sim, 'initial_pose': initial_pose, 'x': x, 'y': y}]
         ),
 
         Node(

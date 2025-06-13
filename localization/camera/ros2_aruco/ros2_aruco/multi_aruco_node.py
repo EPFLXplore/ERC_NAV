@@ -24,6 +24,7 @@ class MultiViewArucoNode(Node):
 
         #half of the aruco box depth
         self.aruco_box_offset = 0.125
+        self.max_aruco_dist = 6.5 #meters
 
         self.cam_params_received = {"left": False, "right": False}
         self.params_initialized = False
@@ -259,6 +260,13 @@ class MultiViewArucoNode(Node):
 
             # Step 1: Store all detections per ID
             for i, marker_id in enumerate(marker_ids):
+
+                # ignore marker if too far away => measurement is imprecise
+                tvec_ar = tvecs[i][0]
+                if np.linalg.norm(tvec_ar) > self.max_aruco_dist:
+                    self.get_logger().debug(f"Ignoring marker {marker_id[0]} at {np.linalg.norm(tvec):.2f} m (>{max_distance} m)")
+                    continue
+
                 marker_id = marker_id[0]  # Extract integer ID
                 distinct_ids.add(marker_id)  # Track distinct marker IDs
 

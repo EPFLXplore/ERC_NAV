@@ -1,6 +1,6 @@
 
 // Extended Kalman Filter for Navigation
-// Fusing Wheel Odometry, IMU (9-axis), (and LiDAR-based odometry (not for now))
+// Fusing Wheel Odometry, IMU Orientation (OlixSense X1 9-axis), and ArUco Pose estimation 
 // author: Arno Laurie
 
 
@@ -17,6 +17,7 @@
 #include "vector"
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <tf2_ros/transform_broadcaster.h> //used to get the map to odom transform, used when receiving aruco map pose
 
 
 #define IDX_X    0
@@ -392,6 +393,10 @@ public:
       "/wheel_odom", 10,
       std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
 
+    aruco_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/aruco_odom", 10,
+      std::bind(&NavEKFNode::aruco_odom_callback, this, std::placeholders::_1));
+
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       "/fused_nav_ekf_odom", 10);
 
@@ -520,6 +525,50 @@ private:
     vel_bl_ = wheel_speeds_[3];
   }
 
+  void aruco_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg){
+
+    //map pose given by the ros2_aruco package
+    tf2::Quaternion q_map;
+    tf2::fromMsg(msg->pose.pose.orientation, q_map);
+    double roll_map, pitch_map, yaw_map;
+    tf2::Matrix3x3(q_map).getRPY(roll_map, pitch_map, yaw_map);
+
+    double x_map = msg->pose.pose.position.x;
+    double y_map = msg->pose.pose.position.y;
+
+    //current EKF pose in odom frame
+    tf2::Quaternion q_odom;
+    q_odom.setRPY(0.0, 0.0, ekf_->x(IDX_YAW));
+
+    //calculate map --> base
+    tf2::Transform T_map_base, T_odom_base;
+    T_map_base.setOrigin({x_map, y_map, 0.0});
+    T_map_base.setRotation({q_map});
+
+    //calculate odom --> base
+    T_odom_base.setOrigin({ekf_->x(IDX_X), ekf_->x(IDX_Y), 0.0});
+    T_odom_base.setRotation(q_odom);
+
+    //calculate map --> odom by doing map-->base * base-> odom
+    map_to_odom_ = T_map_base * T_odom_base.inverse();
+    map_to_odom_valid = true;
+
+    // snap EKF pose
+    if (!initialized_pose_from_aruco) {
+        ekf_->x(IDX_X)   = x_map;
+        ekf_->x(IDX_Y)   = y_map;
+        ekf_->x(IDX_YAW) = ExtendedKalmanFilter2D::normalize_angle(yaw_map);
+        initialized_pose_from_aruco = true;
+    }
+
+    ekf_->R_xy  << 1e-4, 0.0,
+                  0.0 , 1e-4;
+    ekf_->R_yaw  = 1e-4;
+    ekf_->updatePosition(x_map, y_map);
+    ekf_->updateYaw(yaw_map, ekf_->R_yaw);
+
+  }
+
   void timer_callback() {
     auto now = this->now();
     double dt = (now - last_time_).seconds();
@@ -554,7 +603,6 @@ private:
 
     ekf_pub_->publish(out);
 
-
     geometry_msgs::msg::TransformStamped transform_stamped;
     transform_stamped.header.stamp = now;
     transform_stamped.header.frame_id = "odom";
@@ -570,6 +618,23 @@ private:
 
     tf_broadcaster_->sendTransform(transform_stamped);
 
+    if(map_to_odom_valid){
+      geometry_msgs::msg::TransformStamped ts;
+      ts.header.stamp = now;
+      ts.header.frame_id = "map";
+      ts.child_frame_id = "odom";
+
+      tf2::Vector3 t = map_to_odom_.getOrigin();
+      tf2::Quaternion q = map_to_odom_.getRotation();
+
+      ts.transform.translation.x = t.x();
+      ts.transform.translation.y = t.y();
+      ts.transform.translation.z = 0.0;
+      ts.transform.rotation = tf2::toMsg(q);
+
+      tf_broadcaster_->sendTransform(ts);
+    }
+
 
   }
 
@@ -577,6 +642,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr wheel_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr aruco_sub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    ekf_pub_;
@@ -593,6 +659,10 @@ private:
   rclcpp::Time last_imu_stamp_;
 
   double steer_fr_, steer_br_, steer_fl_, steer_bl_, vel_fr_, vel_br_, vel_fl_, vel_bl_;
+
+  bool initialized_pose_from_aruco = false;
+  bool map_to_odom_valid = false;
+  tf2::Transform map_to_odom_;
 };
 
 int main(int argc, char **argv) {
