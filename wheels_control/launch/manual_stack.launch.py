@@ -82,12 +82,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_odometry_node",
     )
 
-    odom_preprocessor = launch_ros.actions.Node(
-        package="odom_preprocessor",
-        executable="odom_preprocessor",
-        name="odom_preprocessor",
-        output='screen',
-    )
+    # odom_preprocessor = launch_ros.actions.Node(
+    #     package="odom_preprocessor",
+    #     executable="odom_preprocessor",
+    #     name="odom_preprocessor",
+    #     output='screen',
+    # )
 
     # ------------- Ouster Launch File -------------
     ouster_launch = IncludeLaunchDescription(
@@ -106,14 +106,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
     # -........... liorf Launch File ---------------
-    liorf_launch = IncludeLaunchDescription(
-        launch.launch_description_sources.PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare("liorf").find("liorf"), "launch", "run_lio_sam_ouster.launch.py")
-        ),
-        launch_arguments={"params_file": os.path.join(
-            get_package_share_directory("liorf"), "config", "lio_sam_ouster.yaml"
-        )}.items(),
-    )
+    # liorf_launch = IncludeLaunchDescription(
+    #     launch.launch_description_sources.PythonLaunchDescriptionSource(
+    #         os.path.join(FindPackageShare("liorf").find("liorf"), "launch", "run_lio_sam_ouster.launch.py")
+    #     ),
+    #     launch_arguments={"params_file": os.path.join(
+    #         get_package_share_directory("liorf"), "config", "lio_sam_ouster.yaml"
+    #     )}.items(),
+    # )
 
     #----------- ArUco Launch File ---------
 
@@ -131,57 +131,57 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
     # ------------- Nodes to Start AFTER Ouster is Ready -------------
-    local_ekf_node = launch_ros.actions.Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='local_ekf_filter_node',
-        output='screen',
-        parameters=[local_ekf_file_path]
-    )
+    # local_ekf_node = launch_ros.actions.Node(
+    #     package='robot_localization',
+    #     executable='ekf_node',
+    #     name='local_ekf_filter_node',
+    #     output='screen',
+    #     parameters=[local_ekf_file_path]
+    # )
 
-    global_ekf_node = launch_ros.actions.Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='global_ekf_filter_node',
-        output='screen',
-        parameters=[global_ekf_file_path]
-    )
+    # global_ekf_node = launch_ros.actions.Node(
+    #     package='robot_localization',
+    #     executable='ekf_node',
+    #     name='global_ekf_filter_node',
+    #     output='screen',
+    #     parameters=[global_ekf_file_path]
+    # )
 
-    imu_filter_node = launch_ros.actions.Node(
-        package='ouster_imu_tester',
-        executable='ouster_imu_tester',
-        name='imu_filter',
-        output='screen'
-    )
+    # imu_filter_node = launch_ros.actions.Node(
+    #     package='ouster_imu_tester',
+    #     executable='ouster_imu_tester',
+    #     name='imu_filter',
+    #     output='screen'
+    # )
     
-    imu_madgwick_filter = launch_ros.actions.Node(
-        package='imu_filter_madgwick',
-        executable='imu_filter_madgwick_node',
-        name='ouster_madgwick_filter',
-        output='screen',
-        parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
-    )
+    # imu_madgwick_filter = launch_ros.actions.Node(
+    #     package='imu_filter_madgwick',
+    #     executable='imu_filter_madgwick_node',
+    #     name='ouster_madgwick_filter',
+    #     output='screen',
+    #     parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
+    # )
 
-    imu_waveshare_repub = launch_ros.actions.Node(
-        package='imu_madgwick',
-        executable='waveshare_reader',
-        name='waveshare_reader',
-        output='screen',
-    )
+    # imu_waveshare_repub = launch_ros.actions.Node(
+    #     package='imu_madgwick',
+    #     executable='waveshare_reader',
+    #     name='waveshare_reader',
+    #     output='screen',
+    # )
 
-    imu_covariance_modif_node = launch_ros.actions.Node(
-        package='imu_madgwick',
-        executable='imu_covariance_modifier',
-        name='imu_covariance_modifier_node',
-        output='screen',
-    )
+    # imu_covariance_modif_node = launch_ros.actions.Node(
+    #     package='imu_madgwick',
+    #     executable='imu_covariance_modifier',
+    #     name='imu_covariance_modifier_node',
+    #     output='screen',
+    # )
 
-    arduino_imu_pub = launch_ros.actions.Node(
-        package='imu_madgwick',
-        executable='arduino_imu_node',
-        name='arduino_imu_node',
-        output='screen',
-    )
+    # arduino_imu_pub = launch_ros.actions.Node(
+    #     package='imu_madgwick',
+    #     executable='arduino_imu_node',
+    #     name='arduino_imu_node',
+    #     output='screen',
+    # )
 
     custom_local_ekf_node = launch_ros.actions.Node(
         package='local_nav_ekf',
