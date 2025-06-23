@@ -41,8 +41,8 @@
     "acc_scale": 9.8,
     // TF config
     "imu_frame_id": "imu_link_glim",
-    "lidar_frame_id": "lidar_link_glim",
-    "base_frame_id": "base_link_glim",
+    "lidar_frame_id": "ST_Lidar_1",
+    "base_frame_id": "base_link",
     "odom_frame_id": "odom_glim",
     "map_frame_id": "map_glim",
     "publish_imu2lidar": false,
