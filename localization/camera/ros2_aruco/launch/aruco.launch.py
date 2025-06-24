@@ -26,7 +26,6 @@ def generate_launch_description():
             executable='multiview_aruco_node',
             name='aruco_node',
             output='screen',
-            parameters=[{'sim': sim}],
             condition=IfCondition(multiview)
         ),
 
@@ -35,7 +34,6 @@ def generate_launch_description():
             executable='aruco_node',
             name='aruco_node',
             output='screen',
-            parameters=[{'sim': sim}],
             condition=UnlessCondition(multiview)
         ),
 

@@ -32,51 +32,36 @@ class MultiViewArucoNode(Node):
         
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
-        self.declare_parameter('sim', False) 
-        sim = self.get_parameter('sim').get_parameter_value().bool_value  
-        
-        if sim:
-
-            self.declare_parameter("image_topic_1", '/oak_rgb/image_raw')
-            self.declare_parameter("camera_info_topic_1", '/oak_rgb/camera_info')
-            self.declare_parameter("camera_frame_1", "oak_camera_link")
-
-            self.declare_parameter("image_topic_2", '/intel_rgb/image_raw')
-            self.declare_parameter("camera_info_topic_2", '/intel_rgb/camera_info')
-            self.declare_parameter("camera_frame_2", "intel_camera_link")
-
-            self.declare_parameter("marker_size", .15)
-
-        else:
             
-            #NAV Realsense Cameras
+        #NAV Realsense Cameras
+        #camera nav1 : serial number 102122061110
+        self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
+        self.declare_parameter("camera_frame_1", "intel_realsense_D415_camera_top_right_1")
+        
+        #camera nav2: serial number 135322062945
+        self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
+        self.declare_parameter("camera_frame_2", "intel_realsense_D415_camera_top_left_1")
 
-            self.declare_parameter("image_topic_1", '/NAV/feed_camera_nav_1')
-            self.declare_parameter("camera_frame_1", "left_realsense_camera_link")
+        #CS Cameras
+        #topic names:
+        # /ROVER/feed_camera_cs_0
+        # /ROVER/feed_camera_cs_1
+        # /ROVER/feed_camera_cs_2
+        # /ROVER/feed_camera_cs_3
 
-            self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
-            self.declare_parameter("camera_frame_2", "right_realsense_camera_link")
+        self.declare_parameter("image_topic_3", '/ROVER/feed_camera_cs_0')
+        self.declare_parameter("camera_frame_3", "Logitech_Brio_100_top_right_1")
 
-            #CS Cameras
-            #topic names:
-            # /ROVER/feed_camera_cs_0
-            # /ROVER/feed_camera_cs_1
-            # /ROVER/feed_camera_cs_2
-            # /ROVER/feed_camera_cs_3
+        self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
+        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_top_left_1")
 
-            self.declare_parameter("image_topic_3", '/ROVER/feed_camera_cs_0')
-            self.declare_parameter("camera_frame_3", "CS_cam_0")
+        self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_2')
+        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_front_right_1")
 
-            self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
-            self.declare_parameter("camera_frame_4", "CS_cam_1")
+        self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
+        self.declare_parameter("camera_frame_6", "Logitech_Brio_100_front_left_1")
 
-            self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_2')
-            self.declare_parameter("camera_frame_5", "CS_cam_2")
-
-            self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
-            self.declare_parameter("camera_frame_6", "CS_cam_3")
-
-            self.declare_parameter("marker_size", .144)
+        self.declare_parameter("marker_size", .144)
 
 
         self.base_frame = "base_link"
@@ -187,7 +172,7 @@ class MultiViewArucoNode(Node):
             self.intrinsic_mat_2 = intrinsic_mat
 
         self.cam_params_received[camera] = True
-        self.get_logger().info(f"Received intrinsics for {camera} camera.")
+        #self.get_logger().info(f"Received intrinsics for {camera} camera.")
 
         if all(self.cam_params_received.values()) and not self.sync_started:
             self.get_logger().info("Both camera intrinsics received – starting synchroniser  AHHHHHH")
@@ -199,10 +184,10 @@ class MultiViewArucoNode(Node):
     #def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6):
     def synced_callback(self, img_msg_1, img_msg_2):
 
-        self.get_logger().warn("sycned callback 2 cams")
+        #self.get_logger().warn("sycned callback 2 cams")
         
         if self.intrinsic_mat_1 is None or self.intrinsic_mat_2 is None:
-            self.get_logger().warn("No camera info has been received!")
+            #self.get_logger().warn("No camera info has been received!")
             return
         
         markers = ArucoMarkers() # custom msg => ID + position
@@ -293,11 +278,11 @@ class MultiViewArucoNode(Node):
                     # Keep only the best (lowest yaw) detection per ID
                     marker_candidates[marker_id] = [marker_candidates[marker_id][0]]
 
-            else:
-                self.get_logger().info("Skipping yaw filtering (Exactly 2 distinct IDs)")
+            # else:
+            #     self.get_logger().info("Skipping yaw filtering (Exactly 2 distinct IDs)")
 
         else:
-            self.get_logger().info("No markers detected.")
+            # self.get_logger().info("No markers detected.")
             return
 
         # **Publish only the best markers (lowest yaw per ID)**
@@ -338,7 +323,7 @@ class MultiViewArucoNode(Node):
                     pose_array.poses.append(pose)
                     markers.poses.append(pose)
                     markers.marker_ids.append(aruco_index)
-                    self.get_logger().info(f"Publishing Marker ID {marker_id} (ERC Index {aruco_index})")
+                    # self.get_logger().info(f"Publishing Marker ID {marker_id} (ERC Index {aruco_index})")
         
 
 ########################################################################
