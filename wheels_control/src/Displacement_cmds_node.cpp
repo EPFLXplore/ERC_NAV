@@ -44,7 +44,7 @@ using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
-float speed_rover = 0.7; // initial value inside the kinematics model
+float speed_rover = 1.0; // initial value inside the kinematics model
 
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
@@ -58,16 +58,16 @@ _Float64 get_wheels_angle_inc_for_rotation()
   tan(angle of rotation) = width/length
   angle of rotation = arctan(length/width)
 
-  Given values for Kerby rover:
-          width = 736 mm
-          length = 833 mm
-          prediction of angle of rotation = 48.52 degrees
+  Measured values for Phoenyx:
+          width = 0.75m
+          length = 0.87m
+          prediction of angle of rotation = 49.236 degrees
   */
 
   _Float64 angle_of_rotation_radians = 0;
   _Float64 angle_of_rotation_increment = 0;
 
-  angle_of_rotation_radians = atan(WIDTH / LENGTH);
+  angle_of_rotation_radians = atan(LENGTH / WIDTH);
   angle_of_rotation_increment = (angle_of_rotation_radians * (pow(2, STEERING_RESOLUTION_BITS))) / (2 * M_PI);
 
   return angle_of_rotation_increment;
@@ -162,6 +162,12 @@ private:
   void callback_speed_rover(const std_msgs::msg::Float32::SharedPtr msg)
   {
     speed_rover = msg->data;
+    // Clamp the rover speed received from the CS between 0.8 and 1.5 m/s
+    if(speed_rover >= 1.5 ){
+      speed_rover = 1.5;
+    }else if(speed_rover <= 0.8){
+      speed_rover = 0.8;
+    }
     //log_info("reeived CS Speed" + std::to_string(speed_rover));
 
   }
@@ -178,7 +184,13 @@ private:
         r_z = -r_z;
       }
 
+      bool prev_crab_mode = crab_mode;
+      if(current_rover_state == ROVER_MODE::AUTO && fabs(v_x)<= 1e-5 && fabs(v_y) <= 1e-5 and fabs(r_z) >= 1e-5){
+        crab_mode = true;
+      }
+
       current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
+      crab_mode = prev_crab_mode;
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       //log_info("v_x displace" + std::to_string(v_x));
       current_motors_cmds = lateralKinematicModel.run(v_x, r_z);

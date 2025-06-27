@@ -3,7 +3,7 @@ pkg:    wheels_commands
 node:   NAV_gamepad_interface
 topics: 
         publish:    /NAV/cmd_vel_manual
-        subscribe:  /ROVER/NAV_gamepad 
+        subscribe:  /ROVER/NAV_gamepad, /NAV/NAV_mode
         
 Last updated:       22/11/2024
 Rewritting author:  Cyril Goffin
@@ -32,12 +32,12 @@ Rewritting author:  Cyril Goffin
 
 using namespace std::chrono_literals;
 
-const int windowSize = 30;
-const int windowSizeSteering = 50;
+const int windowSize = 15;
+const int windowSizeSteering = 15;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 static ROVER_MODE previous_rover_mode = ROVER_MODE::OFF;
-const double CMD_TIMEOUT = 0.4; //seconds
+const double CMD_TIMEOUT = 0.4; //seconds, the CS should be publishing at 30Hz = 0.3s
 
 //------------------------------------NODE DEFINITION---------------------------------------
 
@@ -65,7 +65,7 @@ class GamepadInterface : public rclcpp::Node
       
     }
 
-    double apply_deadzone(double value, double deadzone = 0.2){
+    double apply_deadzone(double value, double deadzone = 0.1){
       double abs_val = std::abs(value);
       if(abs_val < deadzone){
         return 0.0;
