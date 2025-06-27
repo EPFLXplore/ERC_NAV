@@ -28,10 +28,7 @@ endif()
 ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
-  path_planning/fake_odom_tf_publisher.py
-  path_planning/sim_map_publisher.py
-  path_planning/sim_odom_publisher.py
-  path_planning/odom_offset_node.py
+  path_planning/nav_waypoint_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

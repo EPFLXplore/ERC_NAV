@@ -231,7 +231,7 @@ class MultiViewArucoNode(Node):
             #cv2.imshow("Detected ArUco Markers", cv_image)
             #cv2.waitKey(1)  # Allow OpenCV window refresh
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
-            self.get_logger().info(f"Markers detected: {marker_ids}")
+            #self.get_logger().info(f"Markers detected: {marker_ids}")
 
             # Transform position from camera frame to base_link frame
             try:
@@ -249,7 +249,7 @@ class MultiViewArucoNode(Node):
                 # ignore marker if too far away => measurement is imprecise
                 tvec_ar = tvecs[i][0]
                 if np.linalg.norm(tvec_ar) > self.max_aruco_dist:
-                    self.get_logger().debug(f"Ignoring marker {marker_id[0]} at {np.linalg.norm(tvec):.2f} m (>{max_distance} m)")
+                    self.get_logger().debug(f"Ignoring marker {marker_id[0]} (>{self.max_aruco_dist} m)")
                     continue
 
                 marker_id = marker_id[0]  # Extract integer ID
