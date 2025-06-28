@@ -27,7 +27,8 @@ setup(
         'console_scripts': [
             'aruco_node = ros2_aruco.aruco_node:main',
             'multiview_aruco_node = ros2_aruco.multi_aruco_node:main',
-            'pose_estimation_node = ros2_aruco.pose_estimation_node:main'
+            'pose_estimation_node = ros2_aruco.pose_estimation_node:main',
+            'pot_arucos_node = ros2_aruco.plot_arucos:main'
         ],
     },
 )

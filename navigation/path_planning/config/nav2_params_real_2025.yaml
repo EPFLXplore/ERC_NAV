@@ -261,7 +261,7 @@ local_costmap:
         mark_threshold: 0
         observation_sources: ouster_pcl
         ouster_pcl:
-          sensor_frame: lidar_link
+          sensor_frame: ST_Lidar_1
           topic: /ouster_points
           sensor_data_qos: true
           clearing: false

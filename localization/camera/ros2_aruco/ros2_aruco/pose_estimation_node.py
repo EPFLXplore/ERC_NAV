@@ -50,8 +50,19 @@ class PoseEstimatorNode(Node):
         self.triangulated_new_pose = False
         self.triangulated_new_xy = False
         self.measured_new_yaw = False
-        self.time_of_last_pose = 0.0
-        self.time_of_last_yaw_meas = 0.0
+        self.time_of_last_pose = self.get_clock().now()
+        self.time_of_last_yaw_meas = self.get_clock().now()
+
+        self.nbr_init_callbacks_for_avg = 20  #20 measurements on initialization to have a good estimate of the map->odom transform then after that we limit 
+                                      #the rate of the listener with the following parameters
+        self.init_callback_counter = 0
+        self.initialized_map_odom_tf = False
+        self.last_callback_time = self.get_clock().now()
+        self.callback_freq_limit = 0.4 #seconds = 2.5Hz
+        self.avg_initialization_tfs = []
+
+        self.max_translation_jump = 0.4 #meters
+        self.max_yaw_jump = math.radians(23) #23 degrees
 
         self.subscription = self.create_subscription(
             ArucoMarkers,
@@ -97,17 +108,17 @@ class PoseEstimatorNode(Node):
         # Initial guess for optimization
         self.initial_estimate = np.array([0.0, 0.0])
 
-
-
-        # ArUco ID 51 → index 0
+        # ArUco ID 51 → index 0 of the landmark_poses list
         # ArUco ID 52 → index 1
         # ArUco ID 53 → index 2
         # ...
-        #the position is relative to the map frame which is given to us by the ERC
+        #the positions are relative to the map frame which is given to us by the ERC task description
+        self.erc_start_pos = [0.0, 0.0]  #x, y
+
         self.landmark_poses = [
-                (-2.8, 3.86),
-                (-2.8, -1.94),
-                (-2.8, 2.36),
+                (-2.83, 2.38),
+                (-2.83, 1.23),
+                (-1.53, -1.11),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -139,26 +150,41 @@ class PoseEstimatorNode(Node):
 
     def listener_callback(self, msg):
 
+        now = self.get_clock().now()
+        if ((now - self.last_callback_time).nanoseconds/1e9 < self.callback_freq_limit  and self.initialized_map_odom_tf == True):
+            return #limit the rate at which we run the callback since it is computationnally expensive and we dont need it very often.
+        self.last_callback_time = now
+
 
         #get the current map->odom transform then add it to current odom->base_link from the EKF
         #this will give us the current map->base_link pose
         try:
             now = self.get_clock().now().to_msg()
             transform = self.tf_buffer.lookup_transform('map','odom', now, timeout=rclpy.duration.Duration(seconds=0.2))
-            self.get_logger().info("here1")
-            odom_base_pose_map = (
-                transform.transform.translation.x + self.odom_pos_x,
-                transform.transform.translation.y + self.odom_pos_y
-            )
-            self.curr_map_odom_base_x = odom_base_pose_map[0]
-            self.curr_map_odom_base_y = odom_base_pose_map[1]
-            self.curr_map_odom_base_yaw = self.odom_yaw + R.from_quat([
+            T_map_odom = self.pose_to_mat(
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+            R.from_quat([
                 transform.transform.rotation.x,
                 transform.transform.rotation.y,
                 transform.transform.rotation.z,
                 transform.transform.rotation.w
-            ]).as_euler('xyz')[2]  # yaw angle
-            self.get_logger().info("here2")
+                ]).as_euler('xyz')[2]
+            )
+
+            T_odom_base = self.pose_to_mat(
+                self.odom_pos_x,
+                self.odom_pos_y,
+                self.odom_yaw
+            )
+
+            # latest map->odom + latest odom->base_link
+            T_map_base = T_map_odom @ T_odom_base
+
+            self.curr_map_odom_base_x   = T_map_base[0, 3]
+            self.curr_map_odom_base_y   = T_map_base[1, 3]
+            self.curr_map_odom_base_yaw = math.atan2(T_map_base[1,0], T_map_base[0,0])
+
         except TransformException as e:
             if self.prev_map_odom_tf is None:
                 self.curr_map_odom_base_x = self.odom_pos_x
@@ -205,8 +231,9 @@ class PoseEstimatorNode(Node):
 
             dx_map = lm2[0] - lm1[0]
             dy_map = lm2[1] - lm1[1]
-            angle_map = math.atan2(dy_map, dx_map)
+            angle_map = math.atan2(dy_map, dx_map) #angle formed by the vector pointing from an aruco to another, in the map frame. this is a theoretical angle
 
+            #poses of the same aruco tags as seen by the rover, so this is in the rover frame
             pose1 = msg.poses[i].position
             pose2 = msg.poses[j].position
 
@@ -216,6 +243,9 @@ class PoseEstimatorNode(Node):
             
             yaw_diff = angle_map - angle_rover
             yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
+
+            #the rover's yaw in the map frame is thus the yaw difference
+
             yaw_offsets.append(yaw_diff)
             #self.get_logger().info(f"--> Yaw (deg): {(yaw_diff*180/3.141592):.3f} for ids [{id1}-{id2}]")
 
@@ -298,8 +328,15 @@ class PoseEstimatorNode(Node):
                 #we can then compare the current pose estimate in the map frame with the two intersection points
 
                 # Calculate distances to both intersection points
-                dist_I1 = math.hypot(I1[0] - self.curr_map_odom_base_x, I1[1] - self.curr_map_odom_base_y)
-                dist_I2 = math.hypot(I2[0] - self.curr_map_odom_base_x, I2[1] - self.curr_map_odom_base_y)
+
+                #on initialization this will select the interseciton which is closest to the ERC starting pose
+
+                if self.initialized_map_odom_tf:
+                    dist_I1 = math.hypot(I1[0] - self.curr_map_odom_base_x, I1[1] - self.curr_map_odom_base_y)
+                    dist_I2 = math.hypot(I2[0] - self.curr_map_odom_base_x, I2[1] - self.curr_map_odom_base_y)
+                else:
+                    dist_I1 = math.hypot(I1[0] - self.erc_start_pos[0], I1[1] - self.erc_start_pos[1])
+                    dist_I2 = math.hypot(I2[0] - self.erc_start_pos[0], I2[1] - self.erc_start_pos[1])
 
                 if dist_I1 <= dist_I2:
                     self.x_estimate, self.y_estimate = I1
@@ -312,7 +349,8 @@ class PoseEstimatorNode(Node):
                     self.get_logger().info(f"--> Selected Intersect 2: {I2}")
                     self.triangulated_new_xy = True
                     self.time_of_last_pose = self.get_clock().now()
-
+            else:
+                self.get_logger.info(f"no circle intersection")
 
         # if >=3 landmarks we can triangulate the pose using least squares
         if len(valid_markers)>=3:
@@ -320,8 +358,14 @@ class PoseEstimatorNode(Node):
             distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
             landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
-            base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'lm', args=(landmarks_ordered, distance_estimates))
-
+            if initialized_map_odom_tf:
+                map_pos_x = self.curr_map_odom_base_x
+                map_pos_y = self.curr_map_odom_base_y
+                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, bounds=([map_pos_x - 5, map_pos_y -5], [map_pos_x + 5, map_pos_y + 5]), args=(landmarks_ordered, distance_estimates))
+            else:
+                #the initial position should be around (0, 0)
+                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, bounds=([-3, -3], [3, 3]), args=(landmarks_ordered, distance_estimates))
+            
             self.initial_estimate = base_estimate.x
 
             # Only care about x and y
@@ -359,78 +403,56 @@ class PoseEstimatorNode(Node):
                 #w --> infinity => H = alpha
                 #w --> 0 => H = 1
                 #response time will depend on the frequency of the updates
-                alpha = 0.2 #low alpha = more smoothing, high alpha = less smoothing
+                alpha = 0.3 #low alpha = more smoothing, high alpha = less smoothing
                 self.x_estimate = alpha * self.x_estimate + (1 - alpha) * self.curr_map_odom_base_x
                 self.y_estimate = alpha * self.y_estimate + (1 - alpha) * self.curr_map_odom_base_y
                 if delta_yaw_time < 0.5:
                     #self.get_logger().info(f"lowpass filtering the yaw in map frame")
                     #apply low pass filter to yaw estimate as well
                     self.yaw_estimate = alpha * self.yaw_estimate + (1 - alpha) * self.curr_map_odom_base_yaw
-        else:
-            #time since last update is too high so we need to trust the aruco pose
-            #however we should still do some "outlier" detection
-            #because the aruco map pose should be be too far away from the current map->odom->base_link pose
 
-            if self.triangulated_new_xy:
-                #calculate the distance between the current pose estimate and the last pose estimate
-                dist = math.hypot(self.x_estimate - self.curr_map_odom_base_x, self.y_estimate - self.curr_map_odom_base_y)
-                if dist > 1.5:
-                    #if the distance is too high, we should not trust the pose estimate
-                    self.get_logger().warn(f"Pose estimate is too far away from the current pose estimate: {dist:.2f}m")
-                    self.x_estimate = self.curr_map_odom_base_x
-                    self.y_estimate = self.curr_map_odom_base_y
-                    self.triangulated_new_xy = False
-                    self.triangulated_new_pose = False
-            if self.measured_new_yaw:
-                #calculate the difference between the current yaw estimate and the last yaw estimate
-                yaw_diff = self.yaw_estimate - self.curr_map_odom_base_yaw
-                yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
-                if abs(yaw_diff) > 0.5:  # 0.5 radians = 28.65 degrees
-                    #if the difference is too high, we should not trust the yaw estimate
-                    self.get_logger().warn(f"Yaw estimate is too far away from the current yaw estimate: {yaw_diff*180/3.141592:.2f} degrees")
-                    self.yaw_estimate = self.curr_map_odom_base_yaw
-                    self.measured_new_yaw = False
 
         #PUBLISH THE GLOBAL POSEEEEEE : map -> base_link. This is the position of the Rover in the ERC coordinate system
         #this will be fed to the EKF that will calculate the map->odom transform.
         # the transform tree will thus be complete: we will have map->odom and odom->base_link, which is what we need
         #for nav2 and to be able to give it the correct waypoints
-        odom_msg = Odometry()
-        odom_msg.header.stamp = self.get_clock().now().to_msg()
-        odom_msg.header.frame_id = 'map'
-        odom_msg.child_frame_id = 'base_link'
-        cov = [0.]*36
+        # odom_msg = Odometry()
+        # odom_msg.header.stamp = self.get_clock().now().to_msg()
+        # odom_msg.header.frame_id = 'map'
+        # odom_msg.child_frame_id = 'base_link'
+        # cov = [0.]*36
 
-        odom_msg.pose.pose.position.x = self.x_estimate
-        odom_msg.pose.pose.position.y = self.y_estimate
-        odom_msg.pose.pose.orientation = yaw_to_quat(self.yaw_estimate)
+        # odom_msg.pose.pose.position.x = self.x_estimate
+        # odom_msg.pose.pose.position.y = self.y_estimate
+        # odom_msg.pose.pose.orientation = yaw_to_quat(self.yaw_estimate)
 
-        if self.triangulated_new_pose:
-            #cov[0] = cov[7] = 0.005    # var(x), var(y)
-            cov = self.low_cov.copy()
-            self.triangulated_new_pose = False
-        else:
-            #set very high covariance for x and y since we were not able to triangulate
-            #cov[0] = cov[7] = 1e6
-            cov = self.high_cov.copy()
+        # if self.triangulated_new_pose:
+        #     #cov[0] = cov[7] = 0.005    # var(x), var(y)
+        #     cov = self.low_cov.copy()
+        #     self.triangulated_new_pose = False
+        # else:
+        #     #set very high covariance for x and y since we were not able to triangulate
+        #     #cov[0] = cov[7] = 1e6
+        #     cov = self.high_cov.copy()
         
-        if not hasattr(self, 'last_orientation'):
-            self.last_orientation = Quaternion(w=1.0)  # identity
+        # if not hasattr(self, 'last_orientation'):
+        #     self.last_orientation = Quaternion(w=1.0)  # identity
 
-        if self.measured_new_yaw:
-            q = yaw_to_quat(self.yaw_estimate)
-            self.last_orientation = q
-            cov[35] = 0.002
-            self.measured_new_yaw = False
-        else:
-            q = self.last_orientation
-            cov[35] = 1e6
-        odom_msg.pose.pose.orientation = q
+        # if self.measured_new_yaw:
+        #     q = yaw_to_quat(self.yaw_estimate)
+        #     self.last_orientation = q
+        #     cov[35] = 0.002
+        #     self.measured_new_yaw = False
+        # else:
+        #     q = self.last_orientation
+        #     cov[35] = 1e6
+        # odom_msg.pose.pose.orientation = q
 
                     
-        odom_msg.pose.covariance = cov
-        self.publisher_.publish(odom_msg)
+        # odom_msg.pose.covariance = cov
 
+        # if self.initialized_map_odom_tf == True:
+        #     self.publisher_.publish(odom_msg)
 
 
         #now publish the corrected map->odom transform (since we already have odom->base_link done by the EKF)
@@ -453,18 +475,118 @@ class PoseEstimatorNode(Node):
 
         # Calculate the transformation matrix from map to odom
         T_map_odom = T_map_base @ np.linalg.inv(T_odom_base)
+        
+        #gate against outlier/garbage/very noisy map->odom tf values that are incoherent after initialization (aka when moving during the task)
+        if self.initialized_map_odom_tf:
+            old_t = np.array([self.prev_map_odom_tf.transform.translation.x,
+                            self.prev_map_odom_tf.transform.translation.y])
+            new_t = np.array([T_map_odom[0,3], T_map_odom[1,3]])
+            delta_t = new_t - old_t
+            dist_jump = np.linalg.norm(delta_t)
+
+            old_yaw = math.atan2(self.prev_map_odom_tf.transform.rotation.y,
+                                self.prev_map_odom_tf.transform.rotation.x)
+            new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+            yaw_jump = abs(((new_yaw - old_yaw)+np.pi)%(2*np.pi)-np.pi)
+
+            if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
+
+                self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.1f}° deg")
+                return
+
         transform_msg.transform.translation.x = T_map_odom[0, 3]
         transform_msg.transform.translation.y = T_map_odom[1, 3]
         transform_msg.transform.translation.z = 0.0
         transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
         #broadcast the transform
-        self.tf_broadcaster.sendTransform(transform_msg)
-        self.get_logger().info(f"Broadcasted map->odom transform, tx :{transform_msg.transform.translation.x}, ty{transform_msg.transform.translation.y}")
-        self.get_logger().info(f"--> Estimated Yaw (deg): {(self.yaw_estimate*180/3.141592):.3f}")
-
+        if self.initialized_map_odom_tf == True:
+            self.tf_broadcaster.sendTransform(transform_msg)
+            self.get_logger().info(f"Broadcasted map->odom transform, tx :{transform_msg.transform.translation.x}, ty{transform_msg.transform.translation.y}")
+            self.get_logger().info(f"--> Estimated Yaw (deg): {(self.yaw_estimate*180/3.141592):.3f}")
+            self.get_logger().info(f"--> Estimate X in map: {(self.x_estimate):.3f}")
+            self.get_logger().info(f"--> Estimated Y in map: {(self.y_estimate):.3f}")
+            self.get_logger().info(f"-------------------------------------")
 
         # Store the last pose for the next iteration
         self.prev_map_odom_tf = transform_msg
+
+
+        if(self.init_callback_counter < self.nbr_init_callbacks_for_avg):
+
+            self.init_callback_counter += 1
+            self.avg_initialization_tfs.append(transform_msg)
+
+            if (self.init_callback_counter == self.nbr_init_callbacks_for_avg):
+
+                self.initialized_map_odom_tf = True
+                self.prev_map_odom_tf = self.calculate_robust_tf_avg(self.avg_initialization_tfs)
+                self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
+                self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE")
+
+
+
+    def calculate_robust_tf_avg(self, tf_list, max_trans_outlier=0.5, max_rot_outlier=np.deg2rad(10)):
+        #stack the [x, y] translations for each tf in the list
+        t = np.array([[tf.transform.translation.x, tf.transform.translation.y] for tf in tf_list])
+
+        #compute median and MAD (median absolute deviation = median of |x_i - median|)
+        med_t = np.median(t, axis=0)
+        mad_t = np.median(np.linalg.norm(t - med_t, axis=1))
+        # keep only those within k * MAD (e.g. k=3)
+        inliers_t = np.linalg.norm(t - med_t, axis=1) < max(3 * mad_t, max_trans_outlier)
+
+        #stack the quaternions for each tf in the list
+        qs = np.array([[tf.transform.rotation.w,
+                        tf.transform.rotation.x,
+                        tf.transform.rotation.y,
+                        tf.transform.rotation.z]
+                    for tf in tf_list])
+        
+        # convert to rotation vectors for geodesic distance
+        rots = R.from_quat(qs[:, [1,2,3,0]])  # (x,y,z,w)        
+        angvecs = rots.as_rotvec()
+        # compute their “median” rotvec
+        med_rotvec = np.median(angvecs, axis=0)
+        # measure angular deviations
+        ang_dev = np.linalg.norm(angvecs - med_rotvec, axis=1)
+        inliers_r = ang_dev < max(3 * np.median(ang_dev), max_rot_outlier)
+
+        #combine inlier masks
+        inliers = inliers_t & inliers_r
+        if inliers.sum() < 3:
+            # fallback to simple average if too many outliers
+            inliers[:] = True
+
+        #final translation
+        final_t = t[inliers].mean(axis=0)
+
+        #final rotation
+        qs_in = qs[inliers]
+        # pick the first inlier as reference
+        q_ref = qs_in[0]
+        for i in range(len(qs_in)):
+            if np.dot(qs_in[i], q_ref) < 0:
+                qs_in[i] *= -1
+        q_mean = qs_in.mean(axis=0)
+        q_mean /= np.linalg.norm(q_mean)
+
+
+        
+        tf = TransformStamped()
+        tf.header.stamp = self.get_clock().now().to_msg()
+        tf.header.frame_id = 'map'
+        tf.child_frame_id = 'odom'
+        tf.transform.translation.x = float(final_t[0])
+        tf.transform.translation.y = float(final_t[1])
+        tf.transform.translation.z = 0.0
+   
+        tf.transform.rotation.x = q_mean[1]
+        tf.transform.rotation.y = q_mean[2]
+        tf.transform.rotation.z = q_mean[3]
+        tf.transform.rotation.w = q_mean[0]
+
+        return tf
+
 
 
     # Helper function to convert pose to transformation matrix

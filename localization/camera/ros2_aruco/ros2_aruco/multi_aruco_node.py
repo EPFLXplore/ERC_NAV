@@ -42,6 +42,10 @@ class MultiViewArucoNode(Node):
         self.declare_parameter("image_topic_2", '/NAV/feed_camera_nav_2')
         self.declare_parameter("camera_frame_2", "intel_realsense_D415_camera_top_left_1")
 
+        #camera front oakd
+        self.declare_parameter("image_topic_3", "/NAV/feed_camera_nav_0")
+        self.declare_parameter("camera_frame_3", "NAV_Front_Camera_1")
+
         #CS Cameras
         #topic names:
         # /ROVER/feed_camera_cs_0
@@ -49,34 +53,36 @@ class MultiViewArucoNode(Node):
         # /ROVER/feed_camera_cs_2
         # /ROVER/feed_camera_cs_3
 
-        self.declare_parameter("image_topic_3", '/ROVER/feed_camera_cs_0')
-        self.declare_parameter("camera_frame_3", "Logitech_Brio_100_top_right_1")
+        self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_0')
+        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_top_right_1")
 
-        self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
-        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_top_left_1")
+        self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_1')
+        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_top_left_1")
 
-        self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_2')
-        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_front_right_1")
+        self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_2')
+        self.declare_parameter("camera_frame_6", "Logitech_Brio_100_front_right_1")
 
-        self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
-        self.declare_parameter("camera_frame_6", "Logitech_Brio_100_front_left_1")
+        self.declare_parameter("image_topic_7", '/ROVER/feed_camera_cs_3')
+        self.declare_parameter("camera_frame_7", "Logitech_Brio_100_front_left_1")
 
         self.declare_parameter("marker_size", .144)
 
 
         self.base_frame = "base_link"
-    
+
         self.marker_size = self.get_parameter("marker_size").get_parameter_value().double_value
         dictionary_id_name = self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
 
         # Subscribers for nav and CS cameras
         self.image_sub_1 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_1").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
         self.image_sub_2 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_2").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        self.image_sub_3 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_3").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+
         #CS cams:
-        #self.image_sub_3 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_3").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
         #self.image_sub_4 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_4").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
         #self.image_sub_5 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_5").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
         #self.image_sub_6 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_6").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
+        #self.image_sub_7 = Subscriber(self, CompressedImage, self.get_parameter("image_topic_7").get_parameter_value().string_value, qos_profile=qos_profile_sensor_data)
 
         # For tf transforms
         self.tf_buffer = tf2_ros.Buffer()
@@ -84,7 +90,7 @@ class MultiViewArucoNode(Node):
 
         # synchronized callback that processes images at the same time, slop = window of time for synced images
         #self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2, self.image_sub_3, self.image_sub_4, self.image_sub_5, self.image_sub_6], queue_size=2, slop=0.05)
-        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2], queue_size=2, slop=0.05)
+        self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2, self.image_sub_3], queue_size=2, slop=0.05)
 
         # Publishers
         self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
@@ -95,7 +101,13 @@ class MultiViewArucoNode(Node):
         self.intrinsic_mat_2 = None
         self.distortion_1 = None
         self.distortion_2 = None
-        
+
+        self.distortion_oakd = np.array([9.80721610e-02, -4.63898316e-01,  9.96729783e-05, -2.37984918e-03])
+        self.intrinsic_mat_oakd = np.array(
+            [[1.26149944e+03, 0.00000000e+00, 9.00168645e+02],
+            [0.00000000e+00, 1.26973086e+03, 4.47752921e+02],
+            [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
+        )
         #We assume all Logitech Brio 100 cameras have the same parameters because fuck this I am NOT measuring all parameters for all cameras
 
         # Reprojection RMS error: 0.3174
@@ -182,7 +194,7 @@ class MultiViewArucoNode(Node):
 
 
     #def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6):
-    def synced_callback(self, img_msg_1, img_msg_2):
+    def synced_callback(self, img_msg_1, img_msg_2, img_msg_3):
 
         #self.get_logger().warn("sycned callback 2 cams")
         
@@ -203,7 +215,7 @@ class MultiViewArucoNode(Node):
         # Populate the array of positions, by processing each image sequentially
         self.process_image(img_msg_1, self.intrinsic_mat_1, self.distortion_1, self.get_parameter("camera_frame_1").get_parameter_value().string_value, markers, pose_array)
         self.process_image(img_msg_2, self.intrinsic_mat_2, self.distortion_2, self.get_parameter("camera_frame_2").get_parameter_value().string_value, markers, pose_array)
-        # self.process_image(img_msg_3, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_3").get_parameter_value().string_value, markers, pose_array)
+        self.process_image(img_msg_3, self.intrinsic_mat_oakd, self.distortion_oakd, self.get_parameter("camera_frame_3").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_4, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_4").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_5, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_5").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_6, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_6").get_parameter_value().string_value, markers, pose_array)
