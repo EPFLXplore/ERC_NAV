@@ -361,10 +361,15 @@ class PoseEstimatorNode(Node):
             if initialized_map_odom_tf:
                 map_pos_x = self.curr_map_odom_base_x
                 map_pos_y = self.curr_map_odom_base_y
-                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, bounds=([map_pos_x - 5, map_pos_y -5], [map_pos_x + 5, map_pos_y + 5]), args=(landmarks_ordered, distance_estimates))
+                #bounds = window of size 2*2=4m centered on the current position
+                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, 
+                                              bounds=([map_pos_x - 2, map_pos_y -2], [map_pos_x + 2, map_pos_y + 2]), 
+                                              args=(landmarks_ordered, distance_estimates))
             else:
-                #the initial position should be around (0, 0)
-                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, bounds=([-3, -3], [3, 3]), args=(landmarks_ordered, distance_estimates))
+                #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*2=4m
+                base_estimate = least_squares(self.cost_function, self.initial_estimate, method= 'trf', loss='soft_l1', f_scale=0.2, 
+                                              bounds=([self.erc_start_pos[0]-2, self.erc_start_pos[1]-2], [self.erc_start_pos[0]+2, self.erc_start_pos[1]+2]), 
+                                              args=(landmarks_ordered, distance_estimates))
             
             self.initial_estimate = base_estimate.x
 
