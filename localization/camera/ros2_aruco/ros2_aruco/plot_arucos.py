@@ -9,7 +9,6 @@ import std_msgs.msg
 class ArucoMarkersViz(Node):
     def __init__(self):
         super().__init__('aruco_markers_viz')
-        # remap these if your ArucoMarkers topic or frames differ
         self.declare_parameter('input_topic',  'aruco_markers')
         self.declare_parameter('output_topic', 'aruco_markers_vis')
         self.declare_parameter('marker_size',  0.144)  # meters
@@ -40,7 +39,6 @@ class ArucoMarkersViz(Node):
             m.scale.x = self.marker_size
             m.scale.y = self.marker_size
             m.scale.z = self.marker_size
-            # a nice semi-transparent green
             m.color.r = 0.0
             m.color.g = 1.0
             m.color.b = 0.0

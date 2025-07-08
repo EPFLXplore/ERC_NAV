@@ -9,6 +9,7 @@ from tf2_ros import Buffer, TransformListener
 import tf_transformations
 from nav_msgs.msg import Odometry
 
+
 class WaypointFollower(Node):
     def __init__(self):
         super().__init__('waypoint_follower')
@@ -45,7 +46,7 @@ class WaypointFollower(Node):
             # Get the transform from 'map' to 'base_link'
             transform = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
             position = transform.transform.translation
-            self.get_logger().info(f'Current POS : x={position.x}, y={position.y}')
+            self.get_logger().info(f'POSITION in ERC MAP: X={position.x}, Y={position.y}')
         except Exception as e:
             self.get_logger().error(f'could NOT get map->base_link TF: {e}')
 
@@ -57,7 +58,7 @@ class WaypointFollower(Node):
             self.get_logger().info(f'Distance to waypoint {self.curr_waypoint_index}: {distance:.2f} meters')
 
         else:
-            self.get_logger().info('NO MORE WAYPOINTS, TASK FINISHED !!!!')
+            self.get_logger().info('***** !!!! NO MORE WAYPOINTS, TASK FINISHED !!!! ******')
 
         #compute ETA (Estimated Time of Arrival) to the current target waypoint
         if self.current_speed > 0:
@@ -98,10 +99,12 @@ class WaypointFollower(Node):
             return pose
 
         # Hardcoded waypoints (x, y, yaw_deg) in the ERC map frame !!!
+        # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
         waypoint_list = [
             (1.0, 0.0, 0.0),
             (1.0, 1.0, 90.0),
             (0.0, 1.0, 180.0),
+            (5.3, -2.7),
             (0.0, 0.0, 0.0),
         ]
 

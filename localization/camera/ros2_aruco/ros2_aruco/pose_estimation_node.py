@@ -21,20 +21,6 @@ from tf2_ros.transform_listener import TransformListener
 from tf2_ros import TransformBroadcaster
 
 
-# def euclidean_distance(x1, y1, x2, y2):
-#     p1 = np.array((x1 ,y1))
-#     p2 = np.array((x2, y2))
-#     return np.linalg.norm(p1-p2)
-    
-# # Mean Square Error
-# # locations: [ (lat1, long1), ... ]
-# # distances: [ distance1, ... ]
-# def mse(x, locations, distances):
-#     mse = 0.0
-#     for location, distance in zip(locations, distances):
-#         distance_calculated = euclidean_distance(x[0], x[1], location[0], location[1])
-#         mse += math.pow(distance_calculated - distance, 2.0)
-#     return mse / len(distances)
 
 def yaw_to_quat(yaw):
     quat = R.from_euler('z', yaw).as_quat()  # x, y, z, w
@@ -53,16 +39,18 @@ class PoseEstimatorNode(Node):
         self.time_of_last_pose = self.get_clock().now()
         self.time_of_last_yaw_meas = self.get_clock().now()
 
-        self.nbr_init_callbacks_for_avg = 20  #20 measurements on initialization to have a good estimate of the map->odom transform then after that we limit 
-                                      #the rate of the listener with the following parameters
+        self.MAP_SIZE = 300.0
+
+        self.nbr_init_callbacks_for_avg = 20  #20 measurements on initialization to have a good estimate of the map->odom transform with outlier rejection
+        # then after that we limit the rate of the listener with the following parameters:
         self.init_callback_counter = 0
         self.initialized_map_odom_tf = False
         self.last_callback_time = self.get_clock().now()
-        self.callback_freq_limit = 0.4 #seconds = 2.5Hz
+        self.callback_freq_limit = 0.2 #seconds = 5Hz
         self.avg_initialization_tfs = []
 
-        self.max_translation_jump = 0.4 #meters
-        self.max_yaw_jump = math.radians(23) #23 degrees
+        self.max_translation_jump = 1.7 #meters
+        self.max_yaw_jump = math.radians(35) #23 degrees
 
         self.subscription = self.create_subscription(
             ArucoMarkers,
@@ -97,7 +85,7 @@ class PoseEstimatorNode(Node):
         #create a timer to publish the map->odom transform at a fixed rate to avoid 
         #bugs and warnings
         self.prev_map_odom_tf = None
-        self.tf_timer = self.create_timer(0.1, self.republish_map_odom_transform)
+        self.tf_timer = self.create_timer(0.1, self.republish_map_odom_transform) #10hz
 
         self.publisher_ = self.create_publisher(Odometry, 'aruco_odom', 10)
         self.subscription 
@@ -116,9 +104,9 @@ class PoseEstimatorNode(Node):
         self.erc_start_pos = [0.0, 0.0]  #x, y
 
         self.landmark_poses = [
-                (-2.83, 2.38),
-                (-2.83, 1.23),
-                (-1.53, -1.11),
+                (-2.39, 1.475),
+                (-2.39, -1.055),
+                (-1.735, 2.15),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -209,7 +197,7 @@ class PoseEstimatorNode(Node):
         #validate markers
         valid_markers = []
         for idx, pose in zip(msg.marker_ids, msg.poses):
-            if idx < len(self.landmark_poses) and self.landmark_poses[idx][0] < 300 and self.landmark_poses[idx][1] < 300:
+            if idx < len(self.landmark_poses) and self.landmark_poses[idx][0] < self.MAP_SIZE and self.landmark_poses[idx][1] < self.MAP_SIZE:
                 valid_markers.append((idx, pose))
 
         if len(valid_markers) < 2:
@@ -226,7 +214,7 @@ class PoseEstimatorNode(Node):
             
             lm1 = self.landmark_poses[id1]
             lm2 = self.landmark_poses[id2]
-            if lm1[0] > 300 or lm2[0] > 300:  #spicy magic number =300meters just to check if they have actually been hardcoded in the code
+            if abs(lm1[0]) > self.MAP_SIZE or abs(lm2[0]) > self.MAP_SIZE:  #spicy magic number =300meters just to check if they have actually been hardcoded in the code
                 continue
 
             dx_map = lm2[0] - lm1[0]
@@ -350,7 +338,7 @@ class PoseEstimatorNode(Node):
                     self.triangulated_new_xy = True
                     self.time_of_last_pose = self.get_clock().now()
             else:
-                self.get_logger.info(f"no circle intersection")
+                self.get_logger().info(f"no circle intersection")
 
         # if >=3 landmarks we can triangulate the pose using least squares
         if len(valid_markers)>=3:
@@ -358,7 +346,7 @@ class PoseEstimatorNode(Node):
             distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
             landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
-            if initialized_map_odom_tf:
+            if self.initialized_map_odom_tf:
                 map_pos_x = self.curr_map_odom_base_x
                 map_pos_y = self.curr_map_odom_base_y
                 #bounds = window of size 2*2=4m centered on the current position
@@ -401,14 +389,14 @@ class PoseEstimatorNode(Node):
             delta_time = (current_time - self.time_of_last_pose).nanoseconds / 1e9  # convert to seconds
             delta_yaw_time = (current_time - self.time_of_last_yaw_meas).nanoseconds / 1e9  # convert to seconds
 
-            if delta_time < 0.5:
+            if delta_time < 0.5: #if we are recieving pose estimations at >2hz
                 #self.get_logger().info(f"lowpass filtering the map->odom TF")
                 # IIR 1st Order Low Pass Filter
                 #H(e^jw) = alpha / (1 + (alpha - 1)e^(-jw))
                 #w --> infinity => H = alpha
                 #w --> 0 => H = 1
                 #response time will depend on the frequency of the updates
-                alpha = 0.3 #low alpha = more smoothing, high alpha = less smoothing
+                alpha = 0.5 #low alpha = more smoothing, high alpha = less smoothing
                 self.x_estimate = alpha * self.x_estimate + (1 - alpha) * self.curr_map_odom_base_x
                 self.y_estimate = alpha * self.y_estimate + (1 - alpha) * self.curr_map_odom_base_y
                 if delta_yaw_time < 0.5:
@@ -416,11 +404,11 @@ class PoseEstimatorNode(Node):
                     #apply low pass filter to yaw estimate as well
                     self.yaw_estimate = alpha * self.yaw_estimate + (1 - alpha) * self.curr_map_odom_base_yaw
 
-
-        #PUBLISH THE GLOBAL POSEEEEEE : map -> base_link. This is the position of the Rover in the ERC coordinate system
-        #this will be fed to the EKF that will calculate the map->odom transform.
+        ########################################### WE DONT REALLY NEED TO PUBLISH THIS, IT IS JUST HERE FOR CONVENIENCE ############################3
+        # code to publish map -> base_link. This is the position of the Rover in the ERC coordinate system
+        # this will be fed to the EKF that will calculate the map->odom transform.
         # the transform tree will thus be complete: we will have map->odom and odom->base_link, which is what we need
-        #for nav2 and to be able to give it the correct waypoints
+        # for nav2 and to be able to give it the correct waypoints
         # odom_msg = Odometry()
         # odom_msg.header.stamp = self.get_clock().now().to_msg()
         # odom_msg.header.frame_id = 'map'
@@ -458,10 +446,12 @@ class PoseEstimatorNode(Node):
 
         # if self.initialized_map_odom_tf == True:
         #     self.publisher_.publish(odom_msg)
-
+        #############################################################################33
 
         #now publish the corrected map->odom transform (since we already have odom->base_link done by the EKF)
         #we can use the tf2_ros library to do this
+        #we dont directly publish map->base_link because it makes it much easier to reject bad noisy data once the map->odom tf has been initialized
+        #because assuming perfect odometry this map->odom should be constant.
 
         # Publish the transform from map to odom
 
@@ -495,7 +485,6 @@ class PoseEstimatorNode(Node):
             yaw_jump = abs(((new_yaw - old_yaw)+np.pi)%(2*np.pi)-np.pi)
 
             if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
-
                 self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.1f}° deg")
                 return
 
@@ -526,8 +515,7 @@ class PoseEstimatorNode(Node):
                 self.initialized_map_odom_tf = True
                 self.prev_map_odom_tf = self.calculate_robust_tf_avg(self.avg_initialization_tfs)
                 self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
-                self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE")
-
+                self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE @ {(1/(self.callback_freq_limit)):.3f} Hz")
 
 
     def calculate_robust_tf_avg(self, tf_list, max_trans_outlier=0.5, max_rot_outlier=np.deg2rad(10)):
@@ -621,7 +609,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = PoseEstimatorNode()
     executor = MultiThreadedExecutor(
-        # number of worker threads; None==number of CPU cores
+        # number of worker threads; None==number of CPU cores i think
         num_threads=3
     )
     executor.add_node(node)

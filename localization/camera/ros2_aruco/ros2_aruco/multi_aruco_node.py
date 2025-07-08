@@ -187,7 +187,7 @@ class MultiViewArucoNode(Node):
         #self.get_logger().info(f"Received intrinsics for {camera} camera.")
 
         if all(self.cam_params_received.values()) and not self.sync_started:
-            self.get_logger().info("Both camera intrinsics received – starting synchroniser  AHHHHHH")
+            self.get_logger().info("Both camera intrinsics received – starting synchroniser")
             self.ts.registerCallback(self.synced_callback)
             self.params_initialized = True
             self.sync_started = True
@@ -249,7 +249,7 @@ class MultiViewArucoNode(Node):
             try:
                 transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
             except tf2_ros.LookupException as ex:
-                self.get_logger().warn(f"Transform lookup failed (URDF probably isnt published lol): {ex}")
+                #self.get_logger().warn(f"Transform lookup failed (URDF probably isnt published): {ex}")
                 return
 
             all_markers = []  # Store all detected markers (ID, pose, yaw)
@@ -261,7 +261,7 @@ class MultiViewArucoNode(Node):
                 # ignore marker if too far away => measurement is imprecise
                 tvec_ar = tvecs[i][0]
                 if np.linalg.norm(tvec_ar) > self.max_aruco_dist:
-                    self.get_logger().debug(f"Ignoring marker {marker_id[0]} (>{self.max_aruco_dist} m)")
+                    #self.get_logger().debug(f"Ignoring marker {marker_id[0]} (>{self.max_aruco_dist} m)")
                     continue
 
                 marker_id = marker_id[0]  # Extract integer ID
@@ -282,7 +282,7 @@ class MultiViewArucoNode(Node):
 
             # Step 2: **Apply Filtering Except When There Are <= 2 Distinct IDs**
             if len(distinct_ids) > 2:
-                self.get_logger().info("Filtering markers with worst yaw angles")
+                #self.get_logger().info("Filtering markers with worst yaw angles")
                 
                 for marker_id in marker_candidates.keys():
                     # Sort detections by lowest yaw angle (least distortion)
@@ -323,7 +323,7 @@ class MultiViewArucoNode(Node):
                 try:
                     pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
                 except  tf2_ros.LookupException as ex:
-                    self.get_logger().warn(f"TF transform failed: {ex}")
+                    #self.get_logger().warn(f"TF transform failed: {ex}")
                     return
 
                 # **ERC ID Mapping Logic (Preserved)**
