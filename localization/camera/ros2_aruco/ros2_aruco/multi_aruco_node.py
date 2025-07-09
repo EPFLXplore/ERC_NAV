@@ -27,7 +27,7 @@ class MultiViewArucoNode(Node):
 
         #half of the aruco box depth
         self.aruco_box_offset = 0.125
-        self.max_aruco_dist = 10.0 #meters
+        self.max_aruco_dist = 15.0 #meters
 
         self.cam_params_received = {"left": False, "right": False}
         self.params_initialized = False
@@ -36,9 +36,9 @@ class MultiViewArucoNode(Node):
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
         self.landmark_poses = [
-                (0.705, -3.9),
-                (4.0, 3.3),
-                (3.2, 0.0),
+                (3.27, -0.8),
+                (-3.58, 2.49),
+                (-1.4, -0.72),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -123,10 +123,10 @@ class MultiViewArucoNode(Node):
         self.distortion_1 = None
         self.distortion_2 = None
 
-        self.distortion_oakd = np.array([9.80721610e-02, -4.63898316e-01,  9.96729783e-05, -2.37984918e-03])
+        self.distortion_oakd = np.array([3.03940603e-01, -2.28313655e+00, -4.79004397e-03,  3.08347206e-03])
         self.intrinsic_mat_oakd = np.array(
-            [[1.26149944e+03, 0.00000000e+00, 9.00168645e+02],
-            [0.00000000e+00, 1.26973086e+03, 4.47752921e+02],
+            [[1.96685610e+03, 0.00000000e+00, 9.99954556e+02],
+            [0.00000000e+00, 1.96039881e+03, 4.79997092e+02],
             [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]]
         )
         #We assume all Logitech Brio 100 cameras have the same parameters because fuck this I am NOT measuring all parameters for all cameras
@@ -144,7 +144,9 @@ class MultiViewArucoNode(Node):
 
         self.distortion_cs = np.array([0.04712347, 1.61133451, 0.00499591, 0.03045891, 3.26455985])
         self.intrinsic_mat_cs = np.array(
-            [[2.85166130e+03, 0, 1.26999005e+03], [0, 2.84698625e+03, 4.62916150e+02], [0, 0, 1]]
+            [[2.85166130e+03, 0, 1.26999005e+03], 
+            [0, 2.84698625e+03, 4.62916150e+02], 
+            [0, 0, 1]]
         )
         self.aruco_dictionary = cv2.aruco.Dictionary_get(cv2.aruco.__getattribute__(dictionary_id_name))
         self.aruco_parameters = cv2.aruco.DetectorParameters_create()
@@ -242,7 +244,7 @@ class MultiViewArucoNode(Node):
         # self.process_image(img_msg_5, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_5").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_6, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_6").get_parameter_value().string_value, markers, pose_array)
 
-        #self.get_logger().info("Publishing")
+        # self.get_logger().info("Publishing")
 
         # Publish
         self.poses_pub.publish(pose_array)
@@ -337,28 +339,31 @@ class MultiViewArucoNode(Node):
                 rot_matrix[0:3, 0:3] = cv2.Rodrigues(np.array(rvecs[i][0]))[0]
 
                 # Compute yaw angle from rotation matrix
+                R_tag2cam, _ = cv2.Rodrigues(rvecs[i])
+                R_cam2tag = R_tag2cam.T
+                R_180_x = R.from_euler('x', 180, degrees=True).as_matrix()
+                R_corrected = R_180_x @ R_cam2tag
+                # R_desired = R.from_matrix(R_corrected).inv()
+                R_desired = R.from_matrix(R_corrected)
+                euler = R_desired.as_euler('xyz', degrees=True)
 
-                yaw = math.atan2(-rot_matrix[2, 0], math.sqrt(rot_matrix[0, 0]**2 + rot_matrix[1, 0]**2))
-                yaw_deg = abs(math.degrees(yaw))  # Use absolute value to compare tilt
-
-                r = R.from_rotvec(rvecs[i][0]) 
-                euler_angles = r.as_euler('xyz', degrees=True) 
-                #self.get_logger().info(f"euler angels for marker {marker_id}, {euler_angles}")
+                # if str(marker_id) == '51':
+                #      self.get_logger().info(f"euler angles {euler}")
 
                 # Store all detected markers
                 if marker_id not in marker_candidates:
                     marker_candidates[marker_id] = []
-                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler_angles[0]), rvecs[i][0]))
+                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler[1]), rvecs[i][0]))
 
             #self.get_logger().info(f"distinc ids set: {distinct_ids}")
 
             #Only keep the best aruco face for each box
-            if len(distinct_ids) >= 2:
+            if len(distinct_ids) >= 1:
                 #self.get_logger().info("Filtering markers with worst yaw angles")
                 
                 for marker_id in marker_candidates.keys():
                     # Sort detections by lowest yaw angle (least distortion)
-                    marker_candidates[marker_id].sort(key=lambda x: x[2], reverse=True)  # Sort by yaw_deg
+                    marker_candidates[marker_id].sort(key=lambda x: x[2], reverse=False)  # Sort by yaw_deg
                     #self.get_logger().info(f"marker id: {marker_id}, angles: {marker_candidates[marker_id]} ")
                     # Keep only the best (lowest yaw) detection per ID
                     marker_candidates[marker_id] = [marker_candidates[marker_id][0]]
@@ -399,6 +404,7 @@ class MultiViewArucoNode(Node):
                 aruco_index = erc_to_index(marker_id)
 
                 # **Only publish valid ERC markers**
+                #but first verify if they are redundant tags (2x the same ID) because it should have been filtered
                 if aruco_index is not None:
                     pose_array.poses.append(pose)
                     markers.poses.append(pose)
@@ -408,7 +414,7 @@ class MultiViewArucoNode(Node):
                     bearing_deg, tf_cam_box = self.calculate_aruco_box_bearing(tvec, rvec)
                     bearing_deg = normalize_angle_deg(bearing_deg)
                     #markers.ar_angles_list.append(bearing_deg)
-                    self.get_logger().info(f"bearing in camera frame for aruco {aruco_index+51} : {bearing_deg}°")
+                    #self.get_logger().info(f"bearing in camera frame for aruco {aruco_index+51} : {bearing_deg}°")
                     
                     t_base_link_to_aruco_box = self.transform_to_matrix(transform) @ tf_cam_box                    
                     R_base_box = t_base_link_to_aruco_box[0:3, 0:3]
@@ -417,12 +423,13 @@ class MultiViewArucoNode(Node):
                     euler = r.as_euler('xyz', degrees=True)
                     yaw_deg = euler[2]# yaw is third angle in 'sxyz' convention
                     yaw_deg = normalize_angle_deg(yaw_deg)
-                    self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
+                    #self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
 
                     #setting the corresponding marker position in the map frame
                     ar_map_x, ar_map_y = self.landmark_poses[aruco_index]
                     markers.landmark_map_pos_x.append(ar_map_x)
                     markers.landmark_map_pos_y.append(ar_map_y)
+                    markers.ar_angles_list.append(yaw_deg)
 
 
 

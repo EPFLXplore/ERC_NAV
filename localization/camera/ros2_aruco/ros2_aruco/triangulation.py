@@ -1,7 +1,10 @@
 import math
 import numpy as np
 from scipy.optimize import fsolve
+import rclpy.logging
 
+def debug_log(msg: str):
+    rclpy.logging.get_logger('triangulation debug').info(msg)
 
 def angle_finder(zeta, psi, phi_n, phi_m, l_n, l_m):
     return 2*math.pi - psi -phi_n - phi_m - zeta - math.asin(round(math.sin(zeta) * (math.sin(phi_n)/math.sin(phi_m)) * (l_m/l_n), 3))
@@ -16,16 +19,28 @@ def angle_finder_corner(zeta, phi_n, phi_m, l_n, l_m, psi):
 
 def triangulate(landmarks, phi_angles, current_pos):
     #in order: A, B, C oriented clockwise !
+    #landmarks expects : [A, B, C]
+    #phi_angles expects: [APB, BPC, CPA]
+
+    #example:
     #landmarks = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]]
     #phi_angles = [60.0, 60.0, 240.0]
+
+    #check if any two landmarks are the same
+    if landmarks[0] == landmarks[1] or landmarks[0] == landmarks[2] or landmarks[1] == landmarks[2]:
+        debug_log(f"some landmarks are the same ! BAD")
+        return None
+
     x_pos_est = current_pos[0]
     y_pos_est = current_pos[1]
+    debug_log(f"current pos est tri: x={x_pos_est}, y={y_pos_est}")
     # x_pos_est = 1.0
     # y_pos_est = -0.5
 
-    OA = np.array(landmarks[0])
-    OB = np.array(landmarks[1])
     OC = np.array(landmarks[2])
+    OB = np.array(landmarks[1])
+    OA = np.array(landmarks[0])
+    debug_log(f"triangle C={OC}, B={OB}, A={OA}")
 
     OP = None
 
@@ -38,7 +53,7 @@ def triangulate(landmarks, phi_angles, current_pos):
 
 
     phi_angles = [math.radians(angle) for angle in phi_angles]
-    #print(f"sum phi angles in degrees: {sum(phi_angles) * 180 / math.pi}")
+    debug_log(f"sum phi angles in degrees: {sum(phi_angles) * 180 / math.pi}")
 
     AC_norm = math.sqrt((landmarks[2][0] - landmarks[0][0]) ** 2 +
               (landmarks[2][1] - landmarks[0][1]) ** 2)
@@ -53,13 +68,17 @@ def triangulate(landmarks, phi_angles, current_pos):
 
     
     # Calculate the angles using the law of cosines
-    psi_a = math.acos((BC_norm**2-(AB_norm**2 + AC_norm**2)) / (-2 * AB_norm * AC_norm))
-    psi_b = math.acos((AC_norm**2-(AB_norm**2 + BC_norm**2)) / (-2 * AB_norm * BC_norm))
-    psi_c = math.acos((AB_norm**2-(AC_norm**2 + BC_norm**2)) / (-2 * AC_norm * BC_norm))
+    try:
+        psi_a = math.acos((BC_norm**2-(AB_norm**2 + AC_norm**2)) / (-2 * AB_norm * AC_norm))
+        psi_b = math.acos((AC_norm**2-(AB_norm**2 + BC_norm**2)) / (-2 * AB_norm * BC_norm))
+        psi_c = math.acos((AB_norm**2-(AC_norm**2 + BC_norm**2)) / (-2 * AC_norm * BC_norm))
+    except Exception:
+        #(f"denominateur de psi_a : {-2 * AB_norm * AC_norm}, AB: {AB_norm}, AC: {AC_norm}")
+        return None
 
     # print(f"sum psi angles in degrees: {(psi_a + psi_b + psi_c) * 180 / math.pi}\n psi_a = {psi_a* 180 / math.pi}, psi_b = {psi_b* 180 / math.pi}, psi_c = {psi_c* 180 / math.pi}")
 
-    
+
     # [alpha_1, alpha_2, beta_1, beta_2, gamma_1, gamma_2] = MAT_INV @ [math.pi - phi_angles[0], math.pi - phi_angles[1], math.pi- phi_angles[2], psi_a, psi_b, psi_c]
 
     # beta_2 = fsolve(angle_finder(psi_b = psi_b, phi_1 = phi_angles[0], phi_2 = phi_angles[1], BC_norm = BC_norm, AB_norm = AB_norm), [math.pi/4.0])
@@ -96,6 +115,7 @@ def triangulate(landmarks, phi_angles, current_pos):
     M_C = np.vstack((CB,CA))
 
     if abs(np.linalg.det(M_A)) < 1e-7 or abs(np.linalg.det(M_B)) < 1e-7 or abs(np.linalg.det(M_C)) < 1e-7:
+        debug_log(f"not a triangle")
         return None
 
 
@@ -123,24 +143,35 @@ def triangulate(landmarks, phi_angles, current_pos):
 
     if APtri[0] <= 0 and APtri[1] <= 0:
         A_corner = True
+        debug_log("A corner")
     
     if BPtri[0] <= 0 and BPtri[1] <= 0:
         B_corner = True
+        debug_log("B corner")
 
     if CPtri[0] <= 0 and CPtri[1] <= 0:
         C_corner = True
+        debug_log("C corner")
 
     if BPtri[0] < 0 and BPtri[1]>0 and not C_corner:
         outside_bc = True
+        debug_log("outside bc")
 
     if APtri[0] > 0 and APtri[1] < 0 and not C_corner:
         outside_ac = True
+        debug_log("outside ac")
 
     if BPtri[0] > 0 and BPtri[1] < 0 and not A_corner:
         outside_ab = True
+        debug_log("outside ab")
 
     if APtri[0]>=0 and APtri[1]>=0 and BPtri[0]>=0 and BPtri[1]>=0 and CPtri[0]>=0 and CPtri[1]>=0:
         inside = True
+        debug_log("inside")
+
+    if not A_corner and not B_corner and not C_corner and not outside_bc and not outside_ac and not outside_ab and not inside:
+        debug_log(f"cant get position relative to triangle")
+        return None
 
 
     # print (f"outside_ac: {outside_ac}, outside_ab: {outside_ab}, outside_bc: {outside_bc}")
@@ -266,6 +297,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                 #print in degrees
                 # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
             except Exception:
+                debug_log(f"A corner fsolve failed")
                 return None
 
         if outside_ab:
@@ -296,6 +328,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     gamma_2 = math.pi - phi_angles[2] - gamma_1
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
                 except Exception:
+                    debug_log(f"outside AB oob fsolve failed")
                     return None
 
             else:
@@ -320,6 +353,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     gamma_2 = math.pi - phi_angles[2] - gamma_1
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
                 except Exception:
+                    debug_log(f"outside AB fsolve failed")
                     return None
 
 
@@ -400,6 +434,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                 #print in degrees
                 # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
             except Exception:
+                debug_log(f"B corner fsolve failed")
                 return None
 
         if outside_bc:
@@ -430,6 +465,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     alpha_2 = math.pi - phi_angles[0] - alpha_1
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
                 except Exception:
+                    debug_log(f"outside BC oob fsolve failed")
                     return None
 
             else:
@@ -454,6 +490,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     alpha_2 = math.pi - phi_angles[0] - alpha_1
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
                 except Exception:
+                    debug_log(f"outside BC fsolve failed")
                     return None
 
         cg1 = math.cos(-gamma_1)
@@ -526,6 +563,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                 #print in degrees
                 # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
             except Exception:
+                debug_log(f"C corner fsolve failed")
                 return None
 
         if outside_ac:
@@ -556,6 +594,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     beta_2 = math.pi - phi_angles[1] - beta_1
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
                 except Exception:
+                    debug_log(f"outside AC oob fsolve failed")
                     return None
 
             else:
@@ -581,6 +620,7 @@ def triangulate(landmarks, phi_angles, current_pos):
                     # print(f"alpha_1: {alpha_1 * 180 / math.pi}, alpha_2: {alpha_2 * 180 / math.pi}, beta_1: {beta_1 * 180 / math.pi}, beta_2: {beta_2 * 180 / math.pi}, gamma_1: {gamma_1 * 180 / math.pi}, gamma_2: {gamma_2 * 180 / math.pi}")
 
                 except Exception:
+                    debug_log(f"outside AC fsolve failed")
                     return None
 
 
@@ -628,8 +668,10 @@ def triangulate(landmarks, phi_angles, current_pos):
 
 
     if OP is not None:
+        debug_log(f"triangulation found: {OP[0], OP[1]}")
         return OP
     else:
+        debug_log("triangulation failed")
         return None
 
 
