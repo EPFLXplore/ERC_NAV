@@ -48,11 +48,11 @@ def generate_launch_description():
             condition=IfCondition(rviz)
         ),
 
-        Node(
-            package='ros2_aruco',
-            executable='plot_arucos',
-            name='plot_arucos',
-            output='screen',
-        ),
+        # Node(
+        #     package='ros2_aruco',
+        #     executable='plot_arucos',
+        #     name='plot_arucos',
+        #     output='screen',
+        # ),
 
     ])

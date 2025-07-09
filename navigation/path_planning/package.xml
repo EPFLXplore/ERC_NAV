@@ -3,7 +3,7 @@
 <package format="3">
   <name>path_planning</name>
   <version>0.0.1</version>
-  <description>Navigation package that launches nav2 and liosam</description>
+  <description>Navigation package that launches nav2, deals with the ERC map render to convert it to a nav2 global costmap and publishes the ERC hardcoded waypoints for the navigation task</description>
   <maintainer email="arno.blan334@gmail.com">Arno Laurie, Netfluxx on GitHub</maintainer>
   <license>TODO: License declaration</license>
 

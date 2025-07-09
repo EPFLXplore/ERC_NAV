@@ -102,14 +102,14 @@ controller_server:
     general_goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.06
+      xy_goal_tolerance: 0.3
       yaw_goal_tolerance: 1.5
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.9
+      desired_linear_vel: 0.6
       lookahead_dist: 1.5
       min_lookahead_dist: 0.6
-      max_lookahead_dist: 1.65
+      max_lookahead_dist: 1.5
       lookahead_time: 1.25
       rotate_to_heading_angular_vel: 0.3
       transform_tolerance: 0.1
