@@ -59,6 +59,9 @@ class PoseEstimatorNode(Node):
         self.max_translation_jump = 1.5 #meters
         self.max_yaw_jump = math.radians(70) #degrees
 
+        self.max_bearing_diff = 150.0
+        self.min_bearing_diff = 20.0
+
         self.max_nbr_triplets = 5
         self.max_nbr_pairs = 10
 
@@ -453,14 +456,21 @@ class PoseEstimatorNode(Node):
             phi_2 = abs(bearing_B - bearing_C)
             phi_3 = (360.0 - phi_1 - phi_2)
             phi_angles = [phi_1, phi_2, phi_3]
+            #sanity check to see if it will probably not converge numerically:
+            if (self.min_bearing_diff > abs(phi_1) > self.max_bearing_diff) or 
+               (self.min_bearing_diff > abs(phi_2) > self.max_bearing_diff) or 
+               (self.min_bearing_diff > abs(phi_3) > self.max_bearing_diff):
 
-            # try the analytic 3-point triangulation
+                self.get_logger().info(f"triangulation will most probably fail")
+
+
+            # try the optimization triangulation
             if self.initialized_map_odom_tf:
                 ref = [self.curr_map_odom_base_x, self.curr_map_odom_base_y]
             else:
                 ref = self.erc_start_pos
 
-            self.get_logger().info(f"sent to triangulation: landmarks {landmarks_ordered}, phi_angles: {phi_angles}, ref pos {ref}")
+            self.get_logger().info(f"sent to opti triangulation: landmarks {landmarks_ordered}, phi_angles: {phi_angles}, ref pos {ref}")
             xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
 
             if xy is not None:
@@ -469,32 +479,22 @@ class PoseEstimatorNode(Node):
                 self.time_of_last_pose        = self.get_clock().now()
 
             else:
-                #fallback of optimization --> geometric version
-                xy_opti = triangulate(landmarks_ordered, phi_angles, ref)
+                self.get_logger().info(f"opti triang failed, fallback to circle intersects")
+                # fallback of the fallback: average two circle intersections
+                # id0, id1 and id2 are the original indexes in the ArucoMarkers msg
+                p01 = self.get_circle_intersect(id0, p0, id1, p1)
+                p02 = self.get_circle_intersect(id0, p0, id2, p2)
+                candidates = [pt for pt in (p01, p02) if pt is not None]
 
-                if xy_opti is not None:
-                    self.x_estimate, self.y_estimate = xy_opti
-                    self.triangulated_new_xy      = True
-                    self.time_of_last_pose        = self.get_clock().now()
-
-                else:
-                    self.get_logger().info(f"single triang failed, fallback to circle intersects")
-                    # fallback of the fallback: average two circle intersections
-                    # id0, id1 and id2 are the original indexes in the ArucoMarkers msg
-                    p01 = self.get_circle_intersect(id0, p0, id1, p1)
-                    p02 = self.get_circle_intersect(id0, p0, id2, p2)
-                    candidates = [pt for pt in (p01, p02) if pt is not None]
-
-                    if candidates:
-                        mx = sum(pt[0] for pt in candidates) / len(candidates)
-                        my = sum(pt[1] for pt in candidates) / len(candidates)
-                        self.x_estimate, self.y_estimate = mx, my
-                        self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
-                        self.triangulated_new_xy         = True
-                        self.time_of_last_pose           = self.get_clock().now()
+                if candidates:
+                    mx = sum(pt[0] for pt in candidates) / len(candidates)
+                    my = sum(pt[1] for pt in candidates) / len(candidates)
+                    self.x_estimate, self.y_estimate = mx, my
+                    self.get_logger().info(f"circle fallback: x={mx}, y={my}")
+                    self.triangulated_new_xy         = True
+                    self.time_of_last_pose           = self.get_clock().now()
                 
             return
-
 
 
 
@@ -516,10 +516,29 @@ class PoseEstimatorNode(Node):
 
             # 1) build all triplets of valid aruco tags
 
+            
+            
+
             # we need to limit the number of triplets if there are a lot of arucos detected because it wont be real time otherwise.
             scores = []
             for trip in combinations(range(len(valid_markers)), 3):
+
                 bearings = sorted(msg.ar_angles_list[idx] for idx in trip) #sorted in increasing order, smallest angle = C = index 0, biggest angle = A = index 2
+                #pre-filter arucos by throwing away any two markers whose bearing difference
+                # is below a certain threshold, say 20° but we dont want it to be too big (close to 180°) either because it is the singularity of the system, so
+                # the non-linear equation of the geometric triangulation won't converge and the triangulation using triangulation won't converge either.
+                # so between 20° and 150° seems like a good fit.  
+                triplet_is_valid = True
+                for a, b in ((trip[0], trip[1]), (trip[0],  trip[2]), (trip[1], trip[2])):
+                    delta_bearing= abs(msg.ar_angles_list[a] - msg.ar_angles_list[b])
+                    delta_bearing = abs((delta_bearing + 180.0) % 360.0 - 180.0) #wrap to [0, 180]
+
+                    if delta_bearing > self.max_bearing_diff or delta_bearing < self.min_bearing_diff:
+                        triplet_is_valid = False
+                        break
+                if not triplet_is_valid:
+                    continue #go to the next triplet without doing any more computations to save time
+
                 phi_1 = abs(bearings[2] - bearings[1])
                 phi_2 = abs(bearings[1] - bearings[0])
                 phi_3 = 360.0 - phi_1 - phi_2
@@ -530,7 +549,7 @@ class PoseEstimatorNode(Node):
             triplet_idxs = [t for t, _ in scores[:self.max_nbr_triplets]]
 
 
-            # 2) score each triplet by its smallest φ
+            # 2) score each triplet by its smallest φ to select only the best triplets from the pre-filtered ones
             triplet_scores = []
             for (i, j, k) in triplet_idxs:
                 angles = [msg.ar_angles_list[i], msg.ar_angles_list[j], msg.ar_angles_list[k]]
@@ -546,11 +565,15 @@ class PoseEstimatorNode(Node):
                 phi3 = (360.0 - (phi1 + phi2) )               # CPA
 
                 min_phi = min(phi1, phi2, phi3)
-                if abs(min_phi) >= 20: #guard for low phi angles because the scipy fsolve that solves the non linear function of the triangulation does not like small phi angles
+                max_phi = max(phi1, phi2, phi3)
+
+                if abs(min_phi) >= self.min_bearing_diff and abs(max_phi) <= self.max_bearing_diff: #guard just in case for low and high phi angles to avoid not converging numerically
                     triplet_scores.append(((i, j, k), min_phi))
 
             # 3) take the triplet(s) with the largest minimum‐angle, item[1] is thus the min_phi from above and it is the element we want to sort the triplets by
             #reverse means in descending order so highest min_phi triplet first
+
+            #do note that we could also keep the best ones by filtering by the smallest max_phi but since all triplets here are supposed to make the triangulation converge, both are good metrics.
             triplet_scores.sort(key=lambda item: item[1], reverse=True)
             #keep the top 4 triplets and we will average their triangulation later
             best_triplets = [t for t,_ in triplet_scores[:self.max_nbr_triplets-1]]
@@ -594,7 +617,7 @@ class PoseEstimatorNode(Node):
                     else:
                         ref = self.erc_start_pos
 
-                    xy = triangulate(landmarks_ordered, phi_angles, ref)
+                    xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
                 
                     if xy is not None:
                         #guard from garbage values:
@@ -603,25 +626,20 @@ class PoseEstimatorNode(Node):
                         if math.sqrt(dx*dx + dy*dy) <= 1.5:
                             ar_triplet_pos.append(xy)
                     else:
-                        #first fallback to triangulation via optimization
-                        
-                        xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
+                        xy = None
+                        self.get_logger().info(f"geom triang failed, fallback to circle intersects")
+                        # fallback of the fallback: average two circle intersections
+                        # id0, id1 and id2 are the original indexes of the failed triplet aruco in the ArucoMarkers msg
+                        p01 = self.get_circle_intersect(id0, p0, id1, p1)
+                        p02 = self.get_circle_intersect(id0, p0, id2, p2)
+                        candidates = [pt for pt in (p01, p02) if pt is not None]
 
-                        if xy is None:
-                            self.get_logger().info(f"single triang failed, fallback to circle intersects")
-                            # fallback of the fallback: average two circle intersections
-                            # id0, id1 and id2 are the original indexes of the failed triplet aruco in the ArucoMarkers msg
-                            p01 = self.get_circle_intersect(id0, p0, id1, p1)
-                            p02 = self.get_circle_intersect(id0, p0, id2, p2)
-                            candidates = [pt for pt in (p01, p02) if pt is not None]
+                        if candidates:
+                            mx = sum(pt[0] for pt in candidates) / len(candidates)
+                            my = sum(pt[1] for pt in candidates) / len(candidates)
+                            self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
+                            xy = np.array([mx, my])
 
-                            if candidates:
-                                mx = sum(pt[0] for pt in candidates) / len(candidates)
-                                my = sum(pt[1] for pt in candidates) / len(candidates)
-                                self.x_estimate, self.y_estimate = mx, my
-                                self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
-                                self.triangulated_new_xy         = True
-                                self.time_of_last_pose           = self.get_clock().now()
                         if xy is not None:
                             ar_triplet_pos.append(xy)
 
@@ -634,7 +652,8 @@ class PoseEstimatorNode(Node):
                     self.time_of_last_pose     = self.get_clock().now()
 
             else: #if there are no good triplets = all triplets have a min_phi <= 20°
-                #do classic optimization with distances
+                #do classic trilateration via optimization
+                self.get_logger().info(f"no good triplets found. doing classic distance trilateration")
                 distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
                 landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
