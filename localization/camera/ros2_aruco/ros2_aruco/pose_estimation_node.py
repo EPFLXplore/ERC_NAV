@@ -56,6 +56,7 @@ class PoseEstimatorNode(Node):
         self.max_yaw_jump = math.radians(70) #degrees
 
         self.max_nbr_triplets = 4
+        self.max_nbr_pairs = 10
 
         self.subscription = self.create_subscription(
             ArucoMarkers,
@@ -260,9 +261,7 @@ class PoseEstimatorNode(Node):
         #then using the aruco message use the received positions of the same arucos in the rover frame:
         #atan2(ar2_rover_y - ar1_rover_y, ar2_rover_x - ar1_rover_x)
 
-        aruco_idx_pairs = list(combinations(range(len(marker_ids)), 2))
 
-        
         #self.get_logger().info(f"list of pairs of ids: {aruco_idx_pairs}")
         yaw_offsets = [] #store the offsets of the rover odometry yaw compared to map yaw
 
@@ -275,6 +274,27 @@ class PoseEstimatorNode(Node):
 
         ids = [idx for idx, _ in valid_markers]
         #self.get_logger().info(f"Valid marker IDs: {ids}")
+
+
+                #limit the number of pairs in case a lot of arucos are detected and only keep the pairs with the arucos that are the closest to the rover
+        pair_scores = []
+        for i, j in combinations(range(len(valid_markers)), 2):
+            id1, _ = valid_markers[i]
+            id2, _ = valid_markers[j]
+
+            x1, y1 = self.landmark_poses[id1]
+            x2, y2 = self.landmark_poses[id2]
+
+            ref_x = self.curr_map_odom_base_x if self.initialized_map_odom_tf else self.erc_start_pos[0]
+            ref_y = self.curr_map_odom_base_y if self.initialized_map_odom_tf else self.erc_start_pos[1]
+
+            d1 = math.hypot(x1 - ref_x, y1 - ref_y)
+            d2 = math.hypot(x2 - ref_x, y2 - ref_y)
+
+            avg_d = 0.5*(d1 + d2)
+            pair_scores.append(((i, j), avg_d))
+        pair_scores.sort(key=lambda item: item[1])
+        aruco_idx_pairs = [pair for (pair, _) in pair_scores[:self.max_nbr_pairs]]
 
         msg_poses_list = list(msg.poses)
         aruco_id_to_pose_dict = {}
@@ -450,7 +470,6 @@ class PoseEstimatorNode(Node):
             triplet_idxs = [t for t, _ in scores[:self.max_nbr_triplets]]
 
 
-
             # 2) score each triplet by its smallest φ
             triplet_scores = []
             for (i, j, k) in triplet_idxs:
@@ -588,83 +607,6 @@ class PoseEstimatorNode(Node):
 
             self.time_of_last_pose = self.get_clock().now()
 
-        
-
-        # else:
-        #     self.get_logger().info('Not enough markers detected')
-
-        # We need to filter the pose estimation because if we dont and are static(or relatively static)
-        # measurement noise and vibrations will cause the pose to jump which is annyoing for control and nav2.
-        # An easy way to do this is by tracking the time between the last pose estimate and the current one
-        # and if the time is less that a certain threshold, we can apply a low pass filter to the pose estimate
-        # However if the time is greater than the threshold we should not apply the filter
-        # but we should still check if the pose estimate is valid (meaning not too far away from where we currently are according to the previous map->odom and the most recente odom->base_link pose)
-        # if the error is too high we should not apply the filter becuase the odometry eventually needs to be corrected.
-
-        # if self.triangulated_new_xy or self.triangulated_new_pose or self.measured_new_yaw:
-        #     #if the delta time since last pose is less than 0.5 second, apply low pass
-        #     current_time = self.get_clock().now()
-        #     delta_time = (current_time - self.time_of_last_pose).nanoseconds / 1e9  # convert to seconds
-        #     delta_yaw_time = (current_time - self.time_of_last_yaw_meas).nanoseconds / 1e9  # convert to seconds
-
-        #     if delta_time < 0.5: #if we are recieving pose estimations at >2hz
-        #         #self.get_logger().info(f"lowpass filtering the map->odom TF")
-        #         # IIR 1st Order Low Pass Filter
-        #         #H(e^jw) = alpha / (1 + (alpha - 1)e^(-jw))
-        #         #w --> infinity => H = alpha
-        #         #w --> 0 => H = 1
-        #         #response time will depend on the frequency of the updates
-        #         alpha = 0.5 #low alpha = more smoothing, high alpha = less smoothing
-        #         self.x_estimate = alpha * self.x_estimate + (1 - alpha) * self.curr_map_odom_base_x
-        #         self.y_estimate = alpha * self.y_estimate + (1 - alpha) * self.curr_map_odom_base_y
-        #         if delta_yaw_time < 0.5:
-        #             #self.get_logger().info(f"lowpass filtering the yaw in map frame")
-        #             #apply low pass filter to yaw estimate as well
-        #             self.yaw_estimate = alpha * self.yaw_estimate + (1 - alpha) * self.curr_map_odom_base_yaw
-
-        ########################################### WE DONT REALLY NEED TO PUBLISH THIS, IT IS JUST HERE FOR CONVENIENCE ############################3
-        # code to publish map -> base_link. This is the position of the Rover in the ERC coordinate system
-        # this will be fed to the EKF that will calculate the map->odom transform.
-        # the transform tree will thus be complete: we will have map->odom and odom->base_link, which is what we need
-        # for nav2 and to be able to give it the correct waypoints
-        # odom_msg = Odometry()
-        # odom_msg.header.stamp = self.get_clock().now().to_msg()
-        # odom_msg.header.frame_id = 'map'
-        # odom_msg.child_frame_id = 'base_link'
-        # cov = [0.]*36
-
-        # odom_msg.pose.pose.position.x = self.x_estimate
-        # odom_msg.pose.pose.position.y = self.y_estimate
-        # odom_msg.pose.pose.orientation = yaw_to_quat(self.yaw_estimate)
-
-        # if self.triangulated_new_pose:
-        #     #cov[0] = cov[7] = 0.005    # var(x), var(y)
-        #     cov = self.low_cov.copy()
-        #     self.triangulated_new_pose = False
-        # else:
-        #     #set very high covariance for x and y since we were not able to triangulate
-        #     #cov[0] = cov[7] = 1e6
-        #     cov = self.high_cov.copy()
-        
-        # if not hasattr(self, 'last_orientation'):
-        #     self.last_orientation = Quaternion(w=1.0)  # identity
-
-        # if self.measured_new_yaw:
-        #     q = yaw_to_quat(self.yaw_estimate)
-        #     self.last_orientation = q
-        #     cov[35] = 0.002
-        #     self.measured_new_yaw = False
-        # else:
-        #     q = self.last_orientation
-        #     cov[35] = 1e6
-        # odom_msg.pose.pose.orientation = q
-
-                    
-        # odom_msg.pose.covariance = cov
-
-        # if self.initialized_map_odom_tf == True:
-        #     self.publisher_.publish(odom_msg)
-        #############################################################################
 
         #now publish the corrected map->odom transform (since we already have odom->base_link done by the EKF)
         #we can use the tf2_ros library to do this

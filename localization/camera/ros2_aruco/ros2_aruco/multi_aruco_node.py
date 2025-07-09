@@ -9,7 +9,7 @@ import tf2_geometry_msgs
 import cv2
 import numpy as np
 from ros2_aruco import transformations
-from geometry_msgs.msg import PoseArray, Pose
+from geometry_msgs.msg import PoseArray, Pose, PoseStamped
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from custom_msg.srv import CameraParams
@@ -27,7 +27,7 @@ class MultiViewArucoNode(Node):
 
         #half of the aruco box depth
         self.aruco_box_offset = 0.125
-        self.max_aruco_dist = 8.5 #meters
+        self.max_aruco_dist = 10.0 #meters
 
         self.cam_params_received = {"left": False, "right": False}
         self.params_initialized = False
@@ -153,7 +153,7 @@ class MultiViewArucoNode(Node):
         # Camera Intrinsics acquisition
         self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
         self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
-        self.timer = self.create_timer(0.5, self.wait_for_cameras_to_start)
+        self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
 
 
     def wait_for_cameras_to_start(self):
@@ -249,6 +249,45 @@ class MultiViewArucoNode(Node):
         self.markers_pub.publish(markers) 
 
 
+    def calculate_aruco_box_bearing(self, tvec, rvec):
+        R_tag_to_cam, _ = cv2.Rodrigues(rvec)
+        offset = np.array([[0], [0], [-self.aruco_box_offset]])
+        offset_cam = R_tag_to_cam @ offset
+        box_center_tvec = tvec.reshape((3, 1)) + offset_cam
+        x = box_center_tvec[0, 0]
+        z = box_center_tvec[2, 0]
+        bearing_rad = math.atan2(-x, z)
+
+        yaw_rot = R.from_euler('z', bearing_rad, degrees=False)
+        #matrix representing the transform of the aruco tag in the camera frame
+        R_yaw = yaw_rot.as_matrix()
+        T_cam_box = np.eye(4) #identity 4x4 matrix
+        T_cam_box[0:3, 0:3] = R_yaw
+        T_cam_box[0:3, 3] = box_center_tvec.flatten()
+
+        return math.degrees(bearing_rad), T_cam_box
+
+    def transform_to_matrix(self, transform):
+        t = transform.transform.translation
+        q = transform.transform.rotation
+        T = np.eye(4)
+        R_mat = R.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        T[0:3, 0:3] = R_mat
+        T[0:3, 3] = [t.x, t.y, t.z]
+        return T
+
+    # This function creates a 4x4 transformation matrix from x, y, and yaw
+    # It is used to convert a pose estimate into a transformation matrix
+    def pose_to_mat(self, x, y, yaw):
+                c, s = math.cos(yaw), math.sin(yaw)
+                M = np.eye(4) # 4x4 identity matrix
+                #rotation matrix for 2D rotation
+                M[0:2,0:2] = [[c, -s],
+                              [s,  c]]
+                #translation vector
+                M[0,3], M[1,3] = x, y
+                return M
+
 
 ######################################################################
     def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
@@ -266,7 +305,7 @@ class MultiViewArucoNode(Node):
             #cv2.imshow("Detected ArUco Markers", cv_image)
             #cv2.waitKey(1)  # Allow OpenCV window refresh
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size, intrinsic_mat, distortion)
-            self.get_logger().info(f"Markers detected: {marker_ids}")
+            #self.get_logger().info(f"Markers detected: {marker_ids}")
 
             # get the transform position from camera frame to base_link frame
             #first argument = target frame
@@ -274,6 +313,7 @@ class MultiViewArucoNode(Node):
             try:
                 transform = self.tf_buffer.lookup_transform(self.base_frame, camera_frame, rclpy.time.Time())
             except tf2_ros.LookupException as ex:
+                
                 #self.get_logger().warn(f"Transform lookup failed (URDF probably isnt published): {ex}")
                 return
 
@@ -283,24 +323,6 @@ class MultiViewArucoNode(Node):
 
             # Step 1: Store all detections per ID
             for i, marker_id in enumerate(marker_ids):
-
-                #detecting the position of the center of the aruco tag in in the image frame
-                #to deduce the bearing of the aruco in the rover frame
-                center_x = 0.0
-                center_y = 0.0
-                
-                #opencv camera/image frame: x=right of cam, y=down, z=outwards
-
-                for corner in corners[i]:
-                    center_x = corner[0][0]+corner[1][0]+corner[2][0]+corner[3][0]
-                    conter_x = center_x * 0.25
-
-                    center_y = corner[0][1]+corner[1][1]+corner[2][1]+corner[3][1]
-                    center_y = center_y * 0.25
-
-                bearing_img_frame_cv = math.atan2(center_y, center_x)
-                bearing_img_frame_ros2 = -bearing_img_frame_cv
-
 
                 # ignore marker if too far away => measurement is imprecise
                 tvec_ar = tvecs[i][0]
@@ -326,7 +348,7 @@ class MultiViewArucoNode(Node):
                 # Store all detected markers
                 if marker_id not in marker_candidates:
                     marker_candidates[marker_id] = []
-                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler_angles[0])))
+                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler_angles[0]), rvecs[i][0]))
 
             #self.get_logger().info(f"distinc ids set: {distinct_ids}")
 
@@ -351,14 +373,13 @@ class MultiViewArucoNode(Node):
 
         # **Publish only the best markers (lowest yaw per ID)**
         for marker_id, marker_list in marker_candidates.items():
-            for tvec, rot_matrix, best_yaw in marker_list:  # Handle multiple detections per ID
+            for tvec, rot_matrix, best_yaw, rvec in marker_list:  # Handle multiple detections per ID
                 pose = Pose()
 
                 # Offset ArUco pose to the center of the box face
                 face_to_center_offset = np.array([0, 0, -self.aruco_box_offset])
                 adjusted_tvec = tvec + rot_matrix[0:3, 0:3] @ face_to_center_offset
-
-
+                
                 # Convert to ROS2 frame
                 pose.position.x = adjusted_tvec[2]
                 pose.position.y = -adjusted_tvec[0]
@@ -370,7 +391,7 @@ class MultiViewArucoNode(Node):
                     #pose from opencv : camera-->aruco
                     pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
                 except  tf2_ros.LookupException as ex:
-                    self.get_logger().warn(f"TF transform failed: {ex}")
+                    #self.get_logger().warn(f"TF transform failed: {ex}")
                     return
                 
                 # **ERC ID Mapping Logic (Preserved)**
@@ -382,7 +403,21 @@ class MultiViewArucoNode(Node):
                     pose_array.poses.append(pose)
                     markers.poses.append(pose)
                     markers.marker_ids.append(aruco_index)
-                    self.get_logger().info(f"Publishing Marker ID {marker_id} (ERC Index {aruco_index})")
+                    #self.get_logger().info(f"Publishing Marker ID {marker_id} (ERC Index {aruco_index})")
+
+                    bearing_deg, tf_cam_box = self.calculate_aruco_box_bearing(tvec, rvec)
+                    bearing_deg = normalize_angle_deg(bearing_deg)
+                    #markers.ar_angles_list.append(bearing_deg)
+                    self.get_logger().info(f"bearing in camera frame for aruco {aruco_index+51} : {bearing_deg}°")
+                    
+                    t_base_link_to_aruco_box = self.transform_to_matrix(transform) @ tf_cam_box                    
+                    R_base_box = t_base_link_to_aruco_box[0:3, 0:3]
+
+                    r = R.from_matrix(R_base_box)
+                    euler = r.as_euler('xyz', degrees=True)
+                    yaw_deg = euler[2]# yaw is third angle in 'sxyz' convention
+                    yaw_deg = normalize_angle_deg(yaw_deg)
+                    self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
 
                     #setting the corresponding marker position in the map frame
                     ar_map_x, ar_map_y = self.landmark_poses[aruco_index]
@@ -391,6 +426,8 @@ class MultiViewArucoNode(Node):
 
 
 
+def normalize_angle_deg(deg):
+    return (deg + 180) % 360 - 180
 
         
 
