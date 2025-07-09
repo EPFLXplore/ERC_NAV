@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+
+# Work around the removed `np.float` alias in NumPy ≥1.20
+import numpy as _np
+if not hasattr(_np, 'float'):
+    _np.float = float
+
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -91,7 +98,7 @@ class WaypointFollower(Node):
 
             # Convert yaw (in degrees) to quaternion
 
-            q = quaternion_from_euler(0, 0, math.radians(yaw_deg))
+            q = tf_transformations.quaternion_from_euler(0, 0, math.radians(yaw_deg))
             pose.pose.orientation.x = q[0]
             pose.pose.orientation.y = q[1]
             pose.pose.orientation.z = q[2]
@@ -101,10 +108,10 @@ class WaypointFollower(Node):
         # Hardcoded waypoints (x, y, yaw_deg) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
         waypoint_list = [
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 90.0),
-            (0.0, 1.0, 180.0),
-            (5.3, -2.7),
+            # (-2.16, -1.32, -1.5707),
+            # (0.0, -2.13, 0.0),
+            # (0.0, 0.0, 2.35),
+            # (-2.16, 1.48, 3.1415),
             (0.0, 0.0, 0.0),
         ]
 
