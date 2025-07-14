@@ -32,8 +32,8 @@ Rewritting author:  Cyril Goffin
 
 using namespace std::chrono_literals;
 
-const int windowSize = 15;
-const int windowSizeSteering = 15;
+const int windowSize = 2;
+const int windowSizeSteering = 2;
 std::vector<double> buffer_x;
 std::vector<double> buffer_z;
 static ROVER_MODE previous_rover_mode = ROVER_MODE::OFF;

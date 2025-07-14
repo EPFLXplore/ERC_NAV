@@ -25,17 +25,19 @@ def triangulate_opti(landmarks, phi_angles, current_pos):
     B = np.array(landmarks[1])
     C = np.array(landmarks[2])
 
-    #angles as seen by rover: (A to rvr to B, B to rvr to C, C to rvr to A)
+    #angles as seen by rover: (A to rvr to B = phi_1, B to rvr to C = phi_2, C to rvr to A = phi_3)
     phi_angles = [math.radians(angle) for angle in phi_angles]
 
     #position of rover estimated by EKF
     P_est = [current_pos[0] , current_pos[1]]    
 
     try:
-        P = scp.optimize.root(func, P_est, args=(A,B,C, phi), method = 'lm')
-        debug_log(f"OPTI TRIANG: P = {P}")
+        P = scp.optimize.root(func, P_est, args=(A,B,C, phi_angles), method = 'lm')
+        #debug_log(f"OPTI TRIANG: P = {P}")
         P = P.x        # calculated rover position in map frame
-    except Exception:
+        #debug_log(f"OPTI TRIANG: P.x = {P}")
+    except Exception as e:
+        debug_log(e)
         return None
 
     if P is not None:

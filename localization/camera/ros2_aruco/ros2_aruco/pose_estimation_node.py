@@ -1,4 +1,5 @@
 import rclpy
+from rclpy.time import Time
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from ros2_aruco_interfaces.msg import ArucoMarkers
@@ -47,7 +48,7 @@ class PoseEstimatorNode(Node):
 
         self.MAP_SIZE = 300.0
 
-        self.nbr_init_callbacks_for_avg = 25  #25 measurements on initialization to have a good estimate of the map->odom transform with outlier rejection
+        self.nbr_init_callbacks_for_avg = 35  #35 measurements on initialization to have a good estimate of the map->odom transform with outlier rejection
         # then after that we limit the rate of the listener with the following parameters:
         self.init_callback_counter = 0
         self.initialized_map_odom_tf = False
@@ -106,16 +107,16 @@ class PoseEstimatorNode(Node):
         # ArUco ID 53 → index 2
         # ...
         #the positions are relative to the map frame origin which is given to us by the ERC task description
-        self.erc_start_pos = [0.0, 0.0]  #x, y
+        self.erc_start_pos = [0.67, 2.9]  #x, y
 
         self.landmark_poses = [
-                (3.27, -0.8),
-                (-3.58, 2.49),
-                (-1.4, -0.72),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
+                (-0.75, 0.46),
+                (2.59, 1.11),
+                (1.36, 6.79),
+                (-1.65, 17.07),
+                (7.39, 19.4),
+                (17.92, 20.58),
+                (19.38, 15.28),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -142,7 +143,7 @@ class PoseEstimatorNode(Node):
             self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
         
         
-    def are_points_clockwise(self, vertices):
+    def are_points_counterclockwise(self, vertices):
         vertices = np.asarray(vertices)
 
         if len(vertices) < 3:
@@ -159,12 +160,10 @@ class PoseEstimatorNode(Node):
         AB = (B - A).flatten()
         AC = (C - A).flatten()
         
-        #cross product of ABxAC
-        self.get_logger().info(f"AB: {AB}, AC: {AC}")
-        
+        #cross product of ABxAC        
         cross_prod = AB[0]*AC[1] - AB[1]*AC[0]
 
-        return cross_prod < 0 #true if clockwise, false if ccw
+        return cross_prod < 0
 
 
     def get_circle_intersect(self, id1, pose1, id2, pose2):
@@ -249,7 +248,7 @@ class PoseEstimatorNode(Node):
         #this will give us the current map->base_link pose
         try:
             now = self.get_clock().now().to_msg()
-            transform = self.tf_buffer.lookup_transform('map','odom', now, timeout=rclpy.duration.Duration(seconds=0.2))
+            transform = self.tf_buffer.lookup_transform('odom','map', Time())
             T_map_odom = self.pose_to_mat(
                 transform.transform.translation.x,
                 transform.transform.translation.y,
@@ -267,12 +266,19 @@ class PoseEstimatorNode(Node):
                 self.odom_yaw
             )
 
-            # latest map->odom + latest odom->base_link
-            T_map_base = T_map_odom @ T_odom_base
-
-            self.curr_map_odom_base_x   = T_map_base[0, 3]
-            self.curr_map_odom_base_y   = T_map_base[1, 3]
-            self.curr_map_odom_base_yaw = math.atan2(T_map_base[1,0], T_map_base[0,0])
+            if abs(self.odom_pos_x)<1e-4 and abs(self.odom_pos_y)<1e-4:
+                self.get_logger().info(f"kalman did not move !")
+                self.curr_map_odom_base_x = self.x_estimate
+                self.curr_map_odom_base_y = self.y_estimate
+                self.curr_map_odom_base_yaw = self.yaw_estimate
+                T_odom_base = np.eye(4)
+            else:
+                self.get_logger().info(f"kalman moveddd !")
+                # latest map->odom + latest odom->base_link
+                T_map_base = T_map_odom @ T_odom_base
+                self.curr_map_odom_base_x   = T_map_base[0, 3]
+                self.curr_map_odom_base_y   = T_map_base[1, 3]
+                self.curr_map_odom_base_yaw = math.atan2(T_map_base[1,0], T_map_base[0,0])
 
         except TransformException as e:
             if self.prev_map_odom_tf is None:
@@ -281,6 +287,7 @@ class PoseEstimatorNode(Node):
                 self.curr_map_odom_base_yaw = self.odom_yaw
                 #odom_base_pose_map = (self.curr_map_odom_base_x, self.curr_map_odom_base_y)
                 self.get_logger().warn("Initializing TF: assuming MAP = ODOM.")
+            self.get_logger().info(f"FAILEDDD TF LOOKUP")
 
         #sort by increasing id
         marker_ids = list(msg.marker_ids)
@@ -429,13 +436,14 @@ class PoseEstimatorNode(Node):
             are_aruco_ids_ccw = False
 
             #check the orientation of the tags:
-            are_aruco_ids_ccw = self.are_points_clockwise([
+            are_aruco_ids_ccw = self.are_points_counterclockwise([
                                         self.landmark_poses[id0],
                                         self.landmark_poses[id1],
                                         self.landmark_poses[id2]
                                     ])
 
             if not are_aruco_ids_ccw:
+                #self.get_logger().info(f"clockwise points.")
                 #id0, id1, id2 are oriented clockwise
                 #we can thus set A = aruco at map pose self.landmark_poses[id0] etc...
                 #but we also need to find the corresponding angles
@@ -448,30 +456,39 @@ class PoseEstimatorNode(Node):
                 landmarks_ordered = [self.landmark_poses[id2], self.landmark_poses[id1], self.landmark_poses[id0]]
 
 
-            self.get_logger().info(f"clockwise bearings: {bearings_clockwise}")
+            self.get_logger().info(f"ordered bearings: {bearings_clockwise}")
             # build landmarks list and φ-angles
             bearing_A, bearing_B, bearing_C = bearings_clockwise
 
-            phi_1 = abs(bearing_A - bearing_B)
-            phi_2 = abs(bearing_B - bearing_C)
-            phi_3 = (360.0 - phi_1 - phi_2)
+            phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
+            phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
+            phi_3 = abs(360.0 - phi_1 - phi_2)
+
             phi_angles = [phi_1, phi_2, phi_3]
+            self.get_logger().info(f"phi angles: {phi_angles}")
+
+            
             #sanity check to see if it will probably not converge numerically:
-            if (self.min_bearing_diff > abs(phi_1) > self.max_bearing_diff) or 
-               (self.min_bearing_diff > abs(phi_2) > self.max_bearing_diff) or 
-               (self.min_bearing_diff > abs(phi_3) > self.max_bearing_diff):
+            if (self.min_bearing_diff > abs(phi_1) > self.max_bearing_diff) or (self.min_bearing_diff > abs(phi_2) > self.max_bearing_diff) or (self.min_bearing_diff > abs(phi_3) > self.max_bearing_diff):
 
                 self.get_logger().info(f"triangulation will most probably fail")
 
 
             # try the optimization triangulation
             if self.initialized_map_odom_tf:
+                self.get_logger().info(f"syytem init, settin ref to curr est !")
                 ref = [self.curr_map_odom_base_x, self.curr_map_odom_base_y]
             else:
-                ref = self.erc_start_pos
+                self.get_logger().info(f"syytem NOT init, setting to ERC!")
 
+                ref = self.erc_start_pos
+            
+            self.get_logger().info(f"curr map odom base x {self.curr_map_odom_base_x}, y: {self.curr_map_odom_base_y}")
+            self.get_logger().info(f"initialized ?? :{self.initialized_map_odom_tf}")
             self.get_logger().info(f"sent to opti triangulation: landmarks {landmarks_ordered}, phi_angles: {phi_angles}, ref pos {ref}")
             xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
+            #xy = triangulate_opti(landmarks_ordered, [50.5, 21.5, 288.0], ref)
+            self.get_logger().info(f"OPTI TRIANG: {xy}")
 
             if xy is not None:
                 self.x_estimate, self.y_estimate = xy
@@ -490,11 +507,9 @@ class PoseEstimatorNode(Node):
                     mx = sum(pt[0] for pt in candidates) / len(candidates)
                     my = sum(pt[1] for pt in candidates) / len(candidates)
                     self.x_estimate, self.y_estimate = mx, my
-                    self.get_logger().info(f"circle fallback: x={mx}, y={my}")
+                    #self.get_logger().info(f"circle fallback: x={mx}, y={my}")
                     self.triangulated_new_xy         = True
                     self.time_of_last_pose           = self.get_clock().now()
-                
-            return
 
 
 
@@ -587,7 +602,7 @@ class PoseEstimatorNode(Node):
 
                     are_aruco_ids_ccw = False
                     #check the orientation of the tags:
-                    are_aruco_ids_ccw = self.are_points_clockwise([
+                    are_aruco_ids_ccw = self.are_points_counterclockwise([
                                                 self.landmark_poses[id0],
                                                 self.landmark_poses[id1],
                                                 self.landmark_poses[id2]
@@ -756,15 +771,15 @@ class PoseEstimatorNode(Node):
             delta_t = new_t - old_t
             dist_jump = np.linalg.norm(delta_t)
 
-            old_yaw = math.atan2(self.prev_map_odom_tf.transform.translation.y,
-                                 self.prev_map_odom_tf.transform.translation.x)
-            #self.get_logger().warn(f"Old yaw {old_yaw*180/3.1415:.3f}° deg")
+            q = self.prev_map_odom_tf.transform.rotation
+            old_yaw = R.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz')[2]
+
 
             new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
-            yaw_jump = abs(((new_yaw - old_yaw)+np.pi)%(2*np.pi)-np.pi)
+            yaw_jump = abs(((new_yaw - old_yaw) + np.pi) % (2*np.pi) - np.pi)
 
             if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
-                self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.1f}° deg")
+                self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.2f}° deg")
                 return
 
         transform_msg.transform.translation.x = T_map_odom[0, 3]
@@ -788,7 +803,7 @@ class PoseEstimatorNode(Node):
             self.init_callback_counter += 1
             self.avg_initialization_tfs.append(transform_msg)
             self.yaw_init_list.append(self.yaw_estimate)
-            #self.get_logger().info(f"--> Estimated yaw in map DURING INIT: {(self.yaw_estimate*180/3.141592):.3f}")
+            self.get_logger().info(f"--> Estimated yaw in map DURING INIT: {(self.yaw_estimate*180/3.141592):.3f}")
 
             if (self.init_callback_counter == self.nbr_init_callbacks_for_avg):
 
@@ -797,6 +812,13 @@ class PoseEstimatorNode(Node):
                 self.prev_map_odom_tf = self.calculate_robust_tf_avg(self.avg_initialization_tfs, self.yaw_init_list)
                 self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
                 self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE @ {(1/(self.callback_freq_limit)):.3f} Hz")
+                self.get_logger().info(f"########################################################################")
+                self.get_logger().info(f"########################################################################")
+                self.get_logger().info(f"########################################################################")
+                
+                self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
+                self.get_logger().info(f"SENT TRANSFORM AFTER INIT")
+
 
 
     def calculate_robust_tf_avg(self, tf_list: list[TransformStamped], yaw_list: list[float]):
@@ -812,6 +834,7 @@ class PoseEstimatorNode(Node):
         final_t = t[inliers].mean(axis=0)
 
         # Average yaw using circular mean
+        self.get_logger().info(f"yaw list robust initialization: {yaw_list}")
         avg_yaw = np.mean(yaw_list)
 
         tf = TransformStamped()
@@ -823,7 +846,7 @@ class PoseEstimatorNode(Node):
         tf.transform.translation.z = 0.0
         tf.transform.rotation = yaw_to_quat(avg_yaw)
         
-        self.get_logger().info(f"--> INITIALIZED YAW: {(avg_yaw):.3f}")
+        self.get_logger().info(f"--> INITIALIZED YAW: {(avg_yaw * 180/3.141592):.3f}")
 
         return tf
 

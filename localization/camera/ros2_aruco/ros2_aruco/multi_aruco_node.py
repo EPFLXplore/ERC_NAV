@@ -27,7 +27,7 @@ class MultiViewArucoNode(Node):
 
         #half of the aruco box depth
         self.aruco_box_offset = 0.125
-        self.max_aruco_dist = 15.0 #meters
+        self.max_aruco_dist = 10.0 #meters
 
         self.cam_params_received = {"left": False, "right": False}
         self.params_initialized = False
@@ -36,13 +36,13 @@ class MultiViewArucoNode(Node):
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
         self.landmark_poses = [
-                (3.27, -0.8),
-                (-3.58, 2.49),
-                (-1.4, -0.72),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
+                (-0.75, 0.46),
+                (2.59, 1.11),
+                (1.36, 6.79),
+                (-1.65, 17.07),
+                (7.39, 19.4),
+                (17.92, 20.58),
+                (19.38, 15.28),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -112,6 +112,9 @@ class MultiViewArucoNode(Node):
         # synchronized callback that processes images at the same time, slop = window of time for synced images
         #self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2, self.image_sub_3, self.image_sub_4, self.image_sub_5, self.image_sub_6], queue_size=2, slop=0.05)
         self.ts = ApproximateTimeSynchronizer([self.image_sub_1, self.image_sub_2, self.image_sub_3], queue_size=2, slop=0.05)
+        self.ts.registerCallback(self.synced_callback)
+        self.params_initialized = True
+        self.sync_started = True
 
         # Publishers
         self.poses_pub = self.create_publisher(PoseArray, 'aruco_poses', 10)
@@ -148,6 +151,23 @@ class MultiViewArucoNode(Node):
             [0, 2.84698625e+03, 4.62916150e+02], 
             [0, 0, 1]]
         )
+
+        self.distortion_realsense_2_top_left = np.array([ 1.95749872e-01, -1.07702276e+00,  1.00934065e-03, -3.30662919e-03, 1.27058253e+00])
+        self.intrinsic_mat_realsense_2_top_left = np.array(
+            [[607.18243408,   0.0,         317.05618286],
+            [  0.0,         606.41699219,   236.88917542],
+            [  0.0,           0.0,           1.        ]]
+        )
+
+
+        self.distortion_realsense_1_top_right = np.array([ 0.08038885, -0.30553617, -0.00123736,  0.00491224,  0.20331065])
+        self.intrinsic_mat_realsense_1_top_right  = np.array(
+            [[607.18243408,   0.0,         317.05618286],
+            [  0.0,         606.41699219,   236.88917542],
+            [  0.0,           0.0,           1.        ]]
+        )
+
+
         self.aruco_dictionary = cv2.aruco.Dictionary_get(cv2.aruco.__getattribute__(dictionary_id_name))
         self.aruco_parameters = cv2.aruco.DetectorParameters_create()
         self.aruco_parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
@@ -155,77 +175,71 @@ class MultiViewArucoNode(Node):
         # Camera Intrinsics acquisition
         self.client_left = self.create_client(CameraParams, "/NAV/camera_info_102122061110")
         self.client_right = self.create_client(CameraParams, "/NAV/camera_info_135322062945")
-        self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
+        #self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
 
 
-    def wait_for_cameras_to_start(self):
-        if not (self.client_left.service_is_ready() and self.client_right.service_is_ready()):
-            self.get_logger().debug("Waiting for CameraParams services…")
-            return
+    # def wait_for_cameras_to_start(self):
+    #     if not (self.client_left.service_is_ready() and self.client_right.service_is_ready()):
+    #         self.get_logger().debug("Waiting for CameraParams services…")
+    #         return
 
-        # stop retry timer once services become available
-        self.timer.cancel()
+    #     # stop retry timer once services become available
+    #     self.timer.cancel()
 
-        request_left = CameraParams.Request()
-        future_left = self.client_left.call_async(request_left)
-        future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
+    #     request_left = CameraParams.Request()
+    #     future_left = self.client_left.call_async(request_left)
+    #     future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
 
-        request_right = CameraParams.Request()
-        future_right = self.client_right.call_async(request_right)
-        future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
+    #     request_right = CameraParams.Request()
+    #     future_right = self.client_right.call_async(request_right)
+    #     future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
 
 
-    def callback_cam_params(self, future, camera):
-        if self.params_initialized:
-            return  # Already good
-        try:
-            response = future.result()
-        except Exception as e:
-            self.get_logger().error(f"Service call failed for {camera} camera: {e}")
-            return
+    # def callback_cam_params(self, future, camera):
+    #     if self.params_initialized:
+    #         return  # Already good
+    #     try:
+    #         response = future.result()
+    #     except Exception as e:
+    #         self.get_logger().error(f"Service call failed for {camera} camera: {e}")
+    #         return
 
-        if (
-            response.fx == 0
-            or response.fy == 0
-            or response.cx == 0
-            or response.cy == 0
-            or len(response.distortion_coefficients) == 0
-        ):
-            #self.get_logger().warn(f"Invalid intrinsics from {camera} camera – retrying…")
-            self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
-            return
+    #     if (
+    #         response.fx == 0
+    #         or response.fy == 0
+    #         or response.cx == 0
+    #         or response.cy == 0
+    #         or len(response.distortion_coefficients) == 0
+    #     ):
+    #         #self.get_logger().warn(f"Invalid intrinsics from {camera} camera – retrying…")
+    #         #self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
+    #         return
 
-        distortion = np.array(response.distortion_coefficients)
-        intrinsic_mat = np.array(
-            [[response.fx, 0, response.cx], [0, response.fy, response.cy], [0, 0, 1]]
-        )
+    #     distortion = np.array(response.distortion_coefficients)
+    #     intrinsic_mat = np.array(
+    #         [[response.fx, 0, response.cx], [0, response.fy, response.cy], [0, 0, 1]]
+    #     )
 
-        if camera == "left":
-            self.distortion_1 = distortion
-            self.intrinsic_mat_1 = intrinsic_mat
-        else:
-            self.distortion_2 = distortion
-            self.intrinsic_mat_2 = intrinsic_mat
+    #     if camera == "left":
+    #         self.distortion_1 = distortion
+    #         self.intrinsic_mat_1 = intrinsic_mat
+    #     else:
+    #         self.distortion_2 = distortion
+    #         self.intrinsic_mat_2 = intrinsic_mat
 
-        self.cam_params_received[camera] = True
-        #self.get_logger().info(f"Received intrinsics for {camera} camera.")
+    #     self.cam_params_received[camera] = True
+    #     #self.get_logger().info(f"Received intrinsics for {camera} camera.")
 
-        if all(self.cam_params_received.values()) and not self.sync_started:
-            #self.get_logger().info("Both camera intrinsics received – starting synchroniser")
-            self.ts.registerCallback(self.synced_callback)
-            self.params_initialized = True
-            self.sync_started = True
+    #     if all(self.cam_params_received.values()) and not self.sync_started:
+    #         #self.get_logger().info("Both camera intrinsics received – starting synchroniser")
+    #         self.ts.registerCallback(self.synced_callback)
+    #         self.params_initialized = True
+    #         self.sync_started = True
 
 
     #def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6):
     def synced_callback(self, img_msg_1, img_msg_2, img_msg_3):
 
-        #self.get_logger().warn("sycned callback 2 cams")
-        
-        if self.intrinsic_mat_1 is None or self.intrinsic_mat_2 is None:
-            #self.get_logger().warn("No camera info has been received!")
-            return
-        
         markers = ArucoMarkers() # custom msg => ID + position
         pose_array = PoseArray() # for vizualization on rviz
 
@@ -237,8 +251,8 @@ class MultiViewArucoNode(Node):
         pose_array.header.stamp = img_msg_1.header.stamp
 
         # Populate the array of positions, by processing each image sequentially
-        self.process_image(img_msg_1, self.intrinsic_mat_1, self.distortion_1, self.get_parameter("camera_frame_1").get_parameter_value().string_value, markers, pose_array)
-        self.process_image(img_msg_2, self.intrinsic_mat_2, self.distortion_2, self.get_parameter("camera_frame_2").get_parameter_value().string_value, markers, pose_array)
+        self.process_image(img_msg_1, self.intrinsic_mat_realsense_1_top_right, self.distortion_realsense_1_top_right, self.get_parameter("camera_frame_1").get_parameter_value().string_value, markers, pose_array)
+        self.process_image(img_msg_2, self.intrinsic_mat_realsense_2_top_left, self.distortion_realsense_2_top_left, self.get_parameter("camera_frame_2").get_parameter_value().string_value, markers, pose_array)
         self.process_image(img_msg_3, self.intrinsic_mat_oakd, self.distortion_oakd, self.get_parameter("camera_frame_3").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_4, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_4").get_parameter_value().string_value, markers, pose_array)
         # self.process_image(img_msg_5, self.intrinsic_mat_cs, self.distortion_cs, self.get_parameter("camera_frame_5").get_parameter_value().string_value, markers, pose_array)
@@ -353,7 +367,7 @@ class MultiViewArucoNode(Node):
                 # Store all detected markers
                 if marker_id not in marker_candidates:
                     marker_candidates[marker_id] = []
-                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler[1]), rvecs[i][0]))
+                marker_candidates[marker_id].append((tvecs[i][0], rot_matrix, abs(euler[1]), rvecs[i][0], corners[i]))
 
             #self.get_logger().info(f"distinc ids set: {distinct_ids}")
 
@@ -378,7 +392,7 @@ class MultiViewArucoNode(Node):
 
         # **Publish only the best markers (lowest yaw per ID)**
         for marker_id, marker_list in marker_candidates.items():
-            for tvec, rot_matrix, best_yaw, rvec in marker_list:  # Handle multiple detections per ID
+            for tvec, rot_matrix, best_yaw, rvec, marker_corners in marker_list:  # Handle multiple detections per ID
                 pose = Pose()
 
                 # Offset ArUco pose to the center of the box face
@@ -416,7 +430,9 @@ class MultiViewArucoNode(Node):
                     #markers.ar_angles_list.append(bearing_deg)
                     #self.get_logger().info(f"bearing in camera frame for aruco {aruco_index+51} : {bearing_deg}°")
                     
-                    t_base_link_to_aruco_box = self.transform_to_matrix(transform) @ tf_cam_box                    
+                    t_base_link_to_aruco_box = self.transform_to_matrix(transform) @ tf_cam_box        
+
+                    #self.get_logger().info(f"base_link to aruco box {aruco_index+51}: {t_base_link_to_aruco_box[0:3, 3]}")            
                     R_base_box = t_base_link_to_aruco_box[0:3, 0:3]
 
                     r = R.from_matrix(R_base_box)
@@ -424,12 +440,44 @@ class MultiViewArucoNode(Node):
                     yaw_deg = euler[2]# yaw is third angle in 'sxyz' convention
                     yaw_deg = normalize_angle_deg(yaw_deg)
                     #self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
+                    ############# OPENCV Manual Bearing Calculation for realsense since they have shit calibrations
+
+                    if str(camera_frame) == "intel_realsense_D415_camera_top_right_1" or str(camera_frame) == "intel_realsense_D415_camera_top_left_1":
+                        h, w = cv_image.shape[:2]
+                        fov_deg = 55.0 #measured horizontal fov for realsense d415
+                        #focal length in pixels
+                        fpx = w / (2 * math.tan(math.radians(fov_deg / 2)))
+
+                        pts = marker_corners.reshape((4, 2))
+                        center = pts.mean(axis=0)
+                            
+                        dx = center[0] - (w / 2)
+                        bearing_manual_rad =  (-1.0)* math.atan2(dx, fpx) #-1 to go from opencv2 to ros2 frame
+                        #self.get_logger().info(f"detected yaw in ros2 cam frame: {bearing_manual_rad*180/3.1415:.2f}°")
+
+                        q = transform.transform.rotation
+                        q_cam_base = [q.x, q.y, q.z, q.w]
+                        R_cam_base = R.from_quat(q_cam_base)
+                        roll_cam2base, _, yaw_cam2base_rad = R_cam_base.as_euler('xyz', degrees=False)
+                        #self.get_logger().info(f"cam {camera_frame}  yaw in rv frame {(yaw_cam2base_rad*180/3.1415):.2f}°")
+                        #first check if the camera is rolled
+                        #self.get_logger().info(f"ROLL of CAM: {roll_cam2base*180/3.1415:.2f}°")
+                        if abs(roll_cam2base) > 0.05: # assume the camera is flipped in real life so the atan2 above will need to be flipped
+                            yaw_base_rad = yaw_cam2base_rad - bearing_manual_rad
+                        else:
+                            yaw_base_rad = yaw_cam2base_rad + bearing_manual_rad
+                        yaw_deg = math.degrees(yaw_base_rad)
+
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame: {yaw_deg:.2f}°")
+
+                    ############### end of manual bearing calc
 
                     #setting the corresponding marker position in the map frame
                     ar_map_x, ar_map_y = self.landmark_poses[aruco_index]
                     markers.landmark_map_pos_x.append(ar_map_x)
                     markers.landmark_map_pos_y.append(ar_map_y)
                     markers.ar_angles_list.append(yaw_deg)
+
 
 
 
