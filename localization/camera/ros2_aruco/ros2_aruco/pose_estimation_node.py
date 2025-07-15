@@ -42,7 +42,6 @@ class PoseEstimatorNode(Node):
         self.yaw_estimate = 0.0
         self.triangulated_new_pose = False
         self.triangulated_new_xy = False
-        self.measured_new_yaw = False
         self.time_of_last_pose = self.get_clock().now()
         self.time_of_last_yaw_meas = self.get_clock().now()
 
@@ -53,15 +52,17 @@ class PoseEstimatorNode(Node):
         self.init_callback_counter = 0
         self.initialized_map_odom_tf = False
         self.last_callback_time = self.get_clock().now()
-        self.callback_freq_limit = 0.2 #seconds
+        self.callback_period_limit = 1/15.0 #seconds (cannot be faster than the refresh rate of the realsense cameras = 15fps)
         self.avg_initialization_tfs = []
         self.yaw_init_list = []
 
         self.max_translation_jump = 35.0 #meters
         self.max_yaw_jump = math.radians(70) #degrees
+        self.max_aruco_dist_for_tvec_use = 5.0 #meters
+        self.start_pose_tolerance = 0.25 #meters
 
-        self.max_bearing_diff = 170.0
-        self.min_bearing_diff = 10.0
+        self.max_bearing_diff = 179.0
+        self.min_bearing_diff = 2.0
 
         self.max_nbr_triplets = 5
         self.max_nbr_pairs = 10
@@ -239,7 +240,7 @@ class PoseEstimatorNode(Node):
     def listener_callback(self, msg):
 
         now = self.get_clock().now()
-        if ((now - self.last_callback_time).nanoseconds/1e9 < self.callback_freq_limit  and self.initialized_map_odom_tf == True):
+        if ((now - self.last_callback_time).nanoseconds/1e9 < self.callback_period_limit  and self.initialized_map_odom_tf == True):
             return #limit the rate at which we run the callback since it is computationnally expensive and we dont need it very often.
         self.last_callback_time = now
 
@@ -286,8 +287,8 @@ class PoseEstimatorNode(Node):
                 self.curr_map_odom_base_y = self.odom_pos_y
                 self.curr_map_odom_base_yaw = self.odom_yaw
                 #odom_base_pose_map = (self.curr_map_odom_base_x, self.curr_map_odom_base_y)
-                self.get_logger().warn("Initializing TF: assuming MAP = ODOM.")
-            self.get_logger().info(f"FAILEDDD TF LOOKUP")
+                #self.get_logger().warn("Initializing TF: assuming MAP = ODOM.")
+            #self.get_logger().info(f"FAILEDDD TF LOOKUP")
 
         #sort by increasing id
         marker_ids = list(msg.marker_ids)
@@ -315,7 +316,7 @@ class PoseEstimatorNode(Node):
         #self.get_logger().info(f"Valid marker IDs: {ids}")
 
 
-                #limit the number of pairs in case a lot of arucos are detected and only keep the pairs with the arucos that are the closest to the rover
+        #limit the number of pairs in case a lot of arucos are detected and only keep the pairs with the arucos that are the closest to the rover
         pair_scores = []
         for i, j in combinations(range(len(valid_markers)), 2):
             id1, _ = valid_markers[i]
@@ -331,7 +332,8 @@ class PoseEstimatorNode(Node):
             d2 = math.hypot(x2 - ref_x, y2 - ref_y)
 
             avg_d = 0.5*(d1 + d2)
-            pair_scores.append(((i, j), avg_d))
+            if d1 < self.max_aruco_dist_for_tvec_use and d2 < self.max_aruco_dist_for_tvec_use:
+                pair_scores.append(((i, j), avg_d))
         pair_scores.sort(key=lambda item: item[1])
         aruco_idx_pairs = [pair for (pair, _) in pair_scores[:self.max_nbr_pairs]]
 
@@ -396,7 +398,6 @@ class PoseEstimatorNode(Node):
             avg_yaw = sum(yaw_offsets)/len(yaw_offsets)
             #self.get_logger().info(f"--> Yaw (deg): {(avg_yaw*180/3.141592):.3f} ")
             self.yaw_estimate = avg_yaw
-            self.measured_new_yaw = True
             self.time_of_last_yaw_meas = self.get_clock().now()
         
 
@@ -420,15 +421,27 @@ class PoseEstimatorNode(Node):
             id2, pose2 = valid_markers[1]
 
             intersect_pos = self.get_circle_intersect(id1, pose1, id2, pose2)
+
             if intersect_pos:
-                self.x_estimate, self.y_estimate = intersect_pos
-                self.triangulated_new_xy = True
-                self.time_of_last_pose = self.get_clock().now()
+                #verify if we arent too far off from the real starting position when initializing the system
+                if not self.initialized_map_odom_tf:
+                    ref = self.erc_start_pos
+                    dx = intersect_pos[0] - ref[0]
+                    dy = intersect_pos[1] - ref[1]
+                    if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                        self.x_estimate, self.y_estimate = intersect_pos
+                        self.triangulated_new_xy = True
+                        self.time_of_last_pose = self.get_clock().now()
+                    else:
+                        self.get_logger().info("2 circle intersect is TOO FAR OFF FROM START")
+                else:
+                    self.x_estimate, self.y_estimate = intersect_pos
+                    self.triangulated_new_xy = True
+                    self.time_of_last_pose = self.get_clock().now()
 
 
 
-
-        if len(valid_markers) == 3: #do triangulation directly but if it fails do 2x circle intersection and take the mean
+        if len(valid_markers) == 3: #do triangulation directly but if it fails do 2x 2-circle intersection and take the mean o the results
             self.get_logger().info(f"1 TRIANGULATION")
             #id0, id1, id2 are aruco ids (0 =>aruco tag nbr 51, 1=>52 etc...)
             (id0, p0), (id1, p1), (id2, p2) = valid_markers #[(aruco id, pose), ...]
@@ -456,22 +469,19 @@ class PoseEstimatorNode(Node):
                 landmarks_ordered = [self.landmark_poses[id2], self.landmark_poses[id1], self.landmark_poses[id0]]
 
 
-            self.get_logger().info(f"ordered bearings: {bearings_clockwise}")
+            #self.get_logger().info(f"ordered bearings: {bearings_clockwise}")
             # build landmarks list and φ-angles
             bearing_A, bearing_B, bearing_C = bearings_clockwise
 
             phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
             phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
-            phi_3 = abs(360.0 - phi_1 - phi_2)
+            phi_3 = min(abs(bearing_C - bearing_A), abs(360.0 - abs(bearing_C) - abs(bearing_A)))
+
+            #phi_3 = abs(360.0 - phi_1 - phi_2)
 
             phi_angles = [phi_1, phi_2, phi_3]
-            self.get_logger().info(f"phi angles: {phi_angles}")
+            #self.get_logger().info(f"phi angles: {phi_angles}")
 
-            
-            #sanity check to see if it will probably not converge numerically:
-            if (self.min_bearing_diff > abs(phi_1) > self.max_bearing_diff) or (self.min_bearing_diff > abs(phi_2) > self.max_bearing_diff) or (self.min_bearing_diff > abs(phi_3) > self.max_bearing_diff):
-
-                self.get_logger().info(f"triangulation will most probably fail")
 
 
             # try the optimization triangulation
@@ -483,17 +493,35 @@ class PoseEstimatorNode(Node):
 
                 ref = self.erc_start_pos
             
-            self.get_logger().info(f"curr map odom base x {self.curr_map_odom_base_x}, y: {self.curr_map_odom_base_y}")
-            self.get_logger().info(f"initialized ?? :{self.initialized_map_odom_tf}")
             self.get_logger().info(f"sent to opti triangulation: landmarks {landmarks_ordered}, phi_angles: {phi_angles}, ref pos {ref}")
+
             xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
-            #xy = triangulate_opti(landmarks_ordered, [50.5, 21.5, 288.0], ref)
-            self.get_logger().info(f"OPTI TRIANG: {xy}")
+            self.get_logger().info(f"OPTI TRIANG POS: {xy}")
 
             if xy is not None:
-                self.x_estimate, self.y_estimate = xy
-                self.triangulated_new_xy      = True
-                self.time_of_last_pose        = self.get_clock().now()
+                if not self.initialized_map_odom_tf:
+                    dx = xy[0] - self.erc_start_pos[0]
+                    dy = xy[1] - self.erc_start_pos[1]
+
+                    if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                        self.x_estimate, self.y_estimate = xy
+                        self.triangulated_new_xy      = True
+                        self.time_of_last_pose        = self.get_clock().now()
+
+                        #calculate yaw in the map frame when triangulation is valid on initialization
+                        pt_A = landmarks_ordered[0]
+                        self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
+                        self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
+                else:
+
+                    self.x_estimate, self.y_estimate = xy
+                    self.triangulated_new_xy      = True
+                    self.time_of_last_pose        = self.get_clock().now()
+
+                    #always calculate yaw in the map frame when triangulating
+                    pt_A = landmarks_ordered[0]
+                    self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
+                    self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
 
             else:
                 self.get_logger().info(f"opti triang failed, fallback to circle intersects")
@@ -511,18 +539,19 @@ class PoseEstimatorNode(Node):
                     self.triangulated_new_xy         = True
                     self.time_of_last_pose           = self.get_clock().now()
 
+                    #calculate yaw in the map frame
+                    pt_A = landmarks_ordered[0]
+                    self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
+                    self.get_logger().info(f"Circle INTERSECT YAW ESTIM: {self.yaw_estimate}")
+
 
 
 
         # if >3 landmarks we can triangulate the pose analytically by using carefully chosen triplets of aruco tags
-        if len(valid_markers)>3 and len(valid_markers) <= 7:
+        if len(valid_markers)>3:
             self.get_logger().info(f"MULTIPLE TRIANGULATIONS")
 
-
             #when there are more than 3 arucos we need to find every pair of triplets of arucos (well limit them to self.max_nbr_triplets to save computation time)
-            #to do that we need to calculate each phi angles (angle between two aruco tags) for every triplet, then sort every triplet by its lowest phi angle. 
-            #we will only take the triplets with the biggest minimum phi angles because the smaller the phi angles get the lower our current position estimate error 
-            #needs to be otherwise the non-linear function (law of Sines) we solve numerically may not converge.
   
             #The triangulation code relies on the angles of the aruco tags relative to the rover's frame given by muli_aruco_node.py's ArucoMarkers msg
             #we first need to order the detect tags clockwise in the map frame, this can be done by comparing the angles of each tag in the rover frame
@@ -530,74 +559,19 @@ class PoseEstimatorNode(Node):
             #we also need the current position (x, y) estimate in the map frame
 
             # 1) build all triplets of valid aruco tags
-
-            
-            
-
             # we need to limit the number of triplets if there are a lot of arucos detected because it wont be real time otherwise.
-            scores = []
+
+            selected_triplets = []
             for trip in combinations(range(len(valid_markers)), 3):
+                selected_triplets.append((trip))
+                if len(selected_triplets) >= self.max_nbr_triplets:
+                    break
 
-                bearings = sorted(msg.ar_angles_list[idx] for idx in trip) #sorted in increasing order, smallest angle = C = index 0, biggest angle = A = index 2
-                #pre-filter arucos by throwing away any two markers whose bearing difference
-                # is below a certain threshold, say 20° but we dont want it to be too big (close to 180°) either because it is the singularity of the system, so
-                # the non-linear equation of the geometric triangulation won't converge and the triangulation using triangulation won't converge either.
-                # so between 20° and 150° seems like a good fit.  
-                triplet_is_valid = True
-                for a, b in ((trip[0], trip[1]), (trip[0],  trip[2]), (trip[1], trip[2])):
-                    delta_bearing= abs(msg.ar_angles_list[a] - msg.ar_angles_list[b])
-                    delta_bearing = abs((delta_bearing + 180.0) % 360.0 - 180.0) #wrap to [0, 180]
+            ar_triplet_pos = [] #list to store the triangulated positions from each triplet
+            ar_triplet_yaw = []
 
-                    if delta_bearing > self.max_bearing_diff or delta_bearing < self.min_bearing_diff:
-                        triplet_is_valid = False
-                        break
-                if not triplet_is_valid:
-                    continue #go to the next triplet without doing any more computations to save time
-
-                phi_1 = abs(bearings[2] - bearings[1])
-                phi_2 = abs(bearings[1] - bearings[0])
-                phi_3 = 360.0 - phi_1 - phi_2
-                min_phi = min(phi_1, phi_2, phi_3)
-                scores.append((trip, min_phi))
-
-            scores.sort(key=lambda x:x[1], reverse=True) #store (trip, min_phi) in decreasing order according to the min_phi angles
-            triplet_idxs = [t for t, _ in scores[:self.max_nbr_triplets]]
-
-
-            # 2) score each triplet by its smallest φ to select only the best triplets from the pre-filtered ones
-            triplet_scores = []
-            for (i, j, k) in triplet_idxs:
-                angles = [msg.ar_angles_list[i], msg.ar_angles_list[j], msg.ar_angles_list[k]]
-                #we get the angles of each aruco tag in the rover's ros2 frame in the right hand rule convention of the 
-                #ros2 rover frame which is x=forwards, y=left, z=up
-                angles.sort()  # C, B, A
-
-                theta_C, theta_B, theta_A = angles
-
-                # compute the three interior angles
-                phi1 = abs(theta_A - theta_B)                 # APB
-                phi2 = abs(theta_B - theta_C)                 # BPC
-                phi3 = (360.0 - (phi1 + phi2) )               # CPA
-
-                min_phi = min(phi1, phi2, phi3)
-                max_phi = max(phi1, phi2, phi3)
-
-                if abs(min_phi) >= self.min_bearing_diff and abs(max_phi) <= self.max_bearing_diff: #guard just in case for low and high phi angles to avoid not converging numerically
-                    triplet_scores.append(((i, j, k), min_phi))
-
-            # 3) take the triplet(s) with the largest minimum‐angle, item[1] is thus the min_phi from above and it is the element we want to sort the triplets by
-            #reverse means in descending order so highest min_phi triplet first
-
-            #do note that we could also keep the best ones by filtering by the smallest max_phi but since all triplets here are supposed to make the triangulation converge, both are good metrics.
-            triplet_scores.sort(key=lambda item: item[1], reverse=True)
-            #keep the top 4 triplets and we will average their triangulation later
-            best_triplets = [t for t,_ in triplet_scores[:self.max_nbr_triplets-1]]
-
-            #list to store the triangulated positions from each triplet
-            ar_triplet_pos = []
-
-            if best_triplets:
-                for (i, j, k) in best_triplets:
+            if selected_triplets:
+                for (i, j, k) in selected_triplets:
                     (id0, p0), (id1, p1), (id2, p2) = valid_markers[i], valid_markers[j], valid_markers[k]
 
                     are_aruco_ids_ccw = False
@@ -621,9 +595,9 @@ class PoseEstimatorNode(Node):
 
                     bearing_A, bearing_B, bearing_C = bearings_clockwise
 
-                    phi_1 = abs(bearing_A - bearing_B)
-                    phi_2 = abs(bearing_B - bearing_C)
-                    phi_3 = (360.0 - phi_1 - phi_2)
+                    phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
+                    phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
+                    phi_3 = min(abs(bearing_C - bearing_A), abs(360.0 - abs(bearing_C) - abs(bearing_A)))
                     phi_angles = [phi_1, phi_2, phi_3]
 
 
@@ -635,11 +609,25 @@ class PoseEstimatorNode(Node):
                     xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
                 
                     if xy is not None:
-                        #guard from garbage values:
-                        dx = xy[0] - ref[0]
-                        dy = xy[1] - ref[1]
-                        if math.sqrt(dx*dx + dy*dy) <= 1.5:
+                        #guard from garbage values on initialization
+                        if not self.initialized_map_odom_tf:
+                            dx = xy[0] - self.erc_start_pos[0]
+                            dy = xy[1] - self.erc_start_pos[1]
+                            if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                                ar_triplet_pos.append(xy)
+                                #calculate the yaw
+                                pt_A = landmarks_ordered[0]
+                                self.yaw_estimate = math.atan2(pt_A[1] - xy[1], pt_A[0] - xy[0]) - math.radians(bearing_A)
+                                self.get_logger().info(f"MULTI triang YAW EST: {self.yaw_estimate}")
+                                ar_triplet_yaw.append(self.yaw_estimate)
+
+                        else:
                             ar_triplet_pos.append(xy)
+                            pt_A = landmarks_ordered[0]
+                            self.yaw_estimate = math.atan2(pt_A[1] - xy[1], pt_A[0] - xy[0]) - math.radians(bearing_A)
+                            self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
+                            ar_triplet_yaw.append(self.yaw_estimate)
+
                     else:
                         xy = None
                         self.get_logger().info(f"geom triang failed, fallback to circle intersects")
@@ -656,7 +644,15 @@ class PoseEstimatorNode(Node):
                             xy = np.array([mx, my])
 
                         if xy is not None:
-                            ar_triplet_pos.append(xy)
+                            #guard from garbage values on initialization
+                            if not self.initialized_map_odom_tf:
+                                dx = xy[0] - self.erc_start_pos[0]
+                                dy = xy[1] - self.erc_start_pos[1]
+                                if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                                    ar_triplet_pos.append(xy)
+                            else:
+                                ar_triplet_pos.append(xy)
+
 
                 if ar_triplet_pos:
                     pos_arr = np.stack(ar_triplet_pos, axis=0)
@@ -666,97 +662,103 @@ class PoseEstimatorNode(Node):
                     self.triangulated_new_xy   = True
                     self.time_of_last_pose     = self.get_clock().now()
 
-            else: #if there are no good triplets = all triplets have a min_phi <= 20°
-                #do classic trilateration via optimization
-                self.get_logger().info(f"no good triplets found. doing classic distance trilateration")
-                distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
-                landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
+                if ar_triplet_yaw:
+                    yaw_arr = np.stack(ar_triplet_yaw, axis=0)
+                    mean_yaw = yaw_arr.mean(axis=0)
+                    self.yaw_estimate = mean_yaw
 
-                #remove makrers that are too far away (>6m)
-                filtered = [
-                    (lm, d) 
-                    for lm, d in zip(landmarks_ordered, distance_estimates) 
-                    if d <= 6.0
-                ]
-                # if we’ve filtered out everything (or too few), bail out
-                if len(filtered) < 3:
-                    self.get_logger().info(f"SHOULD DO CIRCLE INTERSECTIONS")
 
-                    ##do circle intersections !!!
-                    return
+            # else: #if there are no good triplets = all triplets have a min_phi <= 20°
+            #     #do classic trilateration via optimization
+            #     self.get_logger().info(f"no good triplets found. doing classic distance trilateration")
+            #     distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
+            #     landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
-                landmarks_ordered, distance_estimates = zip(*filtered)
-                 # convert from tuples to lists
-                landmarks_ordered = list(landmarks_ordered)
-                self.get_logger().info(f"kept landmarks : {landmarks_ordered}")
-                distance_estimates = list(distance_estimates)
+            #     #remove makrers that are too far away (>6m)
+            #     filtered = [
+            #         (lm, d) 
+            #         for lm, d in zip(landmarks_ordered, distance_estimates) 
+            #         if d <= 6.0
+            #     ]
+            #     # if we’ve filtered out everything (or too few), bail out
+            #     if len(filtered) < 3:
+            #         self.get_logger().info(f"SHOULD DO CIRCLE INTERSECTIONS")
 
-                if self.initialized_map_odom_tf:
-                    map_pos_x = self.curr_map_odom_base_x
-                    map_pos_y = self.curr_map_odom_base_y
-                    #bounds = window of size 2*2=4m centered on the current position
-                    try:
+            #         ##do circle intersections !!!
+            #         return
 
-                        base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
-                                                    args=(landmarks_ordered, distance_estimates))
-                    except Exception as e:
-                        return
-                else:
-                    #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
-                    try:
+            #     landmarks_ordered, distance_estimates = zip(*filtered)
+            #      # convert from tuples to lists
+            #     landmarks_ordered = list(landmarks_ordered)
+            #     self.get_logger().info(f"kept landmarks : {landmarks_ordered}")
+            #     distance_estimates = list(distance_estimates)
 
-                        base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
-                                                    args=(landmarks_ordered, distance_estimates))             
-                    except Exception as e:
-                        return
+            #     if self.initialized_map_odom_tf:
+            #         map_pos_x = self.curr_map_odom_base_x
+            #         map_pos_y = self.curr_map_odom_base_y
+            #         #bounds = window of size 2*2=4m centered on the current position
+            #         try:
 
-                # Only care about x and y
-                self.x_estimate = base_estimate.x[0] 
-                self.y_estimate = base_estimate.x[1]
-                self.triangulated_new_pose = True
-                self.triangulated_new_xy = True
+            #             base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
+            #                                         args=(landmarks_ordered, distance_estimates))
+            #         except Exception as e:
+            #             return
+            #     else:
+            #         #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
+            #         try:
 
-                self.time_of_last_pose = self.get_clock().now()
+            #             base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
+            #                                         args=(landmarks_ordered, distance_estimates))             
+            #         except Exception as e:
+            #             return
+
+            #     # Only care about x and y
+            #     self.x_estimate = base_estimate.x[0] 
+            #     self.y_estimate = base_estimate.x[1]
+            #     self.triangulated_new_pose = True
+            #     self.triangulated_new_xy = True
+
+            #     self.time_of_last_pose = self.get_clock().now()
 
 
         # if >7 aruco landmarks (this will probably never happen but the code is good to have just in case) we can trilaterate our position using recursive least squares
-        if len(valid_markers)>7:
+        # if len(valid_markers)>7:
             
-            #The precision of it heavily depends on the accurate estimation of distance from each camera to the arucos
-            #the distance accuracy gets worse if the aruco tags dont face the cameras relatively straight
-            #experimentally the distance estimate starts to degrade from 6m onwards.
+        #     #The precision of it heavily depends on the accurate estimation of distance from each camera to the arucos
+        #     #the distance accuracy gets worse if the aruco tags dont face the cameras relatively straight
+        #     #experimentally the distance estimate starts to degrade from 6m onwards.
 
-            distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
-            landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
+        #     distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
+        #     landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
 
-            if self.initialized_map_odom_tf:
-                map_pos_x = self.curr_map_odom_base_x
-                map_pos_y = self.curr_map_odom_base_y
-                #bounds = window of size 2*2=4m centered on the current position
-                try:
+        #     if self.initialized_map_odom_tf:
+        #         map_pos_x = self.curr_map_odom_base_x
+        #         map_pos_y = self.curr_map_odom_base_y
+        #         #bounds = window of size 2*2=4m centered on the current position
+        #         try:
 
-                    base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
-                                                args=(landmarks_ordered, distance_estimates))
-                except Exception as e:
-                    return
-            else:
-                #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
-                try:
+        #             base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
+        #                                         args=(landmarks_ordered, distance_estimates))
+        #         except Exception as e:
+        #             return
+        #     else:
+        #         #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
+        #         try:
 
-                    base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
-                                                args=(landmarks_ordered, distance_estimates))             
-                except Exception as e:
-                    return
+        #             base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
+        #                                         args=(landmarks_ordered, distance_estimates))             
+        #         except Exception as e:
+        #             return
 
-            
+        #     # Only care about x and y
+        #     self.x_estimate = base_estimate.x[0] 
+        #     self.y_estimate = base_estimate.x[1]
+        #     self.triangulated_new_pose = True
+        #     self.triangulated_new_xy = True
 
-            # Only care about x and y
-            self.x_estimate = base_estimate.x[0] 
-            self.y_estimate = base_estimate.x[1]
-            self.triangulated_new_pose = True
-            self.triangulated_new_xy = True
+        #     self.time_of_last_pose = self.get_clock().now()
 
-            self.time_of_last_pose = self.get_clock().now()
+        ####################################
 
 
         #now publish the corrected map->odom transform (since we already have odom->base_link done by the EKF)
@@ -830,7 +832,7 @@ class PoseEstimatorNode(Node):
                 
                 self.prev_map_odom_tf = self.calculate_robust_tf_avg(self.avg_initialization_tfs, self.yaw_init_list)
                 self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
-                self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE @ {(1/(self.callback_freq_limit)):.3f} Hz")
+                self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE @ {(1/(self.callback_period_limit)):.3f} Hz")
                 self.get_logger().info(f"########################################################################")
                 self.get_logger().info(f"########################################################################")
                 self.get_logger().info(f"########################################################################")
