@@ -68,8 +68,8 @@ class WaypointFollower(Node):
             self.get_logger().info('***** !!!! NO MORE WAYPOINTS, TASK FINISHED !!!! ******')
 
         #compute ETA (Estimated Time of Arrival) to the current target waypoint
-        if self.current_speed > 0:
-            eta = distance / self.current_speed
+        if abs(self.current_speed) > 0:
+            eta = abs(distance / self.current_speed)
             self.get_logger().info(f'ETA to waypoint {self.curr_waypoint_index}: {eta:.2f} seconds')
 
 
@@ -108,11 +108,11 @@ class WaypointFollower(Node):
         # Hardcoded waypoints (x, y, yaw_deg) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
         waypoint_list = [
-            # (-2.16, -1.32, -1.5707),
-            # (0.0, -2.13, 0.0),
-            # (0.0, 0.0, 2.35),
-            # (-2.16, 1.48, 3.1415),
-            (0.0, 0.0, 0.0),
+            (-2.4, 11.8, 1.57),
+            (5.66, 15.78, 0.0),
+            (12.34, 21.28, 0.0),
+            (16.69, 13.03, -1.57),
+            (0.67, 2.9, -1.57),
         ]
 
         for x, y, yaw in waypoint_list:

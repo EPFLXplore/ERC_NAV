@@ -57,11 +57,11 @@ class PoseEstimatorNode(Node):
         self.avg_initialization_tfs = []
         self.yaw_init_list = []
 
-        self.max_translation_jump = 1.5 #meters
+        self.max_translation_jump = 35.0 #meters
         self.max_yaw_jump = math.radians(70) #degrees
 
-        self.max_bearing_diff = 150.0
-        self.min_bearing_diff = 20.0
+        self.max_bearing_diff = 170.0
+        self.min_bearing_diff = 10.0
 
         self.max_nbr_triplets = 5
         self.max_nbr_pairs = 10
@@ -115,8 +115,8 @@ class PoseEstimatorNode(Node):
                 (1.36, 6.79),
                 (-1.65, 17.07),
                 (7.39, 19.4),
-                (17.92, 20.58),
-                (19.38, 15.28),
+                (10.39, 14.99),
+                (-5.1, 6.79),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -671,6 +671,25 @@ class PoseEstimatorNode(Node):
                 self.get_logger().info(f"no good triplets found. doing classic distance trilateration")
                 distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
                 landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
+
+                #remove makrers that are too far away (>6m)
+                filtered = [
+                    (lm, d) 
+                    for lm, d in zip(landmarks_ordered, distance_estimates) 
+                    if d <= 6.0
+                ]
+                # if we’ve filtered out everything (or too few), bail out
+                if len(filtered) < 3:
+                    self.get_logger().info(f"SHOULD DO CIRCLE INTERSECTIONS")
+
+                    ##do circle intersections !!!
+                    return
+
+                landmarks_ordered, distance_estimates = zip(*filtered)
+                 # convert from tuples to lists
+                landmarks_ordered = list(landmarks_ordered)
+                self.get_logger().info(f"kept landmarks : {landmarks_ordered}")
+                distance_estimates = list(distance_estimates)
 
                 if self.initialized_map_odom_tf:
                     map_pos_x = self.curr_map_odom_base_x
