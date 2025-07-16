@@ -87,6 +87,9 @@ class PoseEstimatorNode(Node):
         self.max_aruco_dist_for_tvec_use = 5.0 #meters
         self.start_pose_tolerance = 0.25 #meters
 
+        self.w_bearing = 1.0
+        self.w_range   = 0.05
+
         self.max_bearing_diff = 179.0
         self.min_bearing_diff = 2.0
 
@@ -264,44 +267,6 @@ class PoseEstimatorNode(Node):
         else:
             return chosen_intersect
 
-
-
-    def two_aruco_pose_est(self, init, bearing_A_deg, bearing_B_deg, pos_A, pos_B, dist_PA, dist_PB):
-
-        # weights: give bearing full weight, range small weight
-        w_bearing = 1.0
-        w_range   = 0.1
-
-        XA, YA = pos_A
-        XB, YB = pos_B
-        R1, R2 = dist_PA, dist_PB
-
-        
-        x0, y0 = None, None
-
-        if not init:
-            return None
-
-        x0, y0 = init
-
-        # Convert bearings to radians
-        bA = math.radians(bearing_A_deg)
-        bB = math.radians(bearing_B_deg)
-        
-
-        sol = least_squares(
-                    two_bearing_res,
-                    x0=[x0, y0],
-                    args=(XA, YA, XB, YB, bA, bB),
-                    method='lm',
-                    ftol=1e-8, xtol=1e-8
-                )
-
-        if not sol.success:
-            self.get_logger().info(f"did not converge")
-            return None
-
-        return [float(sol.x[0]), float(sol.x[1])]
 
 
     def listener_callback(self, msg):
@@ -495,6 +460,7 @@ class PoseEstimatorNode(Node):
 
             #should give 0.6, 2.9, yaw = 1.57
             ########################################################
+
             (idA, poseA), (idB, poseB) = valid_markers
             
             landmarks = [
@@ -535,7 +501,7 @@ class PoseEstimatorNode(Node):
             sol = least_squares(
                 bearing_range_residuals,
                 x0,
-                args=(landmarks, bearings, ranges, w_bearing, w_range),
+                args=(landmarks, bearings, ranges, self.w_bearing, self.w_range),
                 method='trf',
                 loss='huber',
                 ftol=1e-9, xtol=1e-9
@@ -661,25 +627,58 @@ class PoseEstimatorNode(Node):
                     self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
 
             else:
-                self.get_logger().info(f"opti triang failed, fallback to circle intersects")
-                # fallback of the fallback: average two circle intersections
-                # id0, id1 and id2 are the original indexes in the ArucoMarkers msg
-                p01 = self.get_circle_intersect(id0, p0, id1, p1)
-                p02 = self.get_circle_intersect(id0, p0, id2, p2)
-                candidates = [pt for pt in (p01, p02) if pt is not None]
+                self.get_logger().info(f"opti triang failed, fallback to range+bearing weighted non linear optimization")
+                #range + noisy bearing weighted non linear optimization
 
-                if candidates:
-                    mx = sum(pt[0] for pt in candidates) / len(candidates)
-                    my = sum(pt[1] for pt in candidates) / len(candidates)
-                    self.x_estimate, self.y_estimate = mx, my
-                    #self.get_logger().info(f"circle fallback: x={mx}, y={my}")
-                    self.triangulated_new_xy         = True
-                    self.time_of_last_pose           = self.get_clock().now()
+                #TODO : FINISH THIS FALLBACK
 
-                    #calculate yaw in the map frame
-                    pt_A = landmarks_ordered[0]
-                    self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
-                    self.get_logger().info(f"Circle INTERSECT YAW ESTIM: {self.yaw_estimate*180.0/3.1415}")
+                # (i0, i1) = [(id0,id1), (id0,id2)]
+
+                # landmarks = []
+                # bearings  = []
+                # ranges    = []
+
+                # for (ida, idb), poseA, poseB, angA, angB in [
+                #     ((id0,id1), p0, p1, msg.ar_angles_list[0], msg.ar_angles_list[1]),
+                #     ((id0,id2), p0, p2, msg.ar_angles_list[0], msg.ar_angles_list[2])
+                # ]:
+                #     # map positions
+                #     landmarks.append([msg.landmark_map_pos_x[ida], msg.landmark_map_pos_y[ida]])
+                #     landmarks.append([msg.landmark_map_pos_x[idb], msg.landmark_map_pos_y[idb]])
+                #     # bearings in radians
+                #     bearings.append(math.radians(angA))
+                #     bearings.append(math.radians(angB))
+                #     # ranges measured
+                #     ranges.append(math.hypot(poseA.position.x, poseA.position.y))
+                #     ranges.append(math.hypot(poseB.position.x, poseB.position.y))
+
+                # # initial guess
+                # if self.initialized_map_odom_tf:
+                #     x0 = [self.curr_map_odom_base_x,
+                #         self.curr_map_odom_base_y,
+                #         self.curr_map_odom_base_yaw]
+                # else:
+                #     x0 = [self.erc_start_pos[0],
+                #         self.erc_start_pos[1],
+                #         0.0]
+
+                # sol = least_squares(
+                #     bearing_range_residuals,
+                #     x0,
+                #     args=(landmarks, bearings, ranges, self.w_bearing, self.w_range),
+                #     method='trf',
+                #     loss='huber',
+                #     ftol=1e-9, xtol=1e-9
+                # )
+
+                # if sol.success:
+                #     xm, ym, yawm = sol.x
+                #     self.x_estimate, self.y_estimate, self.yaw_estimate = float(xm), float(ym), float(yawm)
+                #     self.triangulated_new_xy = True
+                #     self.time_of_last_pose   = self.get_clock().now()
+                # else:
+                #     self.get_logger().warn("bearing‑range fallback did not converge; skipping update")
+
 
 
 
@@ -768,30 +767,31 @@ class PoseEstimatorNode(Node):
                             self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
                             ar_triplet_yaw.append(self.yaw_estimate)
 
-                    else:
-                        xy = None
-                        self.get_logger().info(f"geom triang failed, fallback to circle intersects")
-                        # fallback of the fallback: average two circle intersections
-                        # id0, id1 and id2 are the original indexes of the failed triplet aruco in the ArucoMarkers msg
-                        p01 = self.get_circle_intersect(id0, p0, id1, p1)
-                        p02 = self.get_circle_intersect(id0, p0, id2, p2)
-                        candidates = [pt for pt in (p01, p02) if pt is not None]
+                    #TODO: REPLACE THIS ELSE FALLBACK WITH RANGE AND BEARING LEAST SQUARES
+                    # else:
+                    #     xy = None
+                    #     self.get_logger().info(f"geom triang failed, fallback to circle intersects")
+                    #     # fallback of the fallback: average two circle intersections
+                    #     # id0, id1 and id2 are the original indexes of the failed triplet aruco in the ArucoMarkers msg
+                    #     p01 = self.get_circle_intersect(id0, p0, id1, p1)
+                    #     p02 = self.get_circle_intersect(id0, p0, id2, p2)
+                    #     candidates = [pt for pt in (p01, p02) if pt is not None]
 
-                        if candidates:
-                            mx = sum(pt[0] for pt in candidates) / len(candidates)
-                            my = sum(pt[1] for pt in candidates) / len(candidates)
-                            self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
-                            xy = np.array([mx, my])
+                    #     if candidates:
+                    #         mx = sum(pt[0] for pt in candidates) / len(candidates)
+                    #         my = sum(pt[1] for pt in candidates) / len(candidates)
+                    #         self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
+                    #         xy = np.array([mx, my])
 
-                        if xy is not None:
-                            #guard from garbage values on initialization
-                            if not self.initialized_map_odom_tf:
-                                dx = xy[0] - self.erc_start_pos[0]
-                                dy = xy[1] - self.erc_start_pos[1]
-                                if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                                    ar_triplet_pos.append(xy)
-                            else:
-                                ar_triplet_pos.append(xy)
+                    #     if xy is not None:
+                    #         #guard from garbage values on initialization
+                    #         if not self.initialized_map_odom_tf:
+                    #             dx = xy[0] - self.erc_start_pos[0]
+                    #             dy = xy[1] - self.erc_start_pos[1]
+                    #             if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                    #                 ar_triplet_pos.append(xy)
+                    #         else:
+                    #             ar_triplet_pos.append(xy)
 
 
                 if ar_triplet_pos:
@@ -806,59 +806,6 @@ class PoseEstimatorNode(Node):
                     yaw_arr = np.stack(ar_triplet_yaw, axis=0)
                     mean_yaw = yaw_arr.mean(axis=0)
                     self.yaw_estimate = mean_yaw
-
-
-            # else: #if there are no good triplets = all triplets have a min_phi <= 20°
-            #     #do classic trilateration via optimization
-            #     self.get_logger().info(f"no good triplets found. doing classic distance trilateration")
-            #     distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
-            #     landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
-
-            #     #remove makrers that are too far away (>6m)
-            #     filtered = [
-            #         (lm, d) 
-            #         for lm, d in zip(landmarks_ordered, distance_estimates) 
-            #         if d <= 6.0
-            #     ]
-            #     # if we’ve filtered out everything (or too few), bail out
-            #     if len(filtered) < 3:
-            #         self.get_logger().info(f"SHOULD DO CIRCLE INTERSECTIONS")
-
-            #         ##do circle intersections !!!
-            #         return
-
-            #     landmarks_ordered, distance_estimates = zip(*filtered)
-            #      # convert from tuples to lists
-            #     landmarks_ordered = list(landmarks_ordered)
-            #     self.get_logger().info(f"kept landmarks : {landmarks_ordered}")
-            #     distance_estimates = list(distance_estimates)
-
-            #     if self.initialized_map_odom_tf:
-            #         map_pos_x = self.curr_map_odom_base_x
-            #         map_pos_y = self.curr_map_odom_base_y
-            #         #bounds = window of size 2*2=4m centered on the current position
-            #         try:
-
-            #             base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
-            #                                         args=(landmarks_ordered, distance_estimates))
-            #         except Exception as e:
-            #             return
-            #     else:
-            #         #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
-            #         try:
-
-            #             base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
-            #                                         args=(landmarks_ordered, distance_estimates))             
-            #         except Exception as e:
-            #             return
-
-            #     # Only care about x and y
-            #     self.x_estimate = base_estimate.x[0] 
-            #     self.y_estimate = base_estimate.x[1]
-            #     self.triangulated_new_pose = True
-            #     self.triangulated_new_xy = True
-
-            #     self.time_of_last_pose = self.get_clock().now()
 
         ####################################
 
