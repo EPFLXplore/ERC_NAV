@@ -720,44 +720,6 @@ class PoseEstimatorNode(Node):
 
             #     self.time_of_last_pose = self.get_clock().now()
 
-
-        # if >7 aruco landmarks (this will probably never happen but the code is good to have just in case) we can trilaterate our position using recursive least squares
-        # if len(valid_markers)>7:
-            
-        #     #The precision of it heavily depends on the accurate estimation of distance from each camera to the arucos
-        #     #the distance accuracy gets worse if the aruco tags dont face the cameras relatively straight
-        #     #experimentally the distance estimate starts to degrade from 6m onwards.
-
-        #     distance_estimates = [math.hypot(p.position.x, p.position.y) for _, p in valid_markers]
-        #     landmarks_ordered = [self.landmark_poses[idx] for idx, _ in valid_markers]
-
-        #     if self.initialized_map_odom_tf:
-        #         map_pos_x = self.curr_map_odom_base_x
-        #         map_pos_y = self.curr_map_odom_base_y
-        #         #bounds = window of size 2*2=4m centered on the current position
-        #         try:
-
-        #             base_estimate = least_squares(self.cost_function, np.array([map_pos_x, map_pos_y]), method= 'lm',
-        #                                         args=(landmarks_ordered, distance_estimates))
-        #         except Exception as e:
-        #             return
-        #     else:
-        #         #the initial position should be around self.erc_start_pos, so we create a square window centered on that position with a width of 2*4=8m
-        #         try:
-
-        #             base_estimate = least_squares(self.cost_function, np.array([self.erc_start_pos[0], self.erc_start_pos[1]]), method= 'lm',
-        #                                         args=(landmarks_ordered, distance_estimates))             
-        #         except Exception as e:
-        #             return
-
-        #     # Only care about x and y
-        #     self.x_estimate = base_estimate.x[0] 
-        #     self.y_estimate = base_estimate.x[1]
-        #     self.triangulated_new_pose = True
-        #     self.triangulated_new_xy = True
-
-        #     self.time_of_last_pose = self.get_clock().now()
-
         ####################################
 
 

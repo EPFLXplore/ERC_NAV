@@ -304,6 +304,42 @@ class MultiViewArucoNode(Node):
                 M[0,3], M[1,3] = x, y
                 return M
 
+    def calculate_bearing_with_fov(self, cv_image, marker_corners, camera_frame, transform):
+        h, w = cv_image.shape[:2]
+        #41 for logitech brio 100
+        #55 for realsense d415
+        fov_deg = 0.0
+        if str(camera_frame) in ["Logitech_Brio_100_top_right_1", "Logitech_Brio_100_front_left_v1_1", "Logitech_Brio_100_front_right_v1_1", "Logitech_Brio_100_top_left_1"]:
+            fov_deg = 41.0
+        elif str(camera_frame) in ["intel_realsense_D415_camera_top_right_1", "intel_realsense_D415_camera_top_left_1"]:
+            fov_deg = 55.0
+        else:
+            return None
+        
+        #focal length in pixels
+        fpx = w / (2 * math.tan(math.radians(fov_deg / 2)))
+
+        pts = marker_corners.reshape((4, 2))
+        center = pts.mean(axis=0)
+            
+        dx = center[0] - (w / 2)
+        bearing_manual_rad =  (-1.0)* math.atan2(dx, fpx) #-1 to go from opencv2 to ros2 frame
+        #self.get_logger().info(f"detected yaw in ros2 cam frame: {bearing_manual_rad*180/3.1415:.2f}°")
+
+        q = transform.transform.rotation
+        q_cam_base = [q.x, q.y, q.z, q.w]
+        R_cam_base = R.from_quat(q_cam_base)
+        roll_cam2base, _, yaw_cam2base_rad = R_cam_base.as_euler('xyz', degrees=False)
+        #self.get_logger().info(f"cam {camera_frame}  yaw in rv frame {(yaw_cam2base_rad*180/3.1415):.2f}°")
+        #first check if the camera is rolled
+        #self.get_logger().info(f"ROLL of CAM: {roll_cam2base*180/3.1415:.2f}°")
+        if abs(roll_cam2base) > 0.05: # assume the camera is flipped in real life so the atan2 above will need to be flipped
+            yaw_base_rad = yaw_cam2base_rad - bearing_manual_rad
+        else:
+            yaw_base_rad = yaw_cam2base_rad + bearing_manual_rad
+        yaw_deg = math.degrees(yaw_base_rad)
+        return yaw_deg
+
 
 ######################################################################
     def process_image(self, img_msg, intrinsic_mat, distortion, camera_frame, markers, pose_array):
@@ -442,33 +478,50 @@ class MultiViewArucoNode(Node):
                     #self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
                     ############# OPENCV Manual Bearing Calculation for realsense since they have shit calibrations
 
-                    if str(camera_frame) == "intel_realsense_D415_camera_top_right_1" or str(camera_frame) == "intel_realsense_D415_camera_top_left_1":
-                        h, w = cv_image.shape[:2]
-                        fov_deg = 55.0 #measured horizontal fov for realsense d415
-                        #focal length in pixels
-                        fpx = w / (2 * math.tan(math.radians(fov_deg / 2)))
+                    # if str(camera_frame) == "intel_realsense_D415_camera_top_right_1" or str(camera_frame) == "intel_realsense_D415_camera_top_left_1":
+                    #     h, w = cv_image.shape[:2]
+                    #     fov_deg = 55.0 #measured horizontal fov for realsense d415
+                    #     #focal length in pixels
+                    #     fpx = w / (2 * math.tan(math.radians(fov_deg / 2)))
 
-                        pts = marker_corners.reshape((4, 2))
-                        center = pts.mean(axis=0)
+                    #     pts = marker_corners.reshape((4, 2))
+                    #     center = pts.mean(axis=0)
                             
-                        dx = center[0] - (w / 2)
-                        bearing_manual_rad =  (-1.0)* math.atan2(dx, fpx) #-1 to go from opencv2 to ros2 frame
-                        #self.get_logger().info(f"detected yaw in ros2 cam frame: {bearing_manual_rad*180/3.1415:.2f}°")
+                    #     dx = center[0] - (w / 2)
+                    #     bearing_manual_rad =  (-1.0)* math.atan2(dx, fpx) #-1 to go from opencv2 to ros2 frame
+                    #     #self.get_logger().info(f"detected yaw in ros2 cam frame: {bearing_manual_rad*180/3.1415:.2f}°")
 
-                        q = transform.transform.rotation
-                        q_cam_base = [q.x, q.y, q.z, q.w]
-                        R_cam_base = R.from_quat(q_cam_base)
-                        roll_cam2base, _, yaw_cam2base_rad = R_cam_base.as_euler('xyz', degrees=False)
-                        #self.get_logger().info(f"cam {camera_frame}  yaw in rv frame {(yaw_cam2base_rad*180/3.1415):.2f}°")
-                        #first check if the camera is rolled
-                        #self.get_logger().info(f"ROLL of CAM: {roll_cam2base*180/3.1415:.2f}°")
-                        if abs(roll_cam2base) > 0.05: # assume the camera is flipped in real life so the atan2 above will need to be flipped
-                            yaw_base_rad = yaw_cam2base_rad - bearing_manual_rad
-                        else:
-                            yaw_base_rad = yaw_cam2base_rad + bearing_manual_rad
-                        yaw_deg = math.degrees(yaw_base_rad)
+                    #     q = transform.transform.rotation
+                    #     q_cam_base = [q.x, q.y, q.z, q.w]
+                    #     R_cam_base = R.from_quat(q_cam_base)
+                    #     roll_cam2base, _, yaw_cam2base_rad = R_cam_base.as_euler('xyz', degrees=False)
+                    #     #self.get_logger().info(f"cam {camera_frame}  yaw in rv frame {(yaw_cam2base_rad*180/3.1415):.2f}°")
+                    #     #first check if the camera is rolled
+                    #     #self.get_logger().info(f"ROLL of CAM: {roll_cam2base*180/3.1415:.2f}°")
+                    #     if abs(roll_cam2base) > 0.05: # assume the camera is flipped in real life so the atan2 above will need to be flipped
+                    #         yaw_base_rad = yaw_cam2base_rad - bearing_manual_rad
+                    #     else:
+                    #         yaw_base_rad = yaw_cam2base_rad + bearing_manual_rad
+                    #     yaw_deg = math.degrees(yaw_base_rad)
+                    
+                    yaw_deg_temp = self.calculate_bearing_with_fov(cv_image, marker_corners, camera_frame, transform)
+                    if yaw_deg_temp is not None:
+                        yaw_deg = yaw_deg_temp
 
-                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame: {yaw_deg:.2f}°")
+                    self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame: {yaw_deg:.2f}°")
+                    
+                    if str(camera_frame) == "Logitech_Brio_100_top_left_1":
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top left): {yaw_deg:.2f}°")
+                    
+                    if str(camera_frame) == "Logitech_Brio_100_top_right_1":
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top right): {yaw_deg:.2f}°")
+                    
+                    if str(camera_frame) == "Logitech_Brio_100_front_left_v1_1":
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front left): {yaw_deg:.2f}°")
+                    
+                    if str(camera_frame) == "Logitech_Brio_100_front_right_v1_1":
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front right): {yaw_deg:.2f}°")    
+
 
                     ############### end of manual bearing calc
 

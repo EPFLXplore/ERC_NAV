@@ -106,7 +106,7 @@ controller_server:
       yaw_goal_tolerance: 1.5
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.6
+      desired_linear_vel: 0.55
       lookahead_dist: 1.8
       min_lookahead_dist: 0.6
       max_lookahead_dist: 1.5
@@ -499,8 +499,8 @@ velocity_smoother:
     smoothing_frequency: 5.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.8, 0.0, 1.0]
-    min_velocity: [-0.8, 0.0, -1.0]
+    max_velocity: [0.55, 0.0, 1.0]
+    min_velocity: [-0.55, 0.0, -1.0]
     max_accel: [1.0, 0.0, 3.2]
     max_decel: [-2.0, 0.0, -3.2]
     odom_topic: "fused_nav_ekf_odom"
