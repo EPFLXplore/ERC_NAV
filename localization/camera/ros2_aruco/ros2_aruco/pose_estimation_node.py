@@ -6,8 +6,11 @@ from ros2_aruco_interfaces.msg import ArucoMarkers
 from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 import math
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, fsolve
+
+
 import cv2
+
 
 from ros2_aruco.triangulation import triangulate #custom geometric triangulation code
 from ros2_aruco.triangulation_opti import triangulate_opti #custom optimization triangulation code
@@ -30,6 +33,29 @@ from tf2_ros import TransformBroadcaster
 def yaw_to_quat(yaw):
     quat = R.from_euler('z', yaw).as_quat()  # x, y, z, w
     return Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+
+
+def wrap(a):
+    return (a + np.pi) % (2*math.pi) - math.pi
+
+def bearing_range_residuals(state, landmarks, bearings, ranges, w_b, w_r):
+    """
+    state = [x, y, theta]
+    landmarks: [(xi, yi), ...]
+    bearings:  [beta_i, ...]   in radians, measured in robot frame
+    ranges:    [ri, ...]       in meters, measured from robot to landmark
+    w_b, w_r: relative weights for bearing vs range
+    """
+    x_m, y_m, θ = state
+    res = []
+    for (x_i, y_i), β_i, t_i in zip(landmarks, bearings, ranges):
+        # predicted bearing in robot frame:
+        psi = math.atan2(y_i - y_m, x_i - x_m) - θ
+        res.append(w_b * wrap(psi - β_i))
+        # predicted range:
+        pred_r = math.hypot(x_i - x_m, y_i - y_m)
+        res.append(w_r * (pred_r - t_i))
+    return res
 
 
 
@@ -112,9 +138,9 @@ class PoseEstimatorNode(Node):
 
         self.landmark_poses = [
                 (-0.75, 0.46),
-                (2.59, 1.11),
+                (1.42, -0.12),
                 (1.36, 6.79),
-                (-1.65, 17.07),
+                (1.42, 0.3),
                 (7.39, 19.4),
                 (10.39, 14.99),
                 (-5.1, 6.79),
@@ -219,6 +245,8 @@ class PoseEstimatorNode(Node):
         if theta2 > theta1:
             I1, I2 = I2, I1
 
+        self.get_logger().info(f"I1: {I1}, I2: {I2}")
+
         # 9) pick the one closest to reference pose
         if self.initialized_map_odom_tf:
             rx, ry = self.curr_map_odom_base_x, self.curr_map_odom_base_y
@@ -235,6 +263,45 @@ class PoseEstimatorNode(Node):
             return None
         else:
             return chosen_intersect
+
+
+
+    def two_aruco_pose_est(self, init, bearing_A_deg, bearing_B_deg, pos_A, pos_B, dist_PA, dist_PB):
+
+        # weights: give bearing full weight, range small weight
+        w_bearing = 1.0
+        w_range   = 0.1
+
+        XA, YA = pos_A
+        XB, YB = pos_B
+        R1, R2 = dist_PA, dist_PB
+
+        
+        x0, y0 = None, None
+
+        if not init:
+            return None
+
+        x0, y0 = init
+
+        # Convert bearings to radians
+        bA = math.radians(bearing_A_deg)
+        bB = math.radians(bearing_B_deg)
+        
+
+        sol = least_squares(
+                    two_bearing_res,
+                    x0=[x0, y0],
+                    args=(XA, YA, XB, YB, bA, bB),
+                    method='lm',
+                    ftol=1e-8, xtol=1e-8
+                )
+
+        if not sol.success:
+            self.get_logger().info(f"did not converge")
+            return None
+
+        return [float(sol.x[0]), float(sol.x[1])]
 
 
     def listener_callback(self, msg):
@@ -412,32 +479,102 @@ class PoseEstimatorNode(Node):
         # this problem is about finding the intersections of two circles
         # then finding the intersection that is closest to our current location (given by the current map--(aruco)-->odom + odom--(EKF)-->base_link transform).
 
+
         if(len(valid_markers) == 2):  
             #find the (x, y) coordinates of the two intersections of the circles
-            self.get_logger().info(f"2 CIRCLE INTERSECT")
+            self.get_logger().info(f"2 CIRCLE INTERSECT (bearing + range pose estimation)!!")
 
-            #valid_marker[i] = (idx, pose)
-            id1, pose1 = valid_markers[0]
-            id2, pose2 = valid_markers[1]
+            #                     [0.6, 2.9],
+            #                     -131.8, 
+            #                     -8.9, 
+            #                     [2.59, 1.11], 
+            #                     [1.36, 6.79],
+            #                     math.sqrt((2.59 - 0.65)**2 + (1.11 - 2.9)**2),
+            #                     math.sqrt((1.36 - 0.65)**2 + (6.79 - 2.9)**2)
+            #                 )
 
-            intersect_pos = self.get_circle_intersect(id1, pose1, id2, pose2)
+            #should give 0.6, 2.9, yaw = 1.57
+            ########################################################
+            (idA, poseA), (idB, poseB) = valid_markers
+            
+            landmarks = [
+                [msg.landmark_map_pos_x[0], msg.landmark_map_pos_y[0]],
+                [msg.landmark_map_pos_x[1], msg.landmark_map_pos_y[1]]
+            ]
 
-            if intersect_pos:
-                #verify if we arent too far off from the real starting position when initializing the system
+            # get measured robot‑frame bearings in radians:
+            bearings = [
+                math.radians(msg.ar_angles_list[0]),
+                math.radians(msg.ar_angles_list[1])
+            ]
+
+            # get measured ranges:
+            poseA = msg.poses[0]
+            poseB = msg.poses[1]
+
+            rA = math.hypot(poseA.position.x, poseA.position.y)
+            rB = math.hypot(poseB.position.x, poseB.position.y)
+            ranges = [rA, rB]
+
+            # harcoded example
+            # landmarks = [
+            #     [-0.75, 0.46],
+            #     [1.36, 6.79]
+            # ]
+            # bearings = [math.radians(154.2), math.radians(-8.9)]
+            # ranges = [math.sqrt((-0.75 - 0.65)**2 + (0.46- 2.9)**2), math.sqrt((1.36 - 0.65)**2 + (6.79 - 2.9)**2)]
+
+            if not self.initialized_map_odom_tf:
+                x0 = [self.erc_start_pos[0], self.erc_start_pos[0], 0.0]
+            else:
+                x0 = [self.curr_map_odom_base_x, self.curr_map_odom_base_y, self.curr_map_odom_base_yaw]
+            
+            w_bearing = 1.0
+            w_range   = 0.05
+
+            sol = least_squares(
+                bearing_range_residuals,
+                x0,
+                args=(landmarks, bearings, ranges, w_bearing, w_range),
+                method='trf',
+                loss='huber',
+                ftol=1e-9, xtol=1e-9
+            )
+
+            x_m, y_m, yaw_m = None, None, None
+
+            if sol.success:
+                x_m, y_m, yaw_m = sol.x
+                self.get_logger().info(f"mega system : X={x_m}, Y={y_m}, yaw: {yaw_m}")
+                x_m   = float(x_m)
+                y_m   = float(y_m)
+                yaw_m = float(yaw_m)
+            else:
                 if not self.initialized_map_odom_tf:
-                    ref = self.erc_start_pos
-                    dx = intersect_pos[0] - ref[0]
-                    dy = intersect_pos[1] - ref[1]
-                    if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                        self.x_estimate, self.y_estimate = intersect_pos
-                        self.triangulated_new_xy = True
-                        self.time_of_last_pose = self.get_clock().now()
-                    else:
-                        self.get_logger().info("2 circle intersect is TOO FAR OFF FROM START")
-                else:
-                    self.x_estimate, self.y_estimate = intersect_pos
+                    self.get_logger().info("2 circle pose did not converge. Assuming we are at the start position")
+                    self.get_logger().info(f"msg.ar angles list: {msg.ar_angles_list}")
+                    pt_A = [msg.landmark_map_pos_x[0], msg.landmark_map_pos_y[0]]
+                    self.get_logger().info(f"using point: {pt_A}")
+                    self.yaw_estimate = math.atan2(pt_A[1] - self.erc_start_pos[1], pt_A[0] - self.erc_start_pos[0]) - math.radians(msg.ar_angles_list[0])
+                    self.get_logger().info(f"failed 2 circle yaw estimation assuming we are at start pos: {self.yaw_estimate*180/3.1415}")
+
+            ########################################################
+
+            if not self.initialized_map_odom_tf and (x_m is not None) and (y_m is not None) and (yaw_m is not None):
+                ref = self.erc_start_pos
+                dx = x_m - ref[0]
+                dy = y_m - ref[1]
+
+                if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
+                    self.x_estimate, self.y_estimate = x_m, y_m
+                    self.yaw_estimate = yaw_m
                     self.triangulated_new_xy = True
                     self.time_of_last_pose = self.get_clock().now()
+                    
+            elif self.initialized_map_odom_tf and (x_m is not None) and (y_m is not None) and (yaw_m is not None):
+                self.x_estimate, self.y_estimate = x_m, y_m
+                self.triangulated_new_xy = True
+                self.time_of_last_pose = self.get_clock().now()
 
 
 
@@ -542,7 +679,7 @@ class PoseEstimatorNode(Node):
                     #calculate yaw in the map frame
                     pt_A = landmarks_ordered[0]
                     self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
-                    self.get_logger().info(f"Circle INTERSECT YAW ESTIM: {self.yaw_estimate}")
+                    self.get_logger().info(f"Circle INTERSECT YAW ESTIM: {self.yaw_estimate*180.0/3.1415}")
 
 
 
@@ -609,6 +746,8 @@ class PoseEstimatorNode(Node):
                     xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
                 
                     if xy is not None:
+                        self.get_logger().info(f"multi triang: xy : {xy}")
+                        self.get_logger().info(f"multi triang landmarks: {landmarks_ordered}")
                         #guard from garbage values on initialization
                         if not self.initialized_map_odom_tf:
                             dx = xy[0] - self.erc_start_pos[0]
@@ -625,6 +764,7 @@ class PoseEstimatorNode(Node):
                             ar_triplet_pos.append(xy)
                             pt_A = landmarks_ordered[0]
                             self.yaw_estimate = math.atan2(pt_A[1] - xy[1], pt_A[0] - xy[0]) - math.radians(bearing_A)
+                            self.get_logger().info(f"point A: {landmarks_ordered[0]}, bearing A: {bearing_A}")
                             self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
                             ar_triplet_yaw.append(self.yaw_estimate)
 
@@ -769,6 +909,7 @@ class PoseEstimatorNode(Node):
         transform_msg.transform.translation.y = T_map_odom[1, 3]
         transform_msg.transform.translation.z = 0.0
         transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
+
         #broadcast the transform
         if self.initialized_map_odom_tf:
             self.tf_broadcaster.sendTransform(transform_msg)
