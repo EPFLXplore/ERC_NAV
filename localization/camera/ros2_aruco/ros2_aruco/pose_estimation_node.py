@@ -38,24 +38,30 @@ def yaw_to_quat(yaw):
 def wrap(a):
     return (a + np.pi) % (2*math.pi) - math.pi
 
-def bearing_range_residuals(state, landmarks, bearings, ranges, w_b, w_r):
-    """
-    state = [x, y, theta]
-    landmarks: [(xi, yi), ...]
-    bearings:  [beta_i, ...]   in radians, measured in robot frame
-    ranges:    [ri, ...]       in meters, measured from robot to landmark
-    w_b, w_r: relative weights for bearing vs range
-    """
+def bearing_range_residuals(state, landmarks, bearings, ranges, w_b, w_rs):
     x_m, y_m, θ = state
     res = []
-    for (x_i, y_i), β_i, t_i in zip(landmarks, bearings, ranges):
-        # predicted bearing in robot frame:
+    for (x_i, y_i), β_i, t_i, w_r in zip(landmarks, bearings, ranges, w_rs):
+        # predicted bearing residual
         psi = math.atan2(y_i - y_m, x_i - x_m) - θ
         res.append(w_b * wrap(psi - β_i))
-        # predicted range:
+        # predicted range residual
         pred_r = math.hypot(x_i - x_m, y_i - y_m)
         res.append(w_r * (pred_r - t_i))
     return res
+
+
+def solve_position_from_two_bearings(A, B, phiA, phiB, psi_map, cond_thresh=1e-6):
+    θA = wrap(psi_map + phiA)
+    θB = wrap(psi_map + phiB)
+    vA = np.array([math.cos(θA), math.sin(θA)])
+    vB = np.array([math.cos(θB), math.sin(θB)])
+    M = np.column_stack([vA, -vB])
+    if abs(np.linalg.det(M)) < cond_thresh:
+        return None
+    tA, _ = np.linalg.solve(M, A - B)
+    return A - tA * vA
+
 
 
 
@@ -68,8 +74,12 @@ class PoseEstimatorNode(Node):
         self.yaw_estimate = 0.0
         self.triangulated_new_pose = False
         self.triangulated_new_xy = False
+        self.measured_new_yaw = False
         self.time_of_last_pose = self.get_clock().now()
         self.time_of_last_yaw_meas = self.get_clock().now()
+        self.time_of_last_good_triangulation = self.get_clock().now()
+        self.measured_good_triang = False
+        self.min_least_squares_dt_from_triang = 15.0#seconds
 
         self.MAP_SIZE = 300.0
 
@@ -81,14 +91,17 @@ class PoseEstimatorNode(Node):
         self.callback_period_limit = 1/15.0 #seconds (cannot be faster than the refresh rate of the realsense cameras = 15fps)
         self.avg_initialization_tfs = []
         self.yaw_init_list = []
+        self.min_yaw_dt = 30.0#seconds
 
-        self.max_translation_jump = 35.0 #meters
-        self.max_yaw_jump = math.radians(70) #degrees
-        self.max_aruco_dist_for_tvec_use = 5.0 #meters
-        self.start_pose_tolerance = 0.25 #meters
+
+        self.max_translation_jump = 3.3 #meters
+        self.max_yaw_jump = math.radians(40) #degrees
+        self.max_aruco_dist_for_tvec_use = 4.0 #meters
+        self.start_pose_tolerance = 0.2 #meters
 
         self.w_bearing = 1.0
         self.w_range   = 0.05
+        self.alpha = 0.1 #weight on range per landmark = weight_base/(1+alpha*range)
 
         self.max_bearing_diff = 179.0
         self.min_bearing_diff = 2.0
@@ -117,6 +130,8 @@ class PoseEstimatorNode(Node):
         self.curr_map_odom_base_x = 0.0
         self.curr_map_odom_base_y = 0.0 
         self.curr_map_odom_base_yaw = 0.0
+        self.lpf_coeff = 0.7
+        self.delta_conv = 2.0
 
         self.high_cov = [1e6 if i in (0,7,35) else 0. for i in range(36)]
         self.low_cov  = [0.005 if i in (0,7) else 0.002 if i==35 else 0. for i in range(36)]
@@ -141,9 +156,9 @@ class PoseEstimatorNode(Node):
 
         self.landmark_poses = [
                 (-0.75, 0.46),
-                (1.42, -0.12),
+                (2.59, 1.11),
                 (1.36, 6.79),
-                (1.42, 0.3),
+                (-1.4, 17.07),
                 (7.39, 19.4),
                 (10.39, 14.99),
                 (-5.1, 6.79),
@@ -156,6 +171,15 @@ class PoseEstimatorNode(Node):
                 (999999, 999999),
                 (999999, 999999),
             ]
+
+
+                # (-0.75, 0.46),
+                # (2.59, 1.11),
+                # (1.36, 6.79),
+                # (-1.4, 17.07),
+                # (7.39, 19.4),
+                # (10.39, 14.99),
+                # (-5.1, 6.79),
         
     def odometry_callback(self, msg):
         #odom->base_link pose from the EKF
@@ -196,7 +220,7 @@ class PoseEstimatorNode(Node):
         return cross_prod < 0
 
 
-    def get_circle_intersect(self, id1, pose1, id2, pose2):
+    def get_circle_intersect(self, id1, pose1, id2, pose2, return_both=False):
         #returns the position of the two circle intersection that is closest to the current position (self.erc_start_pos if the system is not initialized yet, and self.curr_map_odom_base_x/y if it is initialized)
         #id1, id2 are the aruco ids
         #pose1 and pose2 are the corresponding rover->aruco poses
@@ -262,11 +286,39 @@ class PoseEstimatorNode(Node):
         chosen_intersect = I1 if d1 <= d2 else I2
         chosen_dist_to_ref = min(d1, d2)
 
-        if chosen_dist_to_ref > self.max_translation_jump:
-            return None
+        if not return_both:
+            if chosen_dist_to_ref > self.max_translation_jump:
+                return None
+            else:
+                return chosen_intersect
         else:
-            return chosen_intersect
+            if chosen_dist_to_ref > self.max_translation_jump:
+                return None, [I1, I2]
+            else:
+                return chosen_intersect, [I1, I2]
 
+    def bearing_only_geometric_intersection(self, A, B, phiA, phiB):
+        A = np.array(A)
+        B = np.array(B)
+        d = np.linalg.norm(B - A)
+
+        if d == 0:
+            return None, None
+
+        u = (B - A) / d
+        n = np.array([-u[1], u[0]])  # perpendicular to AB
+
+        phi = wrap(phiB - phiA)
+        if np.isclose(np.tan(phi), 0):
+            return None, None
+
+        h = d / (2 * np.tan(phi))
+        M = (A + B) / 2
+
+        P1 = M + h * n
+        P2 = M - h * n
+
+        return P1, P2
 
 
     def listener_callback(self, msg):
@@ -300,18 +352,23 @@ class PoseEstimatorNode(Node):
             )
 
             if abs(self.odom_pos_x)<1e-4 and abs(self.odom_pos_y)<1e-4:
-                self.get_logger().info(f"kalman did not move !")
+                #self.get_logger().info(f"kalman did not move !")
                 self.curr_map_odom_base_x = self.x_estimate
                 self.curr_map_odom_base_y = self.y_estimate
                 self.curr_map_odom_base_yaw = self.yaw_estimate
                 T_odom_base = np.eye(4)
             else:
-                self.get_logger().info(f"kalman moveddd !")
+                #self.get_logger().info(f"kalman moveddd !")
                 # latest map->odom + latest odom->base_link
                 T_map_base = T_map_odom @ T_odom_base
                 self.curr_map_odom_base_x   = T_map_base[0, 3]
                 self.curr_map_odom_base_y   = T_map_base[1, 3]
                 self.curr_map_odom_base_yaw = math.atan2(T_map_base[1,0], T_map_base[0,0])
+
+                if not self.triangulated_new_xy:
+                    self.x_estimate   = self.curr_map_odom_base_x
+                    self.y_estimate   = self.curr_map_odom_base_y
+                    self.yaw_estimate = self.curr_map_odom_base_yaw
 
         except TransformException as e:
             if self.prev_map_odom_tf is None:
@@ -340,19 +397,23 @@ class PoseEstimatorNode(Node):
 
         #validate markers
         valid_markers = []
-        for idx, pose in zip(msg.marker_ids, msg.poses):
-            if idx < len(self.landmark_poses) and self.landmark_poses[idx][0] < self.MAP_SIZE and self.landmark_poses[idx][1] < self.MAP_SIZE:
-                valid_markers.append((idx, pose))
+        # for idx, pose in zip(msg.marker_ids, msg.poses):
+        #     if idx < len(self.landmark_poses) and self.landmark_poses[idx][0] < self.MAP_SIZE and self.landmark_poses[idx][1] < self.MAP_SIZE:
+        #         valid_markers.append((idx, pose))
+        for k, (idx, pose) in enumerate(zip(msg.marker_ids, msg.poses)):
+            x_map, y_map = self.landmark_poses[idx] if idx < len(self.landmark_poses) else (None, None)
+            if x_map is not None and abs(x_map) < self.MAP_SIZE and abs(y_map) < self.MAP_SIZE:
+                valid_markers.append((idx, pose, k))
 
-        ids = [idx for idx, _ in valid_markers]
+        ids = [idx for idx,_,_ in valid_markers]
         #self.get_logger().info(f"Valid marker IDs: {ids}")
 
 
         #limit the number of pairs in case a lot of arucos are detected and only keep the pairs with the arucos that are the closest to the rover
         pair_scores = []
         for i, j in combinations(range(len(valid_markers)), 2):
-            id1, _ = valid_markers[i]
-            id2, _ = valid_markers[j]
+            id1, _, _ = valid_markers[i]
+            id2, _, _ = valid_markers[j]
 
             x1, y1 = self.landmark_poses[id1]
             x2, y2 = self.landmark_poses[id2]
@@ -387,427 +448,272 @@ class PoseEstimatorNode(Node):
             #self.get_logger().warn("Not enough valid markers detected for yaw estimation.")
             return
 
-        for i, j in aruco_idx_pairs:
+        # for i, j in aruco_idx_pairs:
 
-            id1 = marker_ids[i]
-            id2 = marker_ids[j]
+        #     id1 = marker_ids[i]
+        #     id2 = marker_ids[j]
 
-            if id1 == id2 :
-                continue
+        #     if id1 == id2 :
+        #         continue
 
-            # Skip if either landmark is invalid
-            if id1 >= len(self.landmark_poses) or id2 >= len(self.landmark_poses):
-                continue
+        #     # Skip if either landmark is invalid
+        #     if id1 >= len(self.landmark_poses) or id2 >= len(self.landmark_poses):
+        #         continue
             
-            lm1 = self.landmark_poses[id1]
-            lm2 = self.landmark_poses[id2]
-            if abs(lm1[0]) > self.MAP_SIZE or abs(lm2[0]) > self.MAP_SIZE:  #just to check if they have actually been hardcoded in the code
-                continue
+        #     lm1 = self.landmark_poses[id1]
+        #     lm2 = self.landmark_poses[id2]
+        #     if abs(lm1[0]) > self.MAP_SIZE or abs(lm2[0]) > self.MAP_SIZE:  #just to check if they have actually been hardcoded in the code
+        #         continue
 
-            dx_map = lm2[0] - lm1[0]
-            dy_map = lm2[1] - lm1[1]
-            angle_map = math.atan2(dy_map, dx_map) #angle formed by the vector pointing from an aruco to another, in the map frame. this is a theoretical angle
+        #     dx_map = lm2[0] - lm1[0]
+        #     dy_map = lm2[1] - lm1[1]
+        #     angle_map = math.atan2(dy_map, dx_map) #angle formed by the vector pointing from an aruco to another, in the map frame. this is a theoretical angle
 
-            #poses of the same aruco tags as seen by the rover, so this is in the rover frame
-            # pose1 = msg.poses[id1].position
-            # pose2 = msg.poses[id2].position
-            pose1 = aruco_id_to_pose_dict[id1]
-            pose2 = aruco_id_to_pose_dict[id2]
+        #     #poses of the same aruco tags as seen by the rover, so this is in the rover frame
+        #     # pose1 = msg.poses[id1].position
+        #     # pose2 = msg.poses[id2].position
+        #     pose1 = aruco_id_to_pose_dict[id1]
+        #     pose2 = aruco_id_to_pose_dict[id2]
 
-            dx_rover = pose2[0] - pose1[0]
-            dy_rover = pose2[1] - pose1[1]
-            angle_rover = math.atan2(dy_rover, dx_rover)
+        #     dx_rover = pose2[0] - pose1[0]
+        #     dy_rover = pose2[1] - pose1[1]
+        #     angle_rover = math.atan2(dy_rover, dx_rover)
             
-            yaw_diff = angle_map - angle_rover
-            yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
+        #     yaw_diff = angle_map - angle_rover
+        #     yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
 
-            #the rover's yaw in the map frame is thus the yaw difference
-            yaw_offsets.append(yaw_diff)
-            #self.get_logger().info(f"--> Yaw (deg): {(yaw_diff*180/3.141592):.3f} for ids [{id1}-{id2}]")
+        #     #the rover's yaw in the map frame is thus the yaw difference
+        #     yaw_offsets.append(yaw_diff)
+        #     #self.get_logger().info(f"--> Yaw (deg): {(yaw_diff*180/3.141592):.3f} for ids [{id1}-{id2}]")
 
         
-        if len(yaw_offsets) > 0:
-            avg_yaw = sum(yaw_offsets)/len(yaw_offsets)
-            #self.get_logger().info(f"--> Yaw (deg): {(avg_yaw*180/3.141592):.3f} ")
-            self.yaw_estimate = avg_yaw
-            self.time_of_last_yaw_meas = self.get_clock().now()
+        # if len(yaw_offsets) > 0:
+        #     avg_yaw = sum(yaw_offsets)/len(yaw_offsets)
+        #     #self.get_logger().info(f"--> Yaw (deg): {(avg_yaw*180/3.141592):.3f} ")
+        #     self.yaw_estimate = avg_yaw
+        #     self.time_of_last_yaw_meas = self.get_clock().now()
         
 
 
+        n = len(valid_markers)
 
-
-
-
-
-        # we can make a precise guess using only two landmarks because we know roughly where we are already
-        # when the rover starts: We are at self.erc_start_pos assuming we dont fuck up the rover placement at the start of the task.
-        # this problem is about finding the intersections of two circles
-        # then finding the intersection that is closest to our current location (given by the current map--(aruco)-->odom + odom--(EKF)-->base_link transform).
-
-
-        if(len(valid_markers) == 2):  
-            #find the (x, y) coordinates of the two intersections of the circles
-            self.get_logger().info(f"2 CIRCLE INTERSECT (bearing + range pose estimation)!!")
-
-            #                     [0.6, 2.9],
-            #                     -131.8, 
-            #                     -8.9, 
-            #                     [2.59, 1.11], 
-            #                     [1.36, 6.79],
-            #                     math.sqrt((2.59 - 0.65)**2 + (1.11 - 2.9)**2),
-            #                     math.sqrt((1.36 - 0.65)**2 + (6.79 - 2.9)**2)
-            #                 )
-
-            #should give 0.6, 2.9, yaw = 1.57
-            ########################################################
-
-            (idA, poseA), (idB, poseB) = valid_markers
-            
-            landmarks = [
-                [msg.landmark_map_pos_x[0], msg.landmark_map_pos_y[0]],
-                [msg.landmark_map_pos_x[1], msg.landmark_map_pos_y[1]]
-            ]
-
-            # get measured robot‑frame bearings in radians:
-            bearings = [
-                math.radians(msg.ar_angles_list[0]),
-                math.radians(msg.ar_angles_list[1])
-            ]
-
-            # get measured ranges:
-            poseA = msg.poses[0]
-            poseB = msg.poses[1]
-
-            rA = math.hypot(poseA.position.x, poseA.position.y)
-            rB = math.hypot(poseB.position.x, poseB.position.y)
-            ranges = [rA, rB]
-
-            # harcoded example
-            # landmarks = [
-            #     [-0.75, 0.46],
-            #     [1.36, 6.79]
-            # ]
-            # bearings = [math.radians(154.2), math.radians(-8.9)]
-            # ranges = [math.sqrt((-0.75 - 0.65)**2 + (0.46- 2.9)**2), math.sqrt((1.36 - 0.65)**2 + (6.79 - 2.9)**2)]
-
-            if not self.initialized_map_odom_tf:
-                x0 = [self.erc_start_pos[0], self.erc_start_pos[0], 0.0]
-            else:
-                x0 = [self.curr_map_odom_base_x, self.curr_map_odom_base_y, self.curr_map_odom_base_yaw]
-            
-            w_bearing = 1.0
-            w_range   = 0.05
-
-            sol = least_squares(
-                bearing_range_residuals,
-                x0,
-                args=(landmarks, bearings, ranges, self.w_bearing, self.w_range),
-                method='trf',
-                loss='huber',
-                ftol=1e-9, xtol=1e-9
-            )
-
-            x_m, y_m, yaw_m = None, None, None
-
-            if sol.success:
-                x_m, y_m, yaw_m = sol.x
-                self.get_logger().info(f"mega system : X={x_m}, Y={y_m}, yaw: {yaw_m}")
-                x_m   = float(x_m)
-                y_m   = float(y_m)
-                yaw_m = float(yaw_m)
-            else:
-                if not self.initialized_map_odom_tf:
-                    self.get_logger().info("2 circle pose did not converge. Assuming we are at the start position")
-                    self.get_logger().info(f"msg.ar angles list: {msg.ar_angles_list}")
-                    pt_A = [msg.landmark_map_pos_x[0], msg.landmark_map_pos_y[0]]
-                    self.get_logger().info(f"using point: {pt_A}")
-                    self.yaw_estimate = math.atan2(pt_A[1] - self.erc_start_pos[1], pt_A[0] - self.erc_start_pos[0]) - math.radians(msg.ar_angles_list[0])
-                    self.get_logger().info(f"failed 2 circle yaw estimation assuming we are at start pos: {self.yaw_estimate*180/3.1415}")
-
-            ########################################################
-
-            if not self.initialized_map_odom_tf and (x_m is not None) and (y_m is not None) and (yaw_m is not None):
-                ref = self.erc_start_pos
-                dx = x_m - ref[0]
-                dy = y_m - ref[1]
-
-                if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                    self.x_estimate, self.y_estimate = x_m, y_m
-                    self.yaw_estimate = yaw_m
-                    self.triangulated_new_xy = True
-                    self.time_of_last_pose = self.get_clock().now()
-                    
-            elif self.initialized_map_odom_tf and (x_m is not None) and (y_m is not None) and (yaw_m is not None):
-                self.x_estimate, self.y_estimate = x_m, y_m
-                self.triangulated_new_xy = True
-                self.time_of_last_pose = self.get_clock().now()
-
-
-
-        if len(valid_markers) == 3: #do triangulation directly but if it fails do 2x 2-circle intersection and take the mean o the results
-            self.get_logger().info(f"1 TRIANGULATION")
-            #id0, id1, id2 are aruco ids (0 =>aruco tag nbr 51, 1=>52 etc...)
-            (id0, p0), (id1, p1), (id2, p2) = valid_markers #[(aruco id, pose), ...]
-            
-            are_aruco_ids_ccw = False
-
-            #check the orientation of the tags:
-            are_aruco_ids_ccw = self.are_points_counterclockwise([
-                                        self.landmark_poses[id0],
-                                        self.landmark_poses[id1],
-                                        self.landmark_poses[id2]
-                                    ])
-
-            if not are_aruco_ids_ccw:
-                #self.get_logger().info(f"clockwise points.")
-                #id0, id1, id2 are oriented clockwise
-                #we can thus set A = aruco at map pose self.landmark_poses[id0] etc...
-                #but we also need to find the corresponding angles
-                bearings_clockwise = [msg.ar_angles_list[i] for i in (0,1,2)] 
-                landmarks_ordered = [self.landmark_poses[id0], self.landmark_poses[id1], self.landmark_poses[id2]]
-
-            else:
-                bearings_clockwise = [msg.ar_angles_list[i] for i in (0,1,2)] 
-                bearings_clockwise.reverse()
-                landmarks_ordered = [self.landmark_poses[id2], self.landmark_poses[id1], self.landmark_poses[id0]]
-
-
-            #self.get_logger().info(f"ordered bearings: {bearings_clockwise}")
-            # build landmarks list and φ-angles
-            bearing_A, bearing_B, bearing_C = bearings_clockwise
-
-            phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
-            phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
-            phi_3 = min(abs(bearing_C - bearing_A), abs(360.0 - abs(bearing_C) - abs(bearing_A)))
-
-            #phi_3 = abs(360.0 - phi_1 - phi_2)
-
-            phi_angles = [phi_1, phi_2, phi_3]
-            #self.get_logger().info(f"phi angles: {phi_angles}")
-
-
-
-            # try the optimization triangulation
-            if self.initialized_map_odom_tf:
-                self.get_logger().info(f"syytem init, settin ref to curr est !")
-                ref = [self.curr_map_odom_base_x, self.curr_map_odom_base_y]
-            else:
-                self.get_logger().info(f"syytem NOT init, setting to ERC!")
-
-                ref = self.erc_start_pos
-            
-            self.get_logger().info(f"sent to opti triangulation: landmarks {landmarks_ordered}, phi_angles: {phi_angles}, ref pos {ref}")
-
-            xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
-            self.get_logger().info(f"OPTI TRIANG POS: {xy}")
-
-            if xy is not None:
-                if not self.initialized_map_odom_tf:
-                    dx = xy[0] - self.erc_start_pos[0]
-                    dy = xy[1] - self.erc_start_pos[1]
-
-                    if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                        self.x_estimate, self.y_estimate = xy
-                        self.triangulated_new_xy      = True
-                        self.time_of_last_pose        = self.get_clock().now()
-
-                        #calculate yaw in the map frame when triangulation is valid on initialization
-                        pt_A = landmarks_ordered[0]
-                        self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
-                        self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
+        # helper: do all triplets triangulation → return mean P or None
+        def try_all_triplets():
+            sols = []
+            for (iA,_,kA),(iB,_,kB),(iC,_,kC) in combinations(valid_markers, 3):
+                lmA = self.landmark_poses[iA]
+                lmB = self.landmark_poses[iB]
+                lmC = self.landmark_poses[iC]
+                # order CW:
+                if self.are_points_counterclockwise([lmA,lmB,lmC]):
+                    lms = [lmC,lmB,lmA]
+                    phs = [msg.ar_angles_list[kC],
+                        msg.ar_angles_list[kB],
+                        msg.ar_angles_list[kA]]
                 else:
-
-                    self.x_estimate, self.y_estimate = xy
-                    self.triangulated_new_xy      = True
-                    self.time_of_last_pose        = self.get_clock().now()
-
-                    #always calculate yaw in the map frame when triangulating
-                    pt_A = landmarks_ordered[0]
-                    self.yaw_estimate = math.atan2(pt_A[1] - self.y_estimate, pt_A[0] - self.x_estimate) - math.radians(bearing_A)
-                    self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
-
-            else:
-                self.get_logger().info(f"opti triang failed, fallback to range+bearing weighted non linear optimization")
-                #range + noisy bearing weighted non linear optimization
-
-                #TODO : FINISH THIS FALLBACK
-
-                # (i0, i1) = [(id0,id1), (id0,id2)]
-
-                # landmarks = []
-                # bearings  = []
-                # ranges    = []
-
-                # for (ida, idb), poseA, poseB, angA, angB in [
-                #     ((id0,id1), p0, p1, msg.ar_angles_list[0], msg.ar_angles_list[1]),
-                #     ((id0,id2), p0, p2, msg.ar_angles_list[0], msg.ar_angles_list[2])
-                # ]:
-                #     # map positions
-                #     landmarks.append([msg.landmark_map_pos_x[ida], msg.landmark_map_pos_y[ida]])
-                #     landmarks.append([msg.landmark_map_pos_x[idb], msg.landmark_map_pos_y[idb]])
-                #     # bearings in radians
-                #     bearings.append(math.radians(angA))
-                #     bearings.append(math.radians(angB))
-                #     # ranges measured
-                #     ranges.append(math.hypot(poseA.position.x, poseA.position.y))
-                #     ranges.append(math.hypot(poseB.position.x, poseB.position.y))
-
-                # # initial guess
-                # if self.initialized_map_odom_tf:
-                #     x0 = [self.curr_map_odom_base_x,
-                #         self.curr_map_odom_base_y,
-                #         self.curr_map_odom_base_yaw]
-                # else:
-                #     x0 = [self.erc_start_pos[0],
-                #         self.erc_start_pos[1],
-                #         0.0]
-
-                # sol = least_squares(
-                #     bearing_range_residuals,
-                #     x0,
-                #     args=(landmarks, bearings, ranges, self.w_bearing, self.w_range),
-                #     method='trf',
-                #     loss='huber',
-                #     ftol=1e-9, xtol=1e-9
-                # )
-
-                # if sol.success:
-                #     xm, ym, yawm = sol.x
-                #     self.x_estimate, self.y_estimate, self.yaw_estimate = float(xm), float(ym), float(yawm)
-                #     self.triangulated_new_xy = True
-                #     self.time_of_last_pose   = self.get_clock().now()
-                # else:
-                #     self.get_logger().warn("bearing‑range fallback did not converge; skipping update")
-
-
-
-
-
-        # if >3 landmarks we can triangulate the pose analytically by using carefully chosen triplets of aruco tags
-        if len(valid_markers)>3:
-            self.get_logger().info(f"MULTIPLE TRIANGULATIONS")
-
-            #when there are more than 3 arucos we need to find every pair of triplets of arucos (well limit them to self.max_nbr_triplets to save computation time)
-  
-            #The triangulation code relies on the angles of the aruco tags relative to the rover's frame given by muli_aruco_node.py's ArucoMarkers msg
-            #we first need to order the detect tags clockwise in the map frame, this can be done by comparing the angles of each tag in the rover frame
-            #we then need the position of the detected arucos in the same order as the ordered angles
-            #we also need the current position (x, y) estimate in the map frame
-
-            # 1) build all triplets of valid aruco tags
-            # we need to limit the number of triplets if there are a lot of arucos detected because it wont be real time otherwise.
-
-            selected_triplets = []
-            for trip in combinations(range(len(valid_markers)), 3):
-                selected_triplets.append((trip))
-                if len(selected_triplets) >= self.max_nbr_triplets:
-                    break
-
-            ar_triplet_pos = [] #list to store the triangulated positions from each triplet
-            ar_triplet_yaw = []
-
-            if selected_triplets:
-                for (i, j, k) in selected_triplets:
-                    (id0, p0), (id1, p1), (id2, p2) = valid_markers[i], valid_markers[j], valid_markers[k]
-
-                    are_aruco_ids_ccw = False
-                    #check the orientation of the tags:
-                    are_aruco_ids_ccw = self.are_points_counterclockwise([
-                                                self.landmark_poses[id0],
-                                                self.landmark_poses[id1],
-                                                self.landmark_poses[id2]
-                                            ])
-                    if not are_aruco_ids_ccw:
-                        #id0, id1, id2 are oriented clockwise
-                        #we can thus set A = aruco at map pose self.landmark_poses[id0] etc...
-                        #but we also need to find the corresponding angles
-                        bearings_clockwise = [msg.ar_angles_list[x] for x in (i,j,k)]
-                        landmarks_ordered = [self.landmark_poses[id0], self.landmark_poses[id1], self.landmark_poses[id2]]
-
-                    else:
-                        bearings_clockwise = [msg.ar_angles_list[x] for x in (i,j,k)]
-                        bearings_clockwise.reverse()
-                        landmarks_ordered = [self.landmark_poses[id2], self.landmark_poses[id1], self.landmark_poses[id0]]
-
-                    bearing_A, bearing_B, bearing_C = bearings_clockwise
-
-                    phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
-                    phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
-                    phi_3 = min(abs(bearing_C - bearing_A), abs(360.0 - abs(bearing_C) - abs(bearing_A)))
-                    phi_angles = [phi_1, phi_2, phi_3]
-
-
-                    if self.initialized_map_odom_tf:
-                        ref = [self.curr_map_odom_base_x, self.curr_map_odom_base_y]
-                    else:
-                        ref = self.erc_start_pos
-
-                    xy = triangulate_opti(landmarks_ordered, phi_angles, ref)
+                    lms = [lmA,lmB,lmC]
+                    phs = [msg.ar_angles_list[kA],
+                        msg.ar_angles_list[kB],
+                        msg.ar_angles_list[kC]]
                 
-                    if xy is not None:
-                        self.get_logger().info(f"multi triang: xy : {xy}")
-                        self.get_logger().info(f"multi triang landmarks: {landmarks_ordered}")
-                        #guard from garbage values on initialization
-                        if not self.initialized_map_odom_tf:
-                            dx = xy[0] - self.erc_start_pos[0]
-                            dy = xy[1] - self.erc_start_pos[1]
-                            if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                                ar_triplet_pos.append(xy)
-                                #calculate the yaw
-                                pt_A = landmarks_ordered[0]
-                                self.yaw_estimate = math.atan2(pt_A[1] - xy[1], pt_A[0] - xy[0]) - math.radians(bearing_A)
-                                self.get_logger().info(f"MULTI triang YAW EST: {self.yaw_estimate}")
-                                ar_triplet_yaw.append(self.yaw_estimate)
+                bearing_A = phs[0]
+                bearing_B = phs[1]
+                bearing_C = phs[2]
 
-                        else:
-                            ar_triplet_pos.append(xy)
-                            pt_A = landmarks_ordered[0]
-                            self.yaw_estimate = math.atan2(pt_A[1] - xy[1], pt_A[0] - xy[0]) - math.radians(bearing_A)
-                            self.get_logger().info(f"point A: {landmarks_ordered[0]}, bearing A: {bearing_A}")
-                            self.get_logger().info(f"triang YAW EST: {self.yaw_estimate}")
-                            ar_triplet_yaw.append(self.yaw_estimate)
+                phi_1 = min(abs(bearing_A - bearing_B), abs(360.0 - abs(bearing_A) - abs(bearing_B)))
+                phi_2 = min(abs(bearing_B - bearing_C), abs(360.0 - abs(bearing_B) - abs(bearing_C)))
+                phi_3 = min(abs(bearing_C - bearing_A), abs(360.0 - abs(bearing_C) - abs(bearing_A)))
 
-                    #TODO: REPLACE THIS ELSE FALLBACK WITH RANGE AND BEARING LEAST SQUARES
-                    # else:
-                    #     xy = None
-                    #     self.get_logger().info(f"geom triang failed, fallback to circle intersects")
-                    #     # fallback of the fallback: average two circle intersections
-                    #     # id0, id1 and id2 are the original indexes of the failed triplet aruco in the ArucoMarkers msg
-                    #     p01 = self.get_circle_intersect(id0, p0, id1, p1)
-                    #     p02 = self.get_circle_intersect(id0, p0, id2, p2)
-                    #     candidates = [pt for pt in (p01, p02) if pt is not None]
+                phs = [phi_1, phi_2, phi_3]
 
-                    #     if candidates:
-                    #         mx = sum(pt[0] for pt in candidates) / len(candidates)
-                    #         my = sum(pt[1] for pt in candidates) / len(candidates)
-                    #         self.get_logger().info(f"1 trinagulation fallback: x={mx}, y={my}")
-                    #         xy = np.array([mx, my])
+                ref = ([self.curr_map_odom_base_x, self.curr_map_odom_base_y]
+                    if self.initialized_map_odom_tf else self.erc_start_pos)
+                P = triangulate_opti(lms, phs, ref)
+                if P is not None:
+                    sols.append(P)
+            return np.mean(sols, axis=0) if sols else None
+                
+        def try_filtered_ls(yaw):
+            # build lists
+            lms = []
+            phs = []
+            for (_,_,k) in valid_markers:
+                lms.append(self.landmark_poses[ msg.marker_ids[k] ])
+                phs.append(math.radians(msg.ar_angles_list[k]))
+            # filter pairs with ≥20° baseline
+            good = [False]*len(phs)
+            for i in range(len(phs)):
+                for j in range(i+1, len(phs)):
+                    δ = abs(wrap((yaw+phs[i]) - (yaw+phs[j]) - math.pi))
+                    if δ >= math.radians(20.0):
+                        good[i] = good[j] = True
+            lms_f = [L for L,ok in zip(lms,good) if ok]
+            phs_f = [φ for φ,ok in zip(phs,good) if ok]
+            if len(phs_f) < 2:
+                return None
 
-                    #     if xy is not None:
-                    #         #guard from garbage values on initialization
-                    #         if not self.initialized_map_odom_tf:
-                    #             dx = xy[0] - self.erc_start_pos[0]
-                    #             dy = xy[1] - self.erc_start_pos[1]
-                    #             if math.sqrt(dx*dx + dy*dy) <= self.start_pose_tolerance:
-                    #                 ar_triplet_pos.append(xy)
-                    #         else:
-                    #             ar_triplet_pos.append(xy)
+            def resid(xy):
+                x,y = xy
+                r = []
+                for (xi,yi),φ in zip(lms_f, phs_f):
+                    r.append(wrap(math.atan2(yi-y, xi-x) - yaw - φ))
+                return r
+
+            x0 = ( np.array([self.curr_map_odom_base_x,
+                            self.curr_map_odom_base_y])
+                if self.initialized_map_odom_tf else self.erc_start_pos )
+            sol = least_squares(resid, x0, method='lm')
+            return sol.x if sol.success else None
+        
 
 
-                if ar_triplet_pos:
-                    pos_arr = np.stack(ar_triplet_pos, axis=0)
-                    mean_xy = pos_arr.mean(axis=0)
-                    self.x_estimate, self.y_estimate = float(mean_xy[0]), float(mean_xy[1])
-                    self.triangulated_new_pose = True
-                    self.triangulated_new_xy   = True
-                    self.time_of_last_pose     = self.get_clock().now()
+        ############### POSE ESTIMATION LOGIC ###################
+        if not self.initialized_map_odom_tf:
+            if n == 2:
+                # only solve yaw from two bearings at ERC start
+                # we assume the start position is correct enough
+                
+                (iA,_,kA),(iB,_,kB) = valid_markers
+                A = self.landmark_poses[iA]
+                B = self.landmark_poses[iB]
+                φA = math.radians(msg.ar_angles_list[kA])
+                φB = math.radians(msg.ar_angles_list[kB])
+                x0,y0 = self.erc_start_pos
+                yawA = wrap(math.atan2(A[1]-y0, A[0]-x0) - φA)
+                yawB = wrap(math.atan2(B[1]-y0, B[0]-x0) - φB)
+                self.yaw_estimate = wrap(0.5*(yawA + yawB))
+                self.measured_new_yaw = True
+                self.time_of_last_yaw_meas = self.get_clock().now()
+                self.get_logger().info(f"[INIT] yaw = {math.degrees(self.yaw_estimate):.2f}°")
 
-                if ar_triplet_yaw:
-                    yaw_arr = np.stack(ar_triplet_yaw, axis=0)
-                    mean_yaw = yaw_arr.mean(axis=0)
-                    self.yaw_estimate = mean_yaw
+            elif n >= 3:
+                # first try all triplets
+                Ptri = try_all_triplets()
+                if Ptri is not None:
+                    # update position
+                    self.x_estimate, self.y_estimate = Ptri
+                    self.get_logger().info(f"[INIT] triplet P = {Ptri}")
+                    self.triangulated_new_xy = True
+                    self.time_of_last_pose   = self.get_clock().now()
+                    self.time_of_last_good_triangulation = self.get_clock().now()
+                    self.measured_good_triang = True
+
+                    # deduce map yaw from new P
+                    yaw_list = []
+                    for (idx, _, k) in valid_markers:
+                        lm = self.landmark_poses[idx]
+                        measured_phi = math.radians(msg.ar_angles_list[k])
+                        bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
+                        yaw_list.append(wrap(bearing_map - measured_phi))
+                    # circular mean
+                    self.yaw_estimate = math.atan2(
+                        sum(math.sin(y) for y in yaw_list),
+                        sum(math.cos(y) for y in yaw_list)
+                    )
+                    self.measured_new_yaw = True
+                    self.get_logger().info(f"[INIT] triang yaw = {math.degrees(self.yaw_estimate):.2f}°")
+
+                else:
+                    # fallback to filtered LS
+                    Pls = try_filtered_ls(self.yaw_estimate)
+                    if Pls is not None:
+                        self.x_estimate, self.y_estimate = Pls
+                        self.get_logger().info(f"[INIT] LS‑only P = {Pls}")
+                        self.triangulated_new_xy = True
+                        self.time_of_last_pose   = self.get_clock().now()
+
+                        # deduce map yaw from LS result
+                        yaw_list = []
+                        for (idx, _, k) in valid_markers:
+                            lm = self.landmark_poses[idx]
+                            measured_phi = math.radians(msg.ar_angles_list[k])
+                            bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
+                            yaw_list.append(wrap(bearing_map - measured_phi))
+                        self.yaw_estimate = math.atan2(
+                            sum(math.sin(y) for y in yaw_list),
+                            sum(math.cos(y) for y in yaw_list)
+                        )
+                        self.measured_new_yaw = True
+                        self.get_logger().info(f"[INIT] yaw = {math.degrees(self.yaw_estimate):.2f}°")
+
+
+        else:
+            # -- normal operation after initialization --
+            if n == 2:
+                # solve (x,y) from two bearings + trusted yaw
+                (iA,_,kA),(iB,_,kB) = valid_markers
+                A = np.array(self.landmark_poses[iA])
+                B = np.array(self.landmark_poses[iB])
+                φA = math.radians(msg.ar_angles_list[kA])
+                φB = math.radians(msg.ar_angles_list[kB])
+                P2 = solve_position_from_two_bearings(A, B, φA, φB, self.yaw_estimate)
+                if P2 is not None:
+                    dx = P2[0] - self.curr_map_odom_base_x
+                    dy = P2[1] - self.curr_map_odom_base_y
+                    if math.sqrt(dx*dx + dy*dy) < 2.0:
+                        prev = np.array([self.curr_map_odom_base_x, self.curr_map_odom_base_y])
+                        new  = P2
+                        self.x_estimate, self.y_estimate = ((1-self.lpf_coeff)*prev + self.lpf_coeff*new)
+                        self.triangulated_new_xy = True
+                        self.time_of_last_pose   = self.get_clock().now()
+                        self.get_logger().info(f"2 marker P = {self.x_estimate, self.y_estimate}")
+
+            elif n >= 3:
+                # try both methods
+                Ptri = try_all_triplets()
+                Pls  = try_filtered_ls(self.yaw_estimate)
+
+                # whichever gives a solution (or average them), then update yaw
+                # if Ptri is not None and Pls is not None:
+                #     Pmix = 0.5*(Ptri + Pls)
+                #     self.x_estimate, self.y_estimate = Pmix
+                #     self.get_logger().info(f"mix(Ptri,Pls) = {Pmix}")
+                dt_since_last_triang = (self.get_clock().now() - self.time_of_last_good_triangulation).nanoseconds * 1e-9
+
+                if Ptri is not None:
+                    self.get_logger().info(f"TRIANGUUUU")
+                    self.x_estimate, self.y_estimate = Ptri
+                    self.get_logger().info(f"tri P = {Ptri}")
+                    self.triangulated_new_xy = True
+                    self.time_of_last_good_triangulation = self.get_clock().now()
+                    self.measured_good_triang = True
+
+                elif Pls is not None and dt_since_last_triang >= self.min_least_squares_dt_from_triang:
+                    self.get_logger().info(f"LEAST SQUAREEES")
+                    dx = Pls[0] - self.curr_map_odom_base_x
+                    dy = Pls[1] - self.curr_map_odom_base_y
+                    if math.sqrt(dx*dx + dy*dy) < 2.0:
+                        self.x_estimate, self.y_estimate = Pls
+                        self.triangulated_new_xy = True
+                        self.get_logger().info(f"LS P = {Pls}")
+
+                if Ptri is not None or Pls is not None:
+                    self.triangulated_new_xy = True
+                    self.time_of_last_pose   = self.get_clock().now()
+
+                    # deduce yaw from whichever position we used
+                    yaw_list = []
+                    for (idx, _, k) in valid_markers:
+                        lm = self.landmark_poses[idx]
+                        measured_phi = math.radians(msg.ar_angles_list[k])
+                        bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
+                        yaw_list.append(wrap(bearing_map - measured_phi))
+                    
+                    dt = (self.get_clock().now() - self.time_of_last_yaw_meas).nanoseconds * 1e-9
+                    if dt >= self.min_yaw_dt:
+                        self.yaw_estimate = math.atan2(
+                            sum(math.sin(y) for y in yaw_list),
+                            sum(math.cos(y) for y in yaw_list)
+                        )
+                        self.measured_new_yaw = True
+                        self.get_logger().info(f" n>=3 deduced yaw = {math.degrees(self.yaw_estimate):.2f}°")
+
+
 
         ####################################
+        # #apply a simple IIR low pass
+        # self.x_estimate = (1-self.lpf_coeff)*self.curr_map_odom_base_x + self.lpf_coeff*self.x_estimate
+        # self.y_estimate = (1-self.lpf_coeff)*self.curr_map_odom_base_y + self.lpf_coeff*self.y_estimate
 
 
         #now publish the corrected map->odom transform (since we already have odom->base_link done by the EKF)
@@ -826,48 +732,55 @@ class PoseEstimatorNode(Node):
         transform_msg.header.frame_id = 'map'
         transform_msg.child_frame_id = 'odom'
 
-        # Calculate the transform from map to odom
-        T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
-        T_odom_base = self.pose_to_mat(self.odom_pos_x, self.odom_pos_y, self.odom_yaw)
+        # Calculate the transform from map to odom when a new measurement has arrived
+        if self.triangulated_new_xy:
+            if self.measured_new_yaw:
+                T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
+            else:
+                T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.curr_map_odom_base_yaw)
 
-        # Calculate the transformation matrix from map to odom
-        T_map_odom = T_map_base @ np.linalg.inv(T_odom_base)
-        
-        #gate against outlier/garbage/very noisy map->odom tf values that are incoherent after initialization (aka when moving during the task)
-        if self.initialized_map_odom_tf:
-            old_t = np.array([self.prev_map_odom_tf.transform.translation.x,
-                              self.prev_map_odom_tf.transform.translation.y])
-            new_t = np.array([T_map_odom[0,3], T_map_odom[1,3]])
-            delta_t = new_t - old_t
-            dist_jump = np.linalg.norm(delta_t)
+            T_odom_base = self.pose_to_mat(self.odom_pos_x, self.odom_pos_y, self.odom_yaw)
 
-            q = self.prev_map_odom_tf.transform.rotation
-            old_yaw = R.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz')[2]
+            # Calculate the transformation matrix from map to odom
+            T_map_odom = T_map_base @ np.linalg.inv(T_odom_base)
+            
+            #gate against outlier/garbage/very noisy map->odom tf values that are incoherent after initialization (aka when moving during the task)
+            if self.initialized_map_odom_tf and not self.measured_good_triang:
+                old_t = np.array([self.prev_map_odom_tf.transform.translation.x,
+                                  self.prev_map_odom_tf.transform.translation.y])
+                new_t = np.array([T_map_odom[0,3], T_map_odom[1,3]])
+                delta_t = new_t - old_t
+                dist_jump = np.linalg.norm(delta_t)
+
+                q = self.prev_map_odom_tf.transform.rotation
+                old_yaw = R.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz')[2]
 
 
-            new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
-            yaw_jump = abs(((new_yaw - old_yaw) + np.pi) % (2*np.pi) - np.pi)
+                new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+                yaw_jump = abs(((new_yaw - old_yaw) + np.pi) % (2*np.pi) - np.pi)
 
-            if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
-                self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.2f}° deg")
-                return
+                if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
+                    self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.2f}° deg")
+                    return
 
-        transform_msg.transform.translation.x = T_map_odom[0, 3]
-        transform_msg.transform.translation.y = T_map_odom[1, 3]
-        transform_msg.transform.translation.z = 0.0
-        transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
+            transform_msg.transform.translation.x = T_map_odom[0, 3]
+            transform_msg.transform.translation.y = T_map_odom[1, 3]
+            transform_msg.transform.translation.z = 0.0
+            transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
+            # Store the last pose for the next iteration
+            self.prev_map_odom_tf = transform_msg
 
         #broadcast the transform
         if self.initialized_map_odom_tf:
-            self.tf_broadcaster.sendTransform(transform_msg)
+            self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
             # self.get_logger().info(f"Broadcasted map->odom transform, tx :{transform_msg.transform.translation.x}, ty{transform_msg.transform.translation.y}")
-            self.get_logger().info(f"--> Estimated Yaw (deg): {(self.yaw_estimate*180/3.141592):.3f}")
-            self.get_logger().info(f"--> Estimate X in map: {(self.x_estimate):.3f}")
-            self.get_logger().info(f"--> Estimated Y in map: {(self.y_estimate):.3f}")
+            if self.triangulated_new_xy:
+                self.get_logger().info(f"--> Estimated Yaw (deg): {(self.yaw_estimate*180/3.141592):.3f}")
+                self.get_logger().info(f"--> Estimate X in map: {(self.x_estimate):.3f}")
+                self.get_logger().info(f"--> Estimated Y in map: {(self.y_estimate):.3f}")
             #self.get_logger().info(f"-------------------------------------")
 
-        # Store the last pose for the next iteration
-        self.prev_map_odom_tf = transform_msg
+
 
         if(self.init_callback_counter < self.nbr_init_callbacks_for_avg):
 
@@ -889,6 +802,12 @@ class PoseEstimatorNode(Node):
                 
                 self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
                 self.get_logger().info(f"SENT TRANSFORM AFTER INIT")
+
+
+        #reset flags
+        self.triangulated_new_xy = False
+        self.measured_new_yaw = False
+        self.measured_good_triang = False
 
 
 

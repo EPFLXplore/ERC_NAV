@@ -37,9 +37,9 @@ class MultiViewArucoNode(Node):
 
         self.landmark_poses = [
                 (-0.75, 0.46),
-                (1.42, -0.12),
+                (2.59, 1.11),
                 (1.36, 6.79),
-                (1.42, 0.3),
+                (-1.4, 17.07),
                 (7.39, 19.4),
                 (10.39, 14.99),
                 (-5.1, 6.79),
@@ -73,17 +73,17 @@ class MultiViewArucoNode(Node):
         # /ROVER/feed_camera_cs_1
         # /ROVER/feed_camera_cs_2
         # /ROVER/feed_camera_cs_3
+                        
+        self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
+        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_front_left_v1_1")
 
-        self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_0')
-        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_top_right_1")
+        self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_0')
+        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_top_right_1")
 
-        self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_1')
-        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_front_left_v1_1")
-
-        self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_2')
+        self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
         self.declare_parameter("camera_frame_6", "Logitech_Brio_100_front_right_v1_1")
 
-        self.declare_parameter("image_topic_7", '/ROVER/feed_camera_cs_3')
+        self.declare_parameter("image_topic_7", '/ROVER/feed_camera_cs_2')
         self.declare_parameter("camera_frame_7", "Logitech_Brio_100_top_left_1")
 
         self.declare_parameter("marker_size", .144)
@@ -455,7 +455,7 @@ class MultiViewArucoNode(Node):
 
                 # **Only publish valid ERC markers**
                 #but first verify if they are redundant tags (2x the same ID) because it should have been filtered
-                if aruco_index is not None:
+                if aruco_index is not None and aruco_index not in markers.marker_ids:
                     pose_array.poses.append(pose)
                     markers.poses.append(pose)
                     markers.marker_ids.append(aruco_index)
