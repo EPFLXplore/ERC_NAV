@@ -672,11 +672,14 @@ class PoseEstimatorNode(Node):
 
                 if Ptri is not None:
                     self.get_logger().info(f"TRIANGUUUU")
-                    self.x_estimate, self.y_estimate = Ptri
-                    self.get_logger().info(f"tri P = {Ptri}")
-                    self.triangulated_new_xy = True
-                    self.time_of_last_good_triangulation = self.get_clock().now()
-                    self.measured_good_triang = True
+                    dx = Ptri[0] - self.curr_map_odom_base_x
+                    dy = Ptri[1] - self.curr_map_odom_base_y
+                    if math.sqrt(dx*dx + dy*dy) < 2.0:
+                        self.x_estimate, self.y_estimate = Ptri
+                        self.get_logger().info(f"tri P = {Ptri}")
+                        self.triangulated_new_xy = True
+                        self.time_of_last_good_triangulation = self.get_clock().now()
+                        self.measured_good_triang = True
 
                 elif Pls is not None and dt_since_last_triang >= self.min_least_squares_dt_from_triang:
                     self.get_logger().info(f"LEAST SQUAREEES")
@@ -687,7 +690,7 @@ class PoseEstimatorNode(Node):
                         self.triangulated_new_xy = True
                         self.get_logger().info(f"LS P = {Pls}")
 
-                if Ptri is not None or Pls is not None:
+                if Ptri is not None or Pls is not None and self.triangulated_new_xy:
                     self.triangulated_new_xy = True
                     self.time_of_last_pose   = self.get_clock().now()
 

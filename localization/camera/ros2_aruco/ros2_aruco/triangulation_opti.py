@@ -83,10 +83,9 @@ def triangulate_opti(landmarks, phi_angles, current_pos):
     if APtri[0]>=epsilon and APtri[1]>=epsilon and BPtri[0]>=epsilon and BPtri[1]>=epsilon and CPtri[0]>=epsilon and CPtri[1]>=epsilon:
         inside_triangle = True
 
-    if not inside_triangle:
-        debug_log(f"NOT INSIDE TRIANGLE !!!!!!!!!")
-
-        return None
+    # if not inside_triangle:
+    #     debug_log(f"NOT INSIDE TRIANGLE !!!!!!!!!")
+    #     return None
 
     try:
         P = scp.optimize.root(func, P_est, args=(OA,OB,OC, phi_angles), method = 'lm')
