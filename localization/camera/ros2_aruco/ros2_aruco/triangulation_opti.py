@@ -78,18 +78,18 @@ def triangulate_opti(landmarks, phi_angles, current_pos):
     APtri = M_Ainv @ AP
     BPtri = M_Binv @ BP
     CPtri = M_Cinv @ CP
-    epsilon = 0.08 #meters, within smaller scaled down triangle to not have problems at the edges
+    epsilon = 0.05 #meters, within smaller scaled down triangle to not have problems at the edges
 
     if APtri[0]>=epsilon and APtri[1]>=epsilon and BPtri[0]>=epsilon and BPtri[1]>=epsilon and CPtri[0]>=epsilon and CPtri[1]>=epsilon:
         inside_triangle = True
 
-    # if not inside_triangle:
-    #     debug_log(f"NOT INSIDE TRIANGLE !!!!!!!!!")
-    #     return None
+    if not inside_triangle:
+        debug_log(f"NOT INSIDE TRIANGLE !!!!!!!!!")
+        return None
 
     try:
         P = scp.optimize.root(func, P_est, args=(OA,OB,OC, phi_angles), method = 'lm')
-        debug_log(f"OPTI TRIANG: P = {P}")
+        #debug_log(f"OPTI TRIANG: P = {P}")
         P = P.x        # calculated rover position in map frame
         #debug_log(f"OPTI TRIANG: P.x = {P}")
     except Exception as e:

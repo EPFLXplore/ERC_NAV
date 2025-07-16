@@ -94,7 +94,7 @@ class PoseEstimatorNode(Node):
         self.min_yaw_dt = 30.0#seconds
 
 
-        self.max_translation_jump = 3.3 #meters
+        self.max_translation_jump = 0.5 #meters
         self.max_yaw_jump = math.radians(40) #degrees
         self.max_aruco_dist_for_tvec_use = 4.0 #meters
         self.start_pose_tolerance = 0.2 #meters
@@ -562,7 +562,7 @@ class PoseEstimatorNode(Node):
             x0 = ( np.array([self.curr_map_odom_base_x,
                             self.curr_map_odom_base_y])
                 if self.initialized_map_odom_tf else self.erc_start_pos )
-            sol = least_squares(resid, x0, method='lm')
+            sol = least_squares(resid, x0, method='trf', loss='huber')
             return sol.x if sol.success else None
         
 
@@ -585,56 +585,102 @@ class PoseEstimatorNode(Node):
                 self.measured_new_yaw = True
                 self.time_of_last_yaw_meas = self.get_clock().now()
                 self.get_logger().info(f"[INIT] yaw = {math.degrees(self.yaw_estimate):.2f}°")
+                #bogus tf
+                T_map_base = self.pose_to_mat(self.erc_start_pos[0], self.erc_start_pos[1], self.yaw_estimate)
+                T_odom_base = np.eye(4)  # assume odom==base_link for INIT
+                T_map_odom  = T_map_base @ np.linalg.inv(T_odom_base)
+                transform_msg = TransformStamped()
+                transform_msg.header.stamp = self.get_clock().now().to_msg()
+                transform_msg.header.frame_id = 'map'
+                transform_msg.child_frame_id = 'odom'
+                transform_msg.transform.translation.x = T_map_odom[0,3]
+                transform_msg.transform.translation.y = T_map_odom[1,3]
+                transform_msg.transform.rotation    = yaw_to_quat(
+                    math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+                )
+                is_measurement_valid = True
 
             elif n >= 3:
                 # first try all triplets
                 Ptri = try_all_triplets()
                 if Ptri is not None:
                     # update position
-                    self.x_estimate, self.y_estimate = Ptri
-                    self.get_logger().info(f"[INIT] triplet P = {Ptri}")
-                    self.triangulated_new_xy = True
-                    self.time_of_last_pose   = self.get_clock().now()
-                    self.time_of_last_good_triangulation = self.get_clock().now()
-                    self.measured_good_triang = True
-
-                    # deduce map yaw from new P
-                    yaw_list = []
-                    for (idx, _, k) in valid_markers:
-                        lm = self.landmark_poses[idx]
-                        measured_phi = math.radians(msg.ar_angles_list[k])
-                        bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
-                        yaw_list.append(wrap(bearing_map - measured_phi))
-                    # circular mean
-                    self.yaw_estimate = math.atan2(
-                        sum(math.sin(y) for y in yaw_list),
-                        sum(math.cos(y) for y in yaw_list)
-                    )
-                    self.measured_new_yaw = True
-                    self.get_logger().info(f"[INIT] triang yaw = {math.degrees(self.yaw_estimate):.2f}°")
-
-                else:
-                    # fallback to filtered LS
-                    Pls = try_filtered_ls(self.yaw_estimate)
-                    if Pls is not None:
-                        self.x_estimate, self.y_estimate = Pls
-                        self.get_logger().info(f"[INIT] LS‑only P = {Pls}")
+                    dx = Ptri[0] - self.erc_start_pos[0]
+                    dy = Ptri[1] - self.erc_start_pos[1]
+                    if math.sqrt(dx*dx + dy*dy) < 0.4:
+                        self.x_estimate, self.y_estimate = Ptri
+                        self.get_logger().info(f"[INIT] triplet P = {Ptri}")
                         self.triangulated_new_xy = True
                         self.time_of_last_pose   = self.get_clock().now()
+                        self.time_of_last_good_triangulation = self.get_clock().now()
+                        self.measured_good_triang = True
 
-                        # deduce map yaw from LS result
+                        # deduce map yaw from new P
                         yaw_list = []
                         for (idx, _, k) in valid_markers:
                             lm = self.landmark_poses[idx]
                             measured_phi = math.radians(msg.ar_angles_list[k])
                             bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
                             yaw_list.append(wrap(bearing_map - measured_phi))
+                        # circular mean
                         self.yaw_estimate = math.atan2(
                             sum(math.sin(y) for y in yaw_list),
                             sum(math.cos(y) for y in yaw_list)
                         )
                         self.measured_new_yaw = True
-                        self.get_logger().info(f"[INIT] yaw = {math.degrees(self.yaw_estimate):.2f}°")
+                        self.get_logger().info(f"[INIT] triang yaw = {math.degrees(self.yaw_estimate):.2f}°")
+                        T_map_base = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
+                        T_odom_base = np.eye(4)  # assume odom==base_link for INIT
+                        T_map_odom  = T_map_base @ np.linalg.inv(T_odom_base)
+                        transform_msg = TransformStamped()
+                        transform_msg.header.stamp = self.get_clock().now().to_msg()
+                        transform_msg.header.frame_id = 'map'
+                        transform_msg.child_frame_id = 'odom'
+                        transform_msg.transform.translation.x = T_map_odom[0,3]
+                        transform_msg.transform.translation.y = T_map_odom[1,3]
+                        transform_msg.transform.rotation    = yaw_to_quat(
+                            math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+                        )
+                        is_measurement_valid = True
+
+                else:
+                    # fallback to filtered LS
+                    Pls = try_filtered_ls(self.yaw_estimate)
+                    if Pls is not None:
+                        dx = Pls[0] - self.erc_start_pos[0]
+                        dy = Pls[1] - self.erc_start_pos[1]
+                        if math.sqrt(dx*dx + dy*dy) < 0.4:
+                            self.x_estimate, self.y_estimate = Pls
+                            self.get_logger().info(f"[INIT] LS‑only P = {Pls}")
+                            self.triangulated_new_xy = True
+                            self.time_of_last_pose   = self.get_clock().now()
+
+                            # deduce map yaw from LS result
+                            yaw_list = []
+                            for (idx, _, k) in valid_markers:
+                                lm = self.landmark_poses[idx]
+                                measured_phi = math.radians(msg.ar_angles_list[k])
+                                bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
+                                yaw_list.append(wrap(bearing_map - measured_phi))
+                            self.yaw_estimate = math.atan2(
+                                sum(math.sin(y) for y in yaw_list),
+                                sum(math.cos(y) for y in yaw_list)
+                            )
+                            self.measured_new_yaw = True
+                            self.get_logger().info(f"[INIT] yaw = {math.degrees(self.yaw_estimate):.2f}°")
+                            T_map_base = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
+                            T_odom_base = np.eye(4)
+                            T_map_odom  = T_map_base @ np.linalg.inv(T_odom_base)
+                            transform_msg = TransformStamped()
+                            transform_msg.header.stamp = self.get_clock().now().to_msg()
+                            transform_msg.header.frame_id = 'map'
+                            transform_msg.child_frame_id = 'odom'
+                            transform_msg.transform.translation.x = T_map_odom[0,3]
+                            transform_msg.transform.translation.y = T_map_odom[1,3]
+                            transform_msg.transform.rotation    = yaw_to_quat(
+                                math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+                            )
+                            is_measurement_valid = True
 
 
         else:
@@ -674,6 +720,7 @@ class PoseEstimatorNode(Node):
                     self.get_logger().info(f"TRIANGUUUU")
                     dx = Ptri[0] - self.curr_map_odom_base_x
                     dy = Ptri[1] - self.curr_map_odom_base_y
+                    self.get_logger().info(f"curr map odom: X= {self.curr_map_odom_base_x}, Y= {self.curr_map_odom_base_y}")
                     if math.sqrt(dx*dx + dy*dy) < 2.0:
                         self.x_estimate, self.y_estimate = Ptri
                         self.get_logger().info(f"tri P = {Ptri}")
@@ -685,7 +732,7 @@ class PoseEstimatorNode(Node):
                     self.get_logger().info(f"LEAST SQUAREEES")
                     dx = Pls[0] - self.curr_map_odom_base_x
                     dy = Pls[1] - self.curr_map_odom_base_y
-                    if math.sqrt(dx*dx + dy*dy) < 2.0:
+                    if math.sqrt(dx*dx + dy*dy) < 1.0:
                         self.x_estimate, self.y_estimate = Pls
                         self.triangulated_new_xy = True
                         self.get_logger().info(f"LS P = {Pls}")
@@ -730,48 +777,55 @@ class PoseEstimatorNode(Node):
         # T_odom_base = <from ekf topic: odom→base_link> which is stored in self.odom_pos_x, self.odom_pos_y, self.odom_yaw
         # T_map_odom = T_map_base * inv(T_odom_base)
 
-        transform_msg = TransformStamped()
-        transform_msg.header.stamp = self.get_clock().now().to_msg()
-        transform_msg.header.frame_id = 'map'
-        transform_msg.child_frame_id = 'odom'
-
         # Calculate the transform from map to odom when a new measurement has arrived
-        if self.triangulated_new_xy:
-            if self.measured_new_yaw:
-                T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
+        if self.triangulated_new_xy and self.initialized_map_odom_tf:
+
+            dx = self.x_estimate - self.curr_map_odom_base_x
+            dy = self.y_estimate - self.curr_map_odom_base_y
+            jump = math.hypot(dx, dy)
+            if jump > self.max_translation_jump:
+                return
             else:
-                T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.curr_map_odom_base_yaw)
+                is_measurement_valid = True
 
-            T_odom_base = self.pose_to_mat(self.odom_pos_x, self.odom_pos_y, self.odom_yaw)
+                T_map_base  = self.pose_to_mat(self.x_estimate, self.y_estimate, self.yaw_estimate)
+                T_odom_base = self.pose_to_mat(self.odom_pos_x, self.odom_pos_y, self.odom_yaw)
 
-            # Calculate the transformation matrix from map to odom
-            T_map_odom = T_map_base @ np.linalg.inv(T_odom_base)
-            
+                # Calculate the transformation matrix from map to odom
+                T_map_odom = T_map_base @ np.linalg.inv(T_odom_base)
+
+                transform_msg = TransformStamped()
+                transform_msg.header.stamp = self.get_clock().now().to_msg()
+                transform_msg.header.frame_id = 'map'
+                transform_msg.child_frame_id = 'odom'
+                transform_msg.transform.translation.x = T_map_odom[0, 3]
+                transform_msg.transform.translation.y = T_map_odom[1, 3]
+                transform_msg.transform.translation.z = 0.0
+                transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
+
+                # Store the last pose for the next iteration
+                self.prev_map_odom_tf = transform_msg
+
             #gate against outlier/garbage/very noisy map->odom tf values that are incoherent after initialization (aka when moving during the task)
-            if self.initialized_map_odom_tf and not self.measured_good_triang:
-                old_t = np.array([self.prev_map_odom_tf.transform.translation.x,
-                                  self.prev_map_odom_tf.transform.translation.y])
-                new_t = np.array([T_map_odom[0,3], T_map_odom[1,3]])
-                delta_t = new_t - old_t
-                dist_jump = np.linalg.norm(delta_t)
+            # if self.initialized_map_odom_tf:
+            #     old_t = np.array([self.prev_map_odom_tf.transform.translation.x,
+            #                       self.prev_map_odom_tf.transform.translation.y])
+            #     new_t = np.array([T_map_odom[0,3], T_map_odom[1,3]])
+            #     delta_t = new_t - old_t
+            #     dist_jump = np.linalg.norm(delta_t)
 
-                q = self.prev_map_odom_tf.transform.rotation
-                old_yaw = R.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz')[2]
+            #     q = self.prev_map_odom_tf.transform.rotation
+            #     old_yaw = R.from_quat([q.x, q.y, q.z, q.w]).as_euler('xyz')[2]
 
 
-                new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
-                yaw_jump = abs(((new_yaw - old_yaw) + np.pi) % (2*np.pi) - np.pi)
+            #     new_yaw = math.atan2(T_map_odom[1,0], T_map_odom[0,0])
+            #     yaw_jump = abs(((new_yaw - old_yaw) + np.pi) % (2*np.pi) - np.pi)
 
-                if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
-                    self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.2f}° deg")
-                    return
+            #     if dist_jump > self.max_translation_jump or yaw_jump > self.max_yaw_jump:
+            #         self.get_logger().warn(f"Rejected map→odom jump {dist_jump:.2f} meters, {math.degrees(yaw_jump):.2f}° deg")
+            #         return
+            
 
-            transform_msg.transform.translation.x = T_map_odom[0, 3]
-            transform_msg.transform.translation.y = T_map_odom[1, 3]
-            transform_msg.transform.translation.z = 0.0
-            transform_msg.transform.rotation = yaw_to_quat(math.atan2(T_map_odom[1, 0], T_map_odom[0, 0]))
-            # Store the last pose for the next iteration
-            self.prev_map_odom_tf = transform_msg
 
         #broadcast the transform
         if self.initialized_map_odom_tf:
@@ -785,7 +839,7 @@ class PoseEstimatorNode(Node):
 
 
 
-        if(self.init_callback_counter < self.nbr_init_callbacks_for_avg):
+        if(self.init_callback_counter < self.nbr_init_callbacks_for_avg and is_measurement_valid):
 
             self.init_callback_counter += 1
             self.avg_initialization_tfs.append(transform_msg)
@@ -795,9 +849,9 @@ class PoseEstimatorNode(Node):
             if (self.init_callback_counter == self.nbr_init_callbacks_for_avg):
 
                 self.initialized_map_odom_tf = True
-                
                 self.prev_map_odom_tf = self.calculate_robust_tf_avg(self.avg_initialization_tfs, self.yaw_init_list)
                 self.tf_broadcaster.sendTransform(self.prev_map_odom_tf)
+
                 self.get_logger().info(f"--> INITIALIZED FIRST MAP->ODOM TF, NOW RATE LIMITING THIS NODE @ {(1/(self.callback_period_limit)):.3f} Hz")
                 self.get_logger().info(f"########################################################################")
                 self.get_logger().info(f"########################################################################")
@@ -811,6 +865,7 @@ class PoseEstimatorNode(Node):
         self.triangulated_new_xy = False
         self.measured_new_yaw = False
         self.measured_good_triang = False
+        is_measurement_valid = False
 
 
 
