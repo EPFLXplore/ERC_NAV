@@ -108,11 +108,14 @@ class WaypointFollower(Node):
         # Hardcoded waypoints (x, y, yaw_deg) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
         waypoint_list = [
-            (-2.4, 11.8, 1.57),
-            (5.66, 15.78, 0.0),
-            (12.34, 21.28, 0.0),
-            (16.69, 13.03, -1.57),
-            (0.67, 2.9, -1.57),
+            (-2.77, 11.465, 1.57),
+            (1.85, 18.5, 1.57),
+            (12.3, 17.8, 0.0),
+            (19.15, 16.07, 0.0),
+            (12.3, 17.8, 0.0),
+            (1.85, 18.5, 1.57),
+            (-2.77, 11.465, 1.57),
+            (0.655, 2.515, -1.57),
         ]
 
         for x, y, yaw in waypoint_list:

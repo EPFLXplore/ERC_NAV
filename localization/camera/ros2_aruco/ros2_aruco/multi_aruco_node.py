@@ -36,15 +36,15 @@ class MultiViewArucoNode(Node):
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
         self.landmark_poses = [
-                (-0.75, 0.46),
-                (2.59, 1.11),
-                (1.36, 6.79),
-                (-1.4, 17.07),
-                (7.39, 19.4),
-                (10.39, 14.99),
-                (-5.1, 6.79),
-                (999999, 999999),
-                (999999, 999999),
+                (-0.585, 0.0),
+                (2.62, 0.505),
+                (1.46, 8.45),
+                (-2.28, 15.81),
+                (3.74, 19.07),
+                (7.04, 14.67),
+                (11.46, 19.78),
+                (15.51, 19.33),
+                (16.3, 14.87),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -68,23 +68,24 @@ class MultiViewArucoNode(Node):
         self.declare_parameter("camera_frame_3", "NAV_Front_Camera_1")
 
         #CS Cameras
-        #topic names:
+        #topic names: (see on the RPi at 169.254.55.240 : ERC_CAMERAS/camera/launch/camera_node_cs.launch.py for details on "dev rules")
         # /ROVER/feed_camera_cs_0
         # /ROVER/feed_camera_cs_1
         # /ROVER/feed_camera_cs_2
         # /ROVER/feed_camera_cs_3
                         
         self.declare_parameter("image_topic_4", '/ROVER/feed_camera_cs_1')
-        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_front_left_v1_1")
+        self.declare_parameter("camera_frame_4", "Logitech_Brio_100_top_left_1")
 
         self.declare_parameter("image_topic_5", '/ROVER/feed_camera_cs_0')
-        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_top_right_1")
+        self.declare_parameter("camera_frame_5", "Logitech_Brio_100_front_left_v1_1")
+        
 
         self.declare_parameter("image_topic_6", '/ROVER/feed_camera_cs_3')
-        self.declare_parameter("camera_frame_6", "Logitech_Brio_100_front_right_v1_1")
+        self.declare_parameter("camera_frame_6", "Logitech_Brio_100_top_right_1")
 
         self.declare_parameter("image_topic_7", '/ROVER/feed_camera_cs_2')
-        self.declare_parameter("camera_frame_7", "Logitech_Brio_100_top_left_1")
+        self.declare_parameter("camera_frame_7", "Logitech_Brio_100_front_right_v1_1")
 
         self.declare_parameter("marker_size", .144)
 
@@ -346,8 +347,10 @@ class MultiViewArucoNode(Node):
         marker_candidates = {}  # {marker_id: [(tvec, rot_matrix, yaw_deg)]}
         
         np_arr = np.frombuffer(img_msg.data, np.uint8)
+      
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)  # Keep original detection method
-
+        if cv_image is None:
+            return
         corners, marker_ids, rejected = cv2.aruco.detectMarkers(cv_image, self.aruco_dictionary, parameters=self.aruco_parameters)
 	    #corners = list of detected marker corners. For each marker, its four corners are provided. For N detected markers, the dimensions of this array is Nx4. The order of the corners is clockwise. 
 

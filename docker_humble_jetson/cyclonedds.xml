@@ -5,7 +5,7 @@
       <!-- MUST be this deprecated tag, listing both NICs, comma-separated -->
       <NetworkInterfaceAddress>enP8p1s0,enx0a76f8b03d57</NetworkInterfaceAddress>
       <!-- You need multicast for discovery & data -->
-      <AllowMulticast>true</AllowMulticast>
+      <AllowMulticast>spdp</AllowMulticast>
     </General>
   </Domain>
 </CycloneDDS>

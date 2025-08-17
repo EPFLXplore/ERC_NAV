@@ -236,7 +236,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         displacement_cmds_node,
         motor_cmds_node,
         description_launch,
-        olive_imu_restamp_node,
+        #olive_imu_restamp_node,
         wheel_odom_node,
         custom_local_ekf_node,
         ouster_launch,

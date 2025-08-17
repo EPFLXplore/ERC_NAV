@@ -4,7 +4,7 @@ XAUTH=/tmp/.docker.xauth
 USERNAME=xplore
 CONTAINER_NAME=nav_humble_jetson
 IMAGE_NAME=ghcr.io/epflxplore/nav:humble-jetson
-DOCKER_COMMAND="sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; source src/docker_humble_jetson/attach.sh; ros2 launch wheels_control manual_stack.launch.py"
+DOCKER_COMMAND="sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; source src/docker_humble_jetson/attach.sh; ros2 launch wheels_control manual_stack.launch.py pub_urdf:=True"
 
 # Function to check if a Docker container is running
 is_container_running() {

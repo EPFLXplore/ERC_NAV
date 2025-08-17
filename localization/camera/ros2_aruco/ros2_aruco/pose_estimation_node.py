@@ -152,18 +152,18 @@ class PoseEstimatorNode(Node):
         # ArUco ID 53 → index 2
         # ...
         #the positions are relative to the map frame origin which is given to us by the ERC task description
-        self.erc_start_pos = [0.67, 2.9]  #x, y
+        self.erc_start_pos = [0.655, 2.515]  #x, y
 
         self.landmark_poses = [
-                (-0.75, 0.46),
-                (2.59, 1.11),
-                (1.36, 6.79),
-                (-1.4, 17.07),
-                (7.39, 19.4),
-                (10.39, 14.99),
-                (-5.1, 6.79),
-                (999999, 999999),
-                (999999, 999999),
+                (-0.585, 0.0),
+                (2.62, 0.505),
+                (1.46, 8.45),
+                (-2.28, 15.81),
+                (3.74, 19.07),
+                (7.04, 14.67),
+                (11.46, 19.78),
+                (15.51, 19.33),
+                (16.3, 14.87),
                 (999999, 999999),
                 (999999, 999999),
                 (999999, 999999),
@@ -683,80 +683,80 @@ class PoseEstimatorNode(Node):
                             is_measurement_valid = True
 
 
-        else:
-            # -- normal operation after initialization --
-            if n == 2:
-                # solve (x,y) from two bearings + trusted yaw
-                (iA,_,kA),(iB,_,kB) = valid_markers
-                A = np.array(self.landmark_poses[iA])
-                B = np.array(self.landmark_poses[iB])
-                φA = math.radians(msg.ar_angles_list[kA])
-                φB = math.radians(msg.ar_angles_list[kB])
-                P2 = solve_position_from_two_bearings(A, B, φA, φB, self.yaw_estimate)
-                if P2 is not None:
-                    dx = P2[0] - self.curr_map_odom_base_x
-                    dy = P2[1] - self.curr_map_odom_base_y
-                    if math.sqrt(dx*dx + dy*dy) < 2.0:
-                        prev = np.array([self.curr_map_odom_base_x, self.curr_map_odom_base_y])
-                        new  = P2
-                        self.x_estimate, self.y_estimate = ((1-self.lpf_coeff)*prev + self.lpf_coeff*new)
-                        self.triangulated_new_xy = True
-                        self.time_of_last_pose   = self.get_clock().now()
-                        self.get_logger().info(f"2 marker P = {self.x_estimate, self.y_estimate}")
+        # else:
+        #     # -- normal operation after initialization --
+        #     if n == 2:
+        #         # solve (x,y) from two bearings + trusted yaw
+        #         (iA,_,kA),(iB,_,kB) = valid_markers
+        #         A = np.array(self.landmark_poses[iA])
+        #         B = np.array(self.landmark_poses[iB])
+        #         φA = math.radians(msg.ar_angles_list[kA])
+        #         φB = math.radians(msg.ar_angles_list[kB])
+        #         P2 = solve_position_from_two_bearings(A, B, φA, φB, self.yaw_estimate)
+        #         if P2 is not None:
+        #             dx = P2[0] - self.curr_map_odom_base_x
+        #             dy = P2[1] - self.curr_map_odom_base_y
+        #             if math.sqrt(dx*dx + dy*dy) < 2.0:
+        #                 prev = np.array([self.curr_map_odom_base_x, self.curr_map_odom_base_y])
+        #                 new  = P2
+        #                 self.x_estimate, self.y_estimate = ((1-self.lpf_coeff)*prev + self.lpf_coeff*new)
+        #                 self.triangulated_new_xy = True
+        #                 self.time_of_last_pose   = self.get_clock().now()
+        #                 self.get_logger().info(f"2 marker P = {self.x_estimate, self.y_estimate}")
 
-            elif n >= 3:
-                # try both methods
-                Ptri = try_all_triplets()
-                Pls  = try_filtered_ls(self.yaw_estimate)
+        #     elif n >= 3:
+        #         # try both methods
+        #         Ptri = try_all_triplets()
+        #         Pls  = try_filtered_ls(self.yaw_estimate)
 
-                # whichever gives a solution (or average them), then update yaw
-                # if Ptri is not None and Pls is not None:
-                #     Pmix = 0.5*(Ptri + Pls)
-                #     self.x_estimate, self.y_estimate = Pmix
-                #     self.get_logger().info(f"mix(Ptri,Pls) = {Pmix}")
-                dt_since_last_triang = (self.get_clock().now() - self.time_of_last_good_triangulation).nanoseconds * 1e-9
+        #         # whichever gives a solution (or average them), then update yaw
+        #         # if Ptri is not None and Pls is not None:
+        #         #     Pmix = 0.5*(Ptri + Pls)
+        #         #     self.x_estimate, self.y_estimate = Pmix
+        #         #     self.get_logger().info(f"mix(Ptri,Pls) = {Pmix}")
+        #         dt_since_last_triang = (self.get_clock().now() - self.time_of_last_good_triangulation).nanoseconds * 1e-9
 
-                if Ptri is not None:
-                    self.get_logger().info(f"TRIANGUUUU")
-                    dx = Ptri[0] - self.curr_map_odom_base_x
-                    dy = Ptri[1] - self.curr_map_odom_base_y
-                    self.get_logger().info(f"curr map odom: X= {self.curr_map_odom_base_x}, Y= {self.curr_map_odom_base_y}")
-                    if math.sqrt(dx*dx + dy*dy) < 2.0:
-                        self.x_estimate, self.y_estimate = Ptri
-                        self.get_logger().info(f"tri P = {Ptri}")
-                        self.triangulated_new_xy = True
-                        self.time_of_last_good_triangulation = self.get_clock().now()
-                        self.measured_good_triang = True
+        #         if Ptri is not None:
+        #             self.get_logger().info(f"TRIANGUUUU")
+        #             dx = Ptri[0] - self.curr_map_odom_base_x
+        #             dy = Ptri[1] - self.curr_map_odom_base_y
+        #             self.get_logger().info(f"curr map odom: X= {self.curr_map_odom_base_x}, Y= {self.curr_map_odom_base_y}")
+        #             if math.sqrt(dx*dx + dy*dy) < 2.0:
+        #                 self.x_estimate, self.y_estimate = Ptri
+        #                 self.get_logger().info(f"tri P = {Ptri}")
+        #                 self.triangulated_new_xy = True
+        #                 self.time_of_last_good_triangulation = self.get_clock().now()
+        #                 self.measured_good_triang = True
 
-                elif Pls is not None and dt_since_last_triang >= self.min_least_squares_dt_from_triang:
-                    self.get_logger().info(f"LEAST SQUAREEES")
-                    dx = Pls[0] - self.curr_map_odom_base_x
-                    dy = Pls[1] - self.curr_map_odom_base_y
-                    if math.sqrt(dx*dx + dy*dy) < 1.0:
-                        self.x_estimate, self.y_estimate = Pls
-                        self.triangulated_new_xy = True
-                        self.get_logger().info(f"LS P = {Pls}")
+        #         elif Pls is not None and dt_since_last_triang >= self.min_least_squares_dt_from_triang:
+        #             self.get_logger().info(f"LEAST SQUAREEES")
+        #             dx = Pls[0] - self.curr_map_odom_base_x
+        #             dy = Pls[1] - self.curr_map_odom_base_y
+        #             if math.sqrt(dx*dx + dy*dy) < 1.0:
+        #                 self.x_estimate, self.y_estimate = Pls
+        #                 self.triangulated_new_xy = True
+        #                 self.get_logger().info(f"LS P = {Pls}")
 
-                if Ptri is not None or Pls is not None and self.triangulated_new_xy:
-                    self.triangulated_new_xy = True
-                    self.time_of_last_pose   = self.get_clock().now()
+        #         if Ptri is not None or Pls is not None and self.triangulated_new_xy:
+        #             self.triangulated_new_xy = True
+        #             self.time_of_last_pose   = self.get_clock().now()
 
-                    # deduce yaw from whichever position we used
-                    yaw_list = []
-                    for (idx, _, k) in valid_markers:
-                        lm = self.landmark_poses[idx]
-                        measured_phi = math.radians(msg.ar_angles_list[k])
-                        bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
-                        yaw_list.append(wrap(bearing_map - measured_phi))
+        #             # deduce yaw from whichever position we used
+        #             yaw_list = []
+        #             for (idx, _, k) in valid_markers:
+        #                 lm = self.landmark_poses[idx]
+        #                 measured_phi = math.radians(msg.ar_angles_list[k])
+        #                 bearing_map  = math.atan2(lm[1]-self.y_estimate, lm[0]-self.x_estimate)
+        #                 yaw_list.append(wrap(bearing_map - measured_phi))
                     
-                    dt = (self.get_clock().now() - self.time_of_last_yaw_meas).nanoseconds * 1e-9
-                    if dt >= self.min_yaw_dt:
-                        self.yaw_estimate = math.atan2(
-                            sum(math.sin(y) for y in yaw_list),
-                            sum(math.cos(y) for y in yaw_list)
-                        )
-                        self.measured_new_yaw = True
-                        self.get_logger().info(f" n>=3 deduced yaw = {math.degrees(self.yaw_estimate):.2f}°")
+        #             dt = (self.get_clock().now() - self.time_of_last_yaw_meas).nanoseconds * 1e-9
+        #             if dt >= self.min_yaw_dt:
+        #                 self.yaw_estimate = math.atan2(
+        #                     sum(math.sin(y) for y in yaw_list),
+        #                     sum(math.cos(y) for y in yaw_list)
+        #                 )
+        #                 self.measured_new_yaw = True
+        #                 self.get_logger().info(f" n>=3 deduced yaw = {math.degrees(self.yaw_estimate):.2f}°")
 
 
 
