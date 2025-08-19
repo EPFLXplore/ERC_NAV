@@ -568,6 +568,8 @@ class PoseEstimatorNode(Node):
 
 
         ############### POSE ESTIMATION LOGIC ###################
+        is_measurement_valid = False
+
         if not self.initialized_map_odom_tf:
             if n == 2:
                 # only solve yaw from two bearings at ERC start
@@ -651,7 +653,7 @@ class PoseEstimatorNode(Node):
                         dy = Pls[1] - self.erc_start_pos[1]
                         if math.sqrt(dx*dx + dy*dy) < 0.4:
                             self.x_estimate, self.y_estimate = Pls
-                            self.get_logger().info(f"[INIT] LS‑only P = {Pls}")
+                            self.get_logger().info(f"[INIT] LS-only P = {Pls}")
                             self.triangulated_new_xy = True
                             self.time_of_last_pose   = self.get_clock().now()
 

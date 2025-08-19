@@ -178,65 +178,6 @@ class MultiViewArucoNode(Node):
         #self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
 
 
-    # def wait_for_cameras_to_start(self):
-    #     if not (self.client_left.service_is_ready() and self.client_right.service_is_ready()):
-    #         self.get_logger().debug("Waiting for CameraParams services…")
-    #         return
-
-    #     # stop retry timer once services become available
-    #     self.timer.cancel()
-
-    #     request_left = CameraParams.Request()
-    #     future_left = self.client_left.call_async(request_left)
-    #     future_left.add_done_callback(partial(self.callback_cam_params, camera="left"))
-
-    #     request_right = CameraParams.Request()
-    #     future_right = self.client_right.call_async(request_right)
-    #     future_right.add_done_callback(partial(self.callback_cam_params, camera="right"))
-
-
-    # def callback_cam_params(self, future, camera):
-    #     if self.params_initialized:
-    #         return  # Already good
-    #     try:
-    #         response = future.result()
-    #     except Exception as e:
-    #         self.get_logger().error(f"Service call failed for {camera} camera: {e}")
-    #         return
-
-    #     if (
-    #         response.fx == 0
-    #         or response.fy == 0
-    #         or response.cx == 0
-    #         or response.cy == 0
-    #         or len(response.distortion_coefficients) == 0
-    #     ):
-    #         #self.get_logger().warn(f"Invalid intrinsics from {camera} camera – retrying…")
-    #         #self.timer = self.create_timer(1.0, self.wait_for_cameras_to_start)
-    #         return
-
-    #     distortion = np.array(response.distortion_coefficients)
-    #     intrinsic_mat = np.array(
-    #         [[response.fx, 0, response.cx], [0, response.fy, response.cy], [0, 0, 1]]
-    #     )
-
-    #     if camera == "left":
-    #         self.distortion_1 = distortion
-    #         self.intrinsic_mat_1 = intrinsic_mat
-    #     else:
-    #         self.distortion_2 = distortion
-    #         self.intrinsic_mat_2 = intrinsic_mat
-
-    #     self.cam_params_received[camera] = True
-    #     #self.get_logger().info(f"Received intrinsics for {camera} camera.")
-
-    #     if all(self.cam_params_received.values()) and not self.sync_started:
-    #         #self.get_logger().info("Both camera intrinsics received – starting synchroniser")
-    #         self.ts.registerCallback(self.synced_callback)
-    #         self.params_initialized = True
-    #         self.sync_started = True
-
-
     #def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6):
     def synced_callback(self, img_msg_1, img_msg_2, img_msg_3, img_msg_4, img_msg_5, img_msg_6, img_msg_7):
 
@@ -479,33 +420,6 @@ class MultiViewArucoNode(Node):
                     yaw_deg = euler[2]# yaw is third angle in 'sxyz' convention
                     yaw_deg = normalize_angle_deg(yaw_deg)
                     #self.get_logger().info(f"bearing in rover frame for aruco {aruco_index+51} : {yaw_deg}°")
-                    ############# OPENCV Manual Bearing Calculation for realsense since they have shit calibrations
-
-                    # if str(camera_frame) == "intel_realsense_D415_camera_top_right_1" or str(camera_frame) == "intel_realsense_D415_camera_top_left_1":
-                    #     h, w = cv_image.shape[:2]
-                    #     fov_deg = 55.0 #measured horizontal fov for realsense d415
-                    #     #focal length in pixels
-                    #     fpx = w / (2 * math.tan(math.radians(fov_deg / 2)))
-
-                    #     pts = marker_corners.reshape((4, 2))
-                    #     center = pts.mean(axis=0)
-                            
-                    #     dx = center[0] - (w / 2)
-                    #     bearing_manual_rad =  (-1.0)* math.atan2(dx, fpx) #-1 to go from opencv2 to ros2 frame
-                    #     #self.get_logger().info(f"detected yaw in ros2 cam frame: {bearing_manual_rad*180/3.1415:.2f}°")
-
-                    #     q = transform.transform.rotation
-                    #     q_cam_base = [q.x, q.y, q.z, q.w]
-                    #     R_cam_base = R.from_quat(q_cam_base)
-                    #     roll_cam2base, _, yaw_cam2base_rad = R_cam_base.as_euler('xyz', degrees=False)
-                    #     #self.get_logger().info(f"cam {camera_frame}  yaw in rv frame {(yaw_cam2base_rad*180/3.1415):.2f}°")
-                    #     #first check if the camera is rolled
-                    #     #self.get_logger().info(f"ROLL of CAM: {roll_cam2base*180/3.1415:.2f}°")
-                    #     if abs(roll_cam2base) > 0.05: # assume the camera is flipped in real life so the atan2 above will need to be flipped
-                    #         yaw_base_rad = yaw_cam2base_rad - bearing_manual_rad
-                    #     else:
-                    #         yaw_base_rad = yaw_cam2base_rad + bearing_manual_rad
-                    #     yaw_deg = math.degrees(yaw_base_rad)
                     
                     yaw_deg_temp = self.calculate_bearing_with_fov(cv_image, marker_corners, camera_frame, transform)
                     if yaw_deg_temp is not None:

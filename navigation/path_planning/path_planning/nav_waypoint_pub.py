@@ -16,6 +16,13 @@ from tf2_ros import Buffer, TransformListener
 import tf_transformations
 from nav_msgs.msg import Odometry
 
+#to visualize waypoints in rviz2:
+# ADD imports
+from visualization_msgs.msg import Marker, MarkerArray
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseArray, Point
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+
 
 class WaypointFollower(Node):
     def __init__(self):
@@ -29,10 +36,25 @@ class WaypointFollower(Node):
 
         self.waypoints = self.create_waypoints()
 
+        #for waypoints visualization:
+        viz_qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE
+        )
+
+        self.path_pub = self.create_publisher(Path, '/waypoints_path', viz_qos)
+        self.marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', viz_qos)
+        self.posearray_pub = self.create_publisher(PoseArray, '/waypoints_posearray', viz_qos)
+
+        # publish once (or you can also republish on a timer if you prefer)
+        self.publish_visualizations()
+
+
         self.curr_waypoint_index = 0
 
         #timer to periodically print the current position and distance to the current target waypoint
-        self.timer = self.create_timer(1.0, self.print_current_position)
+        self.timer = self.create_timer(2.0, self.print_current_position)
 
         #subscribe to /wheel_odom to get speed
         self.create_subscription(
@@ -43,6 +65,84 @@ class WaypointFollower(Node):
         )
 
         self.current_speed = 0.0
+
+    def publish_visualizations(self):
+        now = self.get_clock().now().to_msg()
+
+        # 1) Path polyline
+        path = Path()
+        path.header.frame_id = 'map'
+        path.header.stamp = now
+        path.poses = self.waypoints  # already PoseStamped
+        self.path_pub.publish(path)
+
+        # 2) Markers: arrows at each waypoint, index labels, and a connecting line
+        marr = MarkerArray()
+
+        # Connecting line
+        line = Marker()
+        line.header.frame_id = 'map'
+        line.header.stamp = now
+        line.ns = 'waypoints_line'
+        line.id = 0
+        line.type = Marker.LINE_STRIP
+        line.action = Marker.ADD
+        line.scale.x = 0.08  # line width (m)
+        line.color.g = 1.0
+        line.color.a = 0.8
+        line.pose.orientation.w = 1.0
+        for p in self.waypoints:
+            line.points.append(Point(x=p.pose.position.x, y=p.pose.position.y, z=0.05))
+        marr.markers.append(line)
+
+        # Waypoint arrows + labels
+        for i, ps in enumerate(self.waypoints, start=1):
+            # Arrow showing orientation
+            arrow = Marker()
+            arrow.header.frame_id = 'map'
+            arrow.header.stamp = now
+            arrow.ns = 'waypoint_arrows'
+            arrow.id = i
+            arrow.type = Marker.ARROW
+            arrow.action = Marker.ADD
+            arrow.pose = ps.pose
+            arrow.scale.x = 0.4   # shaft length
+            arrow.scale.y = 0.12  # shaft diameter
+            arrow.scale.z = 0.12  # head diameter
+            arrow.color.r = 0.1
+            arrow.color.g = 0.8
+            arrow.color.b = 1.0
+            arrow.color.a = 1.0
+            marr.markers.append(arrow)
+
+            # Text label with index
+            text = Marker()
+            text.header.frame_id = 'map'
+            text.header.stamp = now
+            text.ns = 'waypoint_labels'
+            text.id = 1000 + i
+            text.type = Marker.TEXT_VIEW_FACING
+            text.action = Marker.ADD
+            text.pose.position.x = ps.pose.position.x
+            text.pose.position.y = ps.pose.position.y
+            text.pose.position.z = ps.pose.position.z + 0.5
+            text.scale.z = 0.4  # text height (m)
+            text.color.r = 1.0
+            text.color.g = 1.0
+            text.color.b = 1.0
+            text.color.a = 1.0
+            text.text = f'{i}'
+            marr.markers.append(text)
+
+        self.marker_pub.publish(marr)
+
+        # 3) PoseArray (optional)
+        pa = PoseArray()
+        pa.header.frame_id = 'map'
+        pa.header.stamp = now
+        pa.poses = [p.pose for p in self.waypoints]
+        self.posearray_pub.publish(pa)
+
 
     def wheel_odom_callback(self, msg):
         # Extract the linear velocity from the odometry message
@@ -71,7 +171,6 @@ class WaypointFollower(Node):
         if abs(self.current_speed) > 0:
             eta = abs(distance / self.current_speed)
             self.get_logger().info(f'ETA to waypoint {self.curr_waypoint_index}: {eta:.2f} seconds')
-
 
 
     def send_waypoints(self):
@@ -105,16 +204,14 @@ class WaypointFollower(Node):
             pose.pose.orientation.w = q[3]
             return pose
 
-        # Hardcoded waypoints (x, y, yaw_deg) in the ERC map frame !!!
+        # Hardcoded waypoints (x, y, yaw_rad) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
         waypoint_list = [
-            (-2.77, 11.465, 1.57),
-            (1.85, 18.5, 1.57),
+            (1.85, 16.5, 1.57),
             (12.3, 17.8, 0.0),
             (19.15, 16.07, 0.0),
-            (12.3, 17.8, 0.0),
+            (12.3, 17.8, 3.14),
             (1.85, 18.5, 1.57),
-            (-2.77, 11.465, 1.57),
             (0.655, 2.515, -1.57),
         ]
 
@@ -126,7 +223,7 @@ class WaypointFollower(Node):
     def feedback_callback(self, feedback):
         current_wp = feedback.feedback.current_waypoint
         self.curr_waypoint_index = current_wp
-        self.get_logger().info(f'Reached waypoint index: {current_wp}')
+        #self.get_logger().info(f'Reached waypoint index: {current_wp}')
 
     def goal_response_callback(self, future):
         goal_handle = future.result()

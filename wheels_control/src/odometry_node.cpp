@@ -15,6 +15,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "custom_msg/msg/motor_status.hpp"
 #include "wheels_control/definition.hpp"
+#include "builtin_interfaces/msg/time.hpp"
 
 
 using std::placeholders::_1;
@@ -53,10 +54,21 @@ public:
 
         odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
 
+        time_publisher_ = this->create_publisher<builtin_interfaces::msg::Time>("/NAV/nav_time", 10);
+
+        timer_ = this->create_wall_timer(std::chrono::milliseconds(300), 
+                                         std::bind(&ForwardKinematicsNode::timer_callback, this)
+                                        );
+
         RCLCPP_INFO(this->get_logger(), "Wheel Odometry Node Initialized.");
     }
 
 private:
+
+    void timer_callback(){
+        builtin_interfaces::msg::Time time_msg = this->get_clock()->now();
+        time_publisher_->publish(time_msg);
+    }
 
 
     void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
@@ -417,6 +429,11 @@ private:
     rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr subscription_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
+    rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr time_publisher_;
+    rclcpp::TimerBase::SharedPtr timer_;
+
+
+
     Eigen::VectorXd wheel_speeds_;
     Eigen::VectorXd wheel_angles_;
     double pos_x_, pos_y_, pos_theta_;
