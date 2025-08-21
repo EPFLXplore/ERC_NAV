@@ -31,7 +31,7 @@ def generate_launch_description():
             arguments=['0.0', '0.0','0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
-        # Launch the GLIM odometry republisher that chagnes the covariance and avoids tfs conflicts
+        # Launch the GLIM odometry republisher that chagnes the covariance to avoids tfs conflicts
         Node(
             package='glim_starter',
             executable='glim_odom_publisher',
@@ -42,9 +42,17 @@ def generate_launch_description():
                 {'odom_topic': '/odom_glim_repub'},
                 {'odom_frame_id': 'odom'},
                 {'child_frame_id': 'base_link'},
-                {'lowpass_cutoff': 15.0},  # Hz
-                {'position_covariance': [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.1]},
-                {'orientation_covariance': [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04]}
+
+                {'position_covariance': [0.05, 0.0, 0.0,
+                                         0.0, 0.05, 0.0,
+                                         0.0, 0.0, 0.10]},
+                {'orientation_covariance': [0.02, 0.0, 0.0,
+                                            0.0, 0.02, 0.0,
+                                            0.0, 0.0, 0.04]},
+
+                {'reflect_x_after': True},     # set True only if a downstream consumer expects the old sign
+                {'rotation_sign': -1},          # try +1 only if motion still looks “old-frame”
+                {'debug_logs': False},
             ]
         )
     ])

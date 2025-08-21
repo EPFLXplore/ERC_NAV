@@ -1,9 +1,9 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry
 import math
-import numpy as np
 
 def yaw_from_quaternion(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -26,91 +26,93 @@ class GlimOdomRepublisher(Node):
         self.declare_parameter('odom_topic', '/odom_glim_repub')
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('child_frame_id', 'base_link')
-        self.declare_parameter('position_covariance', [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.07])
+        self.declare_parameter('position_covariance',    [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.07])
         self.declare_parameter('orientation_covariance', [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04])
-        # Controls the rotation direction: use -1 (standard). If motion still follows old heading, try +1.
-        self.declare_parameter('rotation_sign', -1)  # {-1, +1}
-        # Debug logs of raw/rotated deltas
+        # If you need an x-axis reflection for legacy consumers, set true.
+        self.declare_parameter('reflect_x_after', True)
         self.declare_parameter('debug_logs', True)
 
-        # Load params
+        # Load
         self.pose_topic = self.get_parameter('pose_topic').get_parameter_value().string_value
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.odom_frame_id = self.get_parameter('odom_frame_id').get_parameter_value().string_value
         self.child_frame_id = self.get_parameter('child_frame_id').get_parameter_value().string_value
         self.position_covariance = self.get_parameter('position_covariance').get_parameter_value().double_array_value
         self.orientation_covariance = self.get_parameter('orientation_covariance').get_parameter_value().double_array_value
-        self.rotation_sign = self.get_parameter('rotation_sign').get_parameter_value().integer_value
+        self.reflect_x_after = self.get_parameter('reflect_x_after').get_parameter_value().bool_value
         self.debug_logs = self.get_parameter('debug_logs').get_parameter_value().bool_value
 
         # Pub/Sub
         self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
-        self.pose_sub = self.create_subscription(PoseStamped, self.pose_topic, self.pose_callback, 10)
 
-        # Capture state after 5s
+
+        qos = QoSProfile(depth=10)
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos.history = HistoryPolicy.KEEP_LAST
+
+        self.pose_sub = self.create_subscription(
+            PoseStamped,
+            self.pose_topic,
+            self.pose_callback,
+            qos
+        )
+
+        # Re-zero state
         self._capture_next = False
         self._timer = self.create_timer(5.0, self._arm_capture_once)
 
-        # Reference (origin + yaw) and rotation matrix R(sign*yaw0)
         self._x0 = 0.0
         self._y0 = 0.0
         self._yaw0 = 0.0
-        self._Rc = 1.0
-        self._Rs = 0.0
+        self._Rc = 1.0  # cos(-yaw0)
+        self._Rs = 0.0  # sin(-yaw0)
         self._zeroed = False
 
-        # For Twist estimation (optional)
-        self._prev_t = None
-        self._prev_xr = None
-        self._prev_yr = None
-        self._prev_yaw = None
-
-        self.get_logger().info(f"GLIM odom re-zero: waiting 5s, then reframe to yaw=0 and origin at capture. Sub: {self.pose_topic}")
+        self.get_logger().info("Waiting 5s to capture (x0,y0,yaw0) and re-zero.")
 
     def _arm_capture_once(self):
         self._capture_next = True
         if self._timer:
             self._timer.cancel()
             self._timer = None
-        self.get_logger().info("Timer fired: next pose will set (x0,y0,yaw0)")
+        self.get_logger().info("Timer fired: next pose sets (x0,y0,yaw0)")
 
     def pose_callback(self, msg: PoseStamped):
         now = self.get_clock().now()
 
-        x = msg.pose.position.x * (-1.0)
+        # ---- RAW pose (DO NOT pre-flip) ----
+        x = msg.pose.position.x
         y = msg.pose.position.y
         z = msg.pose.position.z
         yaw = yaw_from_quaternion(msg.pose.orientation)
 
+        # Capture once
         if self._capture_next:
             self._x0, self._y0, self._yaw0 = x, y, yaw
-            phi = self.rotation_sign * self._yaw0  # rotate by sign * yaw0
-            self._Rc = math.cos(phi)
-            self._Rs = math.sin(phi)
+            # Precompute rotation R(-yaw0)
+            self._Rc = math.cos(-self._yaw0)
+            self._Rs = math.sin(-self._yaw0)
             self._zeroed = True
             self._capture_next = False
-            self._prev_t = None
-            self._prev_xr = None
-            self._prev_yr = None
-            self._prev_yaw = None
-            self.get_logger().info(f"Captured x0={self._x0:.3f}, y0={self._y0:.3f}, yaw0={self._yaw0:.3f} rad; rotation_sign={self.rotation_sign}")
+            self.get_logger().info(f"Captured x0={self._x0:.3f}, y0={self._y0:.3f}, yaw0={self._yaw0:.3f} rad")
 
-        # Translate relative to captured origin
+        # Translate to origin, then rotate by -yaw0
         dx = x - self._x0
         dy = y - self._y0
-
-        # Rotate into new frame: p' = R(sign*yaw0) * (p - p0)
-        # With sign = -1 (default), this is R(-yaw0)·(p - p0) — the standard “re-zero to robot’s heading” transform.
         xr = self._Rc * dx - self._Rs * dy
         yr = self._Rs * dx + self._Rc * dy
 
-        # Re-zero heading: yaw' = wrap(yaw - yaw0)
+        # Re-zero yaw
         yaw_r = wrap_pi(yaw - self._yaw0) if self._zeroed else yaw
 
-        if self.debug_logs and self._zeroed:
-            self.get_logger().info(f"raw dx,dy=({dx:.3f},{dy:.3f}) -> rotated xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
+        # Optional post-rotation reflection for legacy consumers
+        if self.reflect_x_after:
+            xr = -xr
+            yaw_r = -yaw_r  # keep forward direction consistent under reflection
 
-        # Orientation quaternion in the re-zeroed frame
+        if self.debug_logs and self._zeroed:
+            self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
+
         qx, qy, qz, qw = quaternion_from_yaw(yaw_r)
 
         odom = Odometry()
@@ -118,7 +120,6 @@ class GlimOdomRepublisher(Node):
         odom.header.frame_id = self.odom_frame_id
         odom.child_frame_id = self.child_frame_id
 
-        self.get_logger().info(f"flipped x sign")
         odom.pose.pose.position.x = xr
         odom.pose.pose.position.y = yr
         odom.pose.pose.position.z = z
