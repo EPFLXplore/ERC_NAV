@@ -38,7 +38,7 @@
     // Points config
     "keep_raw_points": false,
     // IMU config
-    "imu_time_offset": 0.005,
+    "imu_time_offset": 0.0,
     "points_time_offset": 0.0,
     "acc_scale": 1.0,
     // TF config
@@ -48,7 +48,7 @@
     "odom_frame_id": "odom_glim",
     "map_frame_id": "map_glim",
     "publish_imu2lidar": false,
-    "tf_time_offset": 0.1,
+    "tf_time_offset": 1e-5,
     // Extension modules
     "extension_modules": [
       //"libmemory_monitor.so",

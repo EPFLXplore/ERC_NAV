@@ -51,6 +51,7 @@ public:
   double                    R_yaw;  // IMU yaw variance
   Eigen::Matrix2d           R_accel;// IMU accel covariance (ax, ay)
   Eigen::Matrix2d           R_xy;   // wheel-odom x,y variance
+  Eigen::Matrix2d           R_xy_lidar;   // lidar x,y variance
   Eigen::Matrix3d R_wheel_vel; // wheel velocity measurement noise
 
 
@@ -67,6 +68,7 @@ public:
     R_yaw   = 0.0001;
     R_accel = Eigen::Matrix2d::Identity() * 0.1;  // default, override per IMU msg
     R_xy    = Eigen::Matrix2d::Identity() * 0.08;
+    R_xy_lidar    = Eigen::Matrix2d::Identity() * 0.08;
     R_wheel_vel = Eigen::Matrix3d::Identity() * 0.1;  // wheel velocity measurement noise
 
     prev_vx = 0.0;
@@ -90,14 +92,12 @@ public:
     double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
     bool going_right = false;
     bool going_left = false;
-    bool going_straight = false;
 
     double v_x = 0.0;
     double v_y = 0.0;
     double omega_z = 0.0;
     // Check for straight driving       
     bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
-    bool all_angles_tiny = avg_abs_angle < (ANGLE_THRESHOLD*0.1);
     bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
 
     if(all_angles_small){
@@ -107,10 +107,8 @@ public:
       v_x = v_avg;
       v_y = 0.0;
       omega_z = 0.0;
-      going_straight = true;
       //RCLCPP_INFO(this->get_logger(), "speed %f", v_avg);
     }else if (possible_rotation){
-      going_straight = false;
       //RCLCPP_INFO(this->get_logger(), "rotation sur place");
 
       // In-place rotation
@@ -125,7 +123,6 @@ public:
       v_x = 0.0;
       v_y = 0.0;
     }else{
-        going_straight = false;
         // Curved translation (double Ackermann)
         // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
         double alpha_ext = a_fr;
@@ -276,7 +273,7 @@ public:
     P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
   }
 
-  void updatePosition(double meas_x, double meas_y) {
+  void updatePosition(double meas_x, double meas_y, Eigen::Matrix2d R_cov) {
     Eigen::Matrix<double,2,5> H = Eigen::Matrix<double,2,5>::Zero();
     H(0, IDX_X) = 1;
     H(1, IDX_Y) = 1;
@@ -284,7 +281,7 @@ public:
     z << meas_x, meas_y;
     h << x(IDX_X), x(IDX_Y);
     Eigen::Vector2d innov = z - h;
-    Eigen::Matrix2d S   = H * P * H.transpose() + R_xy;
+    Eigen::Matrix2d S   = H * P * H.transpose() + R_cov;
     Eigen::Matrix<double,5,2> K = P * H.transpose() * S.inverse();
     x += K * innov;
     P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
@@ -363,6 +360,12 @@ public:
     ekf_ = std::make_shared<ExtendedKalmanFilter2D>();
     ekf_->initialize(0.0, 0.0, 0.0);
 
+    //dynamic param to include or not the LiDAR GLIM SLAM Output.
+
+    this->declare_parameter<bool>("include_lidar", true);
+    include_lidar_ = this->get_parameter("include_lidar").as_bool();
+    RCLCPP_INFO(this->get_logger(), "Lidar included in EKF ? : %s", include_lidar_ ? "True" : "False");
+
     // IMU calibration services
     bias_client_      = create_client<std_srvs::srv::Trigger>("/olive/imu/id001/setBias");
     zero_quat_client_ = create_client<std_srvs::srv::Trigger>("/olive/imu/id001/setZeroQuaternion");
@@ -378,9 +381,12 @@ public:
       "/olive/imu/id001/ahrs", 10,
       std::bind(&NavEKFNode::imu_callback, this, std::placeholders::_1));
 
-    // odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    //   "/wheel_odom", 10,
-    //   std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
+    
+    lidar_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/odom_glim_repub", 10,
+      std::bind(&NavEKFNode::lidar_callback, this, std::placeholders::_1));
+
+
     auto qos = rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort();
 
     wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
@@ -391,6 +397,8 @@ public:
     wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/wheel_odom", 10,
       std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
+
+      //publsher
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       "/fused_nav_ekf_odom", 10);
@@ -460,10 +468,49 @@ private:
   }
 
   void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    ekf_->updatePosition(
-      msg->pose.pose.position.x,
-      msg->pose.pose.position.y);
+    ekf_->updatePosition(msg->pose.pose.position.x,
+                         msg->pose.pose.position.y, ekf_->R_xy);
+
     last_vel_ = msg->twist.twist.linear.x;
+  }
+
+
+  void lidar_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    if(!this->include_lidar_){
+      return;
+    }
+
+    const rclcpp::Time t_meas = msg->header.stamp;
+    double dt = (t_meas - last_time_).seconds();
+
+    if (std::isfinite(dt) && dt > 0.0 && dt < 1.0) {
+      ekf_->predict(dt, last_gyro_z_,
+                    steer_fr_, steer_br_, steer_fl_, steer_bl_,
+                    vel_fr_,  vel_br_,  vel_fl_,  vel_bl_);
+      last_time_ = t_meas;
+    }
+    double mx = msg->pose.pose.position.x;
+    double my = msg->pose.pose.position.y;
+
+    // Mahalanobis gating (2 DoF, ~95% -> 5.99; ~99% -> 9.21) to avoid shitty measurements from the LiDAR
+    // used to measure how far a measurement is from the current EKF prediction
+    Eigen::Vector2d z(mx, my);
+    Eigen::Vector2d h(ekf_->x(IDX_X), ekf_->x(IDX_Y));
+
+    Eigen::Matrix<double,2,5> H = Eigen::Matrix<double,2,5>::Zero();
+    H(0, IDX_X) = 1.0;  H(1, IDX_Y) = 1.0;
+
+    Eigen::Vector2d innov = z - h;
+  
+    Eigen::Matrix2d S = H * ekf_->P * H.transpose() + ekf_->R_xy_lidar;
+    double maha2 = innov.transpose() * S.inverse() * innov;
+
+    if (std::isfinite(maha2) && maha2 < 7.0) {
+      ekf_->updatePosition(mx, my, ekf_->R_xy_lidar);
+    } else {
+      RCLCPP_WARN(this->get_logger(), "Reject LiDAR odom: maha^2=%.2f", maha2);
+    }
+
   }
 
   void wheel_info_callback(const custom_msg::msg::MotorStatus::SharedPtr msg){
@@ -577,6 +624,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr wheel_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_sub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    ekf_pub_;
@@ -586,6 +634,7 @@ private:
   double last_gyro_z_, last_vel_;
   bool initial_frame_set_ = false;
   double initial_yaw_ = 0.0;
+  bool include_lidar_ = true;
   Eigen::Vector2d initial_pos_{0.0, 0.0};
 
   // double last_accel_x = 0.0;

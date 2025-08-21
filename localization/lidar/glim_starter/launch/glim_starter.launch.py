@@ -13,6 +13,8 @@ def generate_launch_description():
         ),
 
         # Static TF: imu_link_glim <- base_link_glim
+        # syntax : xyz yaw pitch roll
+
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -21,11 +23,12 @@ def generate_launch_description():
         ),
 
         # Static TF: lidar_link_glim <- base_link_glim
+        # syntax : xyz yaw pitch roll
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_lidar_to_base',
-            arguments=['-0.182029', '0.1575 ','0.6', '0', '0', '0', 'base_link_glim', 'lidar_link_glim'],
+            arguments=['0.0', '0.0','0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
         # Launch the GLIM odometry republisher that chagnes the covariance and avoids tfs conflicts
