@@ -35,10 +35,6 @@ parent_dir=$(dirname "$current_dir")
 
 USERNAME=xplore
 
-
-    # -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \
-    # -e CYCLONEDDS_URI="file:///home/xplore/cyclonedds.xml" \
-
 docker run -it \
     --name nav_humble_jetson \
     --rm \
@@ -60,6 +56,7 @@ docker run -it \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_jetson_home_volume:/home/xplore \
     -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \
+    -v /home/xplore-nav/Documents/photos_competition:/home/xplore/dev_ws/photos_competition \
     -e CYCLONEDDS_URI="file:///home/xplore/cyclonedds.xml" \
     --add-host=os-122140001125.local:169.254.55.220 \
     ghcr.io/epflxplore/nav:humble-jetson \

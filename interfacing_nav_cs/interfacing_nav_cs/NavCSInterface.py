@@ -47,23 +47,18 @@ class NavCSInterface(Node):
         self.transitioning_state = False
 
         group = ReentrantCallbackGroup()
+        group2 = ReentrantCallbackGroup()
 
         # Change Mode
-        self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group)
+        self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group2)
         self.mode_publisher = self.create_publisher(String, self.nav_names['system_status'], 1)
         self.timer_mode = self.create_timer(2.0, self.pub_state)
-
-        # Nav 2
-        # self.path_nav2_launch_file = '/dev_ws/src/path_planning/launch/nav2_real.launch.py'
-        # self.ros2_node_name = ''
-        # self.start_nav2_cmd = None
-        # self.launch_service = None
 
         # Motor Health
         self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURED
         self.check_motor_health = self.create_timer(2.0, self.get_state_motor_control)
         self.motor_change_service = self.create_client(ChangeState, 
-                                                      '/NAV_motor_cmds/change_state', callback_group=group)
+                                                      '/NAV_motor_cmds/change_state', callback_group=group2)
         self.motor_check_service = self.create_client(GetState, 
                                                       '/NAV_motor_cmds/get_state')
 
@@ -110,7 +105,7 @@ class NavCSInterface(Node):
         
         # Transition to Off mode from any state
         if (self.mode != 'Off') and Mode[mode] == 'Off':
-
+            self.get_logger().info(f"in transition from X to Off")
             self.transitioning_state = True
             self.transition_state(Transition.TRANSITION_CLEANUP, "cleanup", 
                                   State.PRIMARY_STATE_UNCONFIGURED, 
@@ -142,7 +137,7 @@ class NavCSInterface(Node):
         # If for some reasons the motors go off while being in Manual mode
         if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED and self.mode != 'Off':
             self.mode = 'Off'
-            self.pub_state()
+            #self.pub_state()
             return
     
     # ------------------------------------------------------------------------
@@ -151,12 +146,21 @@ class NavCSInterface(Node):
         motor_request = ChangeState.Request()
         motor_request.transition.id = state
         motor_request.transition.label = label
+        self.get_logger().info(f"TAMEERRRRRRE")
+
 
         future = self.motor_change_service.call_async(motor_request)
+        self.get_logger().info(f"TAMEERRRRRRE 2")
+
         future.add_done_callback(lambda f: self.default_transition_check_callback(f, next_state, mode, message_response, response))
+        self.get_logger().info(f"TAMEERRRRRRE 3")
+
     
     def default_transition_check_callback(self, future, next_state, mode, message_response, response):
+        self.get_logger().info(f"TAMEERRRRRRE 6")
         if future.result().success:
+            self.get_logger().info(f"TAMEERRRRRRE 4")
+
             self.state_motor_control = next_state
             self.change_mode(mode, 0, response, message_response)
             self.get_logger().info(message_response)
@@ -169,7 +173,7 @@ class NavCSInterface(Node):
     
     def change_mode(self, mode, error_type, response, message_response):
         self.mode = Mode[mode]
-        self.pub_state()
+        #self.pub_state()
         response.new_mode = mode
         response.error_type = error_type
         response.error_message = message_response

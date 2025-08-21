@@ -35,7 +35,7 @@ class GlimOdomRepublisher(Node):
         self.declare_parameter('odom_topic', '/odom_glim_repub')
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('child_frame_id', 'base_link')
-        self.declare_parameter('lowpass_cutoff', 20.0)  # Hz
+        self.declare_parameter('lowpass_cutoff', 25.0)  # Hz
         self.declare_parameter('position_covariance', [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.07])
         self.declare_parameter('orientation_covariance', [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04])
 

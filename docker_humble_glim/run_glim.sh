@@ -54,7 +54,7 @@ docker run -it \
     -v /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra:ro \
     -v /usr/local/cuda:/usr/local/cuda:ro \
     -v $parent_dir:/home/xplore/dev_ws/src \
-    -v glim_humble_jetson_home_volume:/home/xplore \
+    -v nav_humble_jetson_home_volume:/home/xplore \
     -w /home/xplore/dev_ws/ \
     glim-humble-jetson \
     /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"

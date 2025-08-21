@@ -107,8 +107,8 @@ class WaypointFollower(Node):
             arrow.action = Marker.ADD
             arrow.pose = ps.pose
             arrow.scale.x = 0.4   # shaft length
-            arrow.scale.y = 0.12  # shaft diameter
-            arrow.scale.z = 0.12  # head diameter
+            arrow.scale.y = 0.2  # shaft diameter
+            arrow.scale.z = 0.2  # head diameter
             arrow.color.r = 0.1
             arrow.color.g = 0.8
             arrow.color.b = 1.0
@@ -153,7 +153,7 @@ class WaypointFollower(Node):
             # Get the transform from 'map' to 'base_link'
             transform = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
             position = transform.transform.translation
-            self.get_logger().info(f'POSITION in ERC MAP: X={position.x}, Y={position.y}')
+            self.get_logger().info(f'POSITION in erc_map: X={position.x}, Y={(-1.0)*position.y}')
         except Exception as e:
             self.get_logger().error(f'could NOT get map->base_link TF: {e}')
 
@@ -185,6 +185,7 @@ class WaypointFollower(Node):
         self._send_goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)
         self._send_goal_future.add_done_callback(self.goal_response_callback)
 
+
     def create_waypoints(self):
         poses = []
 
@@ -206,17 +207,24 @@ class WaypointFollower(Node):
 
         # Hardcoded waypoints (x, y, yaw_rad) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
-        waypoint_list = [
-            (1.85, 16.5, 1.57),
-            (12.3, 17.8, 0.0),
-            (19.15, 16.07, 0.0),
-            (12.3, 17.8, 3.14),
-            (1.85, 18.5, 1.57),
-            (0.655, 2.515, -1.57),
+        # waypoint_list = [
+        #     (1.85, 16.5, 1.57),
+        #     (12.3, 17.8, 0.0),
+        #     (19.15, 16.07, 0.0),
+        #     (12.3, 17.8, 3.14),
+        #     (1.85, 18.5, 1.57),
+        #     (0.655, 2.515, -1.57),
+        # ]
+
+        waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
+            (3.10, 6.15, 1.57),
+            (1.38, 3.2, -1.57)
         ]
 
+
         for x, y, yaw in waypoint_list:
-            poses.append(make_pose(x, y, yaw))
+            poses.append(make_pose(x, (-1.0)*y, (-1.0)*yaw))
+            self.get_logger().info(f"waypoint in map NOT erc_map: X={x}, Y={-y}")
 
         return poses
 
@@ -249,3 +257,9 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+
+############################################################################
+
+

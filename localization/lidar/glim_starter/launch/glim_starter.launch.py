@@ -12,20 +12,20 @@ def generate_launch_description():
             parameters=[{'config_path': '/home/xplore/dev_ws/src/localization/lidar/glim_starter/glim_config/config'}]
         ),
 
-        # Static TF: imu_link_glim -> base_link_glim
+        # Static TF: imu_link_glim <- base_link_glim
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_imu_to_base',
-            arguments=['0', '0', '0', '0', '0', '0', 'imu_link_glim', 'base_link_glim'],
+            arguments=['0.235', '-0.15', '0.0', '0', '0', '0', 'base_link_glim', 'imu_link_glim'],
         ),
 
-        # Static TF: lidar_link_glim -> base_link_glim
+        # Static TF: lidar_link_glim <- base_link_glim
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_lidar_to_base',
-            arguments=['0', '0', '0', '0', '0', '0', 'lidar_link_glim', 'base_link_glim'],
+            arguments=['-0.182029', '0.1575 ','0.6', '0', '0', '0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
         # Launch the GLIM odometry republisher that chagnes the covariance and avoids tfs conflicts

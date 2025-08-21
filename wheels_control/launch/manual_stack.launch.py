@@ -226,6 +226,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
 
+    # Static transform from erc_map → map
+    erc_to_map_tf = launch_ros.actions.Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="erc_map_to_map_tf",
+        arguments=[
+            "0.0", "0.0", "0.0",          # translation
+            "0.0", "0.0", "0.0",  # rotation in ZYX ?
+            "erc_map", "map"              # parent → child
+        ],
+        output="screen"
+    )
+
+
     return [
         motor_cmds_arg,
         homing_arg,
@@ -236,7 +250,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         displacement_cmds_node,
         motor_cmds_node,
         description_launch,
-        #olive_imu_restamp_node,
+        olive_imu_restamp_node,
         wheel_odom_node,
         custom_local_ekf_node,
         ouster_launch,

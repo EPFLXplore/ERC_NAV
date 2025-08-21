@@ -27,7 +27,7 @@
     "outlier_removal_k": 10,
     "outlier_std_mul_factor": 1.0,
     "enable_cropbox_filter": false,
-    "crop_bbox_frame": "ST_Lidar_1",
+    "crop_bbox_frame": "lidar_link_glim",
     "crop_bbox_min": [-1.0, -1.0, -1.0],
     "crop_bbox_max": [1.0, 1.0, 1.0],
     "k_correspondences": 20,
