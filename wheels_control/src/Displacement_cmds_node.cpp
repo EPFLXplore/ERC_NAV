@@ -89,6 +89,10 @@ public:
       RCLCPP_ERROR(this->get_logger(), "Failed to get motor_cmds");
     }
 
+    auto qos_best_effort = rclcpp::QoS(rclcpp::KeepLast(1));
+    qos_best_effort.reliability(rclcpp::ReliabilityPolicy::BestEffort);
+    qos_best_effort.durability(rclcpp::DurabilityPolicy::Volatile);
+
     normalKinematicModel.motor_cmds = motor_cmds;
 
     pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", 10);
@@ -107,7 +111,7 @@ public:
       
     // Listens to the gamepad topic of the CS to see if we are going crab mode to avoid the wheels going in crabe mode when homing
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(
-      "/ROVER/NAV_gamepad", 10, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
+      "/ROVER/NAV_gamepad", qos_best_effort, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
 
     sub_speed_rover = this->create_subscription<std_msgs::msg::Float32>(
         "/ROVER/change_NAV_speed", 1, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
