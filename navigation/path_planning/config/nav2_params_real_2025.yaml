@@ -129,8 +129,8 @@ controller_server:
       use_rotate_to_heading: false
       allow_reversing: true
       rotate_to_heading_min_angle: 0.785
-      max_angular_accel: 0.6
-      min_distance_to_obstacle: 1.25
+      max_angular_accel: 0.4
+      min_distance_to_obstacle: 1.35
 
     # FollowPath:
     #   plugin: "nav2_mppi_controller::MPPIController"
@@ -447,8 +447,8 @@ recoveries_server:
     transform_imeout: 0.1
     use_sim_time: false
     simulated_ahead_time: 0.1
-    max_rotational_vel: 0.7
-    min_rotational_vel: 0.4
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
     rotational_acc_lim: 2.0
 
 behavior_server:
@@ -474,9 +474,9 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: false
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 3.2
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 2.0
 
 robot_state_publisher:
   ros__parameters:
@@ -501,8 +501,8 @@ velocity_smoother:
     smoothing_frequency: 5.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.55, 0.0, 1.0]
-    min_velocity: [-0.55, 0.0, -1.0]
+    max_velocity: [0.55, 0.0, 0.7]
+    min_velocity: [-0.55, 0.0, -0.7]
     max_accel: [1.0, 0.0, 3.2]
     max_decel: [-2.0, 0.0, -3.2]
     odom_topic: "fused_nav_ekf_odom"

@@ -217,7 +217,6 @@ class GamepadInterface : public rclcpp::Node
           // const double TURN_THRESHOLD = 300.0f; // this should be the thrshold that once you attain we can consider that we passed a turn
       
           static float prev_angle = 0.0f;
-          static float prev_delta = 0.0f;
           static float prev_wrapped_angle = 0.0f;
           static bool ccw_turn = false;
           static bool cw_turn = false;
@@ -337,11 +336,8 @@ class GamepadInterface : public rclcpp::Node
               }else{
                   wrapped_angle = curr_angle;
               }
-      
-              float wrapped_deg = wrapped_angle * RAD_TO_DEG;
-      
+            
               prev_angle = curr_angle;
-              prev_delta = delta_angle;
               prev_wrapped_angle = wrapped_angle;
 
               r_z = wrapped_angle;
