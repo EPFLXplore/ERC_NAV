@@ -95,6 +95,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(FindPackageShare("ros2_ouster").find("ros2_ouster"), "launch", "driver_launch.py")
         ),
         launch_arguments={}.items(),
+        condition=IfCondition(publish_urdf)
     )
 
     # -------------- ERC_CAMERAS NAV Launch file --------
