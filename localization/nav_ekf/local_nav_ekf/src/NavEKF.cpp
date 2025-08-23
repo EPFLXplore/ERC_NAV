@@ -362,7 +362,7 @@ public:
 
     //dynamic param to include or not the LiDAR GLIM SLAM Output.
 
-    this->declare_parameter<bool>("include_lidar", true);
+    this->declare_parameter<bool>("include_lidar", false);
     include_lidar_ = this->get_parameter("include_lidar").as_bool();
     RCLCPP_INFO(this->get_logger(), "Lidar included in EKF ? : %s", include_lidar_ ? "True" : "False");
 
