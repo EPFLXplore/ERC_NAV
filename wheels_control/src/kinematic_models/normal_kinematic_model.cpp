@@ -53,7 +53,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
 
     _Float64 max_linear_velocity = speed_rover; // in m/s 
     _Float64 max_angular_velocity = 0.7; // in rad/s
-    _Float64 min_rotation_radius = 0.7; // in m
+    _Float64 min_rotation_radius = 0.15; // in m
 
 
     // scale the normalized joystick inputs

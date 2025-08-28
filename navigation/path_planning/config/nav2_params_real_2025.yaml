@@ -75,6 +75,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: false
 
+
 controller_server:
   ros__parameters:
     use_sim_time: false
@@ -97,19 +98,19 @@ controller_server:
     # Goal checker parameters
 
     simple_goal_checker:
-      stateful: true
+      stateful: false
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.3
+      yaw_goal_tolerance: 0.8
 
 
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.2
-      lookahead_dist: 1.8
+      lookahead_dist: 0.5
       min_lookahead_dist: 0.6
-      max_lookahead_dist: 1.5
+      max_lookahead_dist: 1.0
       lookahead_time: 1.8
       rotate_to_heading_angular_vel: 0.1
       transform_tolerance: 0.1
@@ -129,9 +130,9 @@ controller_server:
       use_rotate_to_heading: false
       allow_reversing: true
       rotate_to_heading_min_angle: 0.785
-      max_angular_accel: 0.15
+      max_angular_accel: 0.25
       min_distance_to_obstacle: 1.35
-      stateful: true
+      stateful: false
 
 
 local_costmap:
@@ -167,6 +168,7 @@ local_costmap:
         transform_tolerance: 1.5
         enabled: true
         publish_voxel_map: true
+        combination_method: 1
         footprint_clearing_enabled: true
         origin_z: 0.1
         z_resolution: 0.05
@@ -181,7 +183,7 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "PointCloud2"
-          min_obstacle_height: 0.1
+          min_obstacle_height: -0.08
           max_obstacle_height: 2.0
           raytrace_max_range: 5.0
           raytrace_min_range: 0.75
@@ -196,7 +198,7 @@ local_costmap:
         enabled: true
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 1.5
-        inflation_radius: 0.82
+        inflation_radius: 0.75
       # static_layer:
       #   plugin: "nav2_costmap_2d::StaticLayer"
       #   map_subscribe_transient_local: True
@@ -232,6 +234,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::VoxelLayer"
         transform_tolerance: 1.5
         enabled: true
+        combination_method: 1
         publish_voxel_map: true
         footprint_clearing_enabled: true
         origin_z: 0.1
@@ -247,7 +250,7 @@ global_costmap:
           clearing: true
           marking: true
           data_type: "PointCloud2"
-          min_obstacle_height: 0.1
+          min_obstacle_height: -0.08
           max_obstacle_height: 2.0
           raytrace_max_range: 5.0
           raytrace_min_range: 0.75
@@ -262,7 +265,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 1.5
-        inflation_radius: 0.82
+        inflation_radius: 0.75
       always_send_full_costmap: true
 
   global_costmap_client:
@@ -272,12 +275,14 @@ global_costmap:
     ros__parameters:
       use_sim_time: false
 
+
 map_server:
   ros__parameters:
     use_sim_time: false
     # Overridden in launch by the "map" launch configuration or provided default value.
     # To use in yaml, remove the default "map" value in the tb3_simulation_launch.py file & provide full path to map below.
     yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/blank_map.yaml"
+
 
 map_saver:
   ros__parameters:
@@ -286,6 +291,7 @@ map_saver:
     free_thresh_default: 0.25
     occupied_thresh_default: 0.65
     map_subscribe_transient_local: true
+
 
 planner_server:
   ros__parameters:
@@ -307,11 +313,11 @@ planner_server:
       analytic_expansion_max_length: 3.0  # For Hybrid/Lattice nodes: The maximum length of the analytic expansion to be considered valid to prevent unsafe shortcutting
       analytic_expansion_max_cost: 200.0  # The maximum single cost for any part of an analytic expansion to contain and be valid, except when necessary on approach to goal
       analytic_expansion_max_cost_override: false  #  Whether or not to override the maximum cost setting if within critical distance to goal (ie probably required)
-      minimum_turning_radius: 0.60        # minimum turning radius in m of path / vehicle
-      reverse_penalty: 2.5               # Penalty to apply if motion is reversing, must be => 1
+      minimum_turning_radius: 0.15        # minimum turning radius in m of path / vehicle
+      reverse_penalty: 1.0               # Penalty to apply if motion is reversing, must be => 1
       change_penalty: 0.0                 # Penalty to apply if motion is changing directions (L to R), must be >= 0
       non_straight_penalty: 1.0           # Penalty to apply if motion is non-straight, must be => 1
-      cost_penalty: 3.5                  # Penalty to apply to higher cost areas when adding into the obstacle map dynamic programming distance expansion heuristic. This drives the robot more towards the center of passages. A value between 1.3 - 3.5 is reasonable.
+      cost_penalty: 15.0                  # Penalty to apply to higher cost areas when adding into the obstacle map dynamic programming distance expansion heuristic. This drives the robot more towards the center of passages. A value between 1.3 - 3.5 is reasonable.
       retrospective_penalty: 0.015
       lookup_table_size: 20.0             # Size of the dubin/reeds-sheep distance window to cache, in meters.
       cache_obstacle_heuristic: false     # Cache the obstacle map dynamic programming distance expansion heuristic between subsequent replannings of the same goal location. Dramatically speeds up replanning performance (40x) if costmap is largely static.
@@ -320,6 +326,7 @@ planner_server:
       downsample_obstacle_heuristic: true
       allow_primitive_interpolation: false
       smooth_path: true                   # If true, does a simple and quick smoothing post-processing to the path
+
 
       smoother:
         max_iterations: 500
@@ -343,53 +350,53 @@ smoother_server:
       max_its: 1000
       do_refinement: true
 
-recoveries_server:
-  ros__parameters:
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
-    recovery_plugins: ["spin", "back_up", "wait"]
-    spin:
-      plugin: "nav2_recoveries/Spin"
-    back_up:
-      plugin: "nav2_recpveries/BackUp"
-    wait:
-      plugin: "nav2_recoveries/Wait"
-    global_frame: map
-    robot_base_frame: base_link
-    transform_imeout: 0.1
-    use_sim_time: false
-    simulated_ahead_time: 0.1
-    max_rotational_vel: 0.4
-    min_rotational_vel: 0.15
-    rotational_acc_lim: 0.2
+# recoveries_server:
+#   ros__parameters:
+#     costmap_topic: local_costmap/costmap_raw
+#     footprint_topic: local_costmap/published_footprint
+#     cycle_frequency: 10.0
+#     recovery_plugins: ["spin", "back_up", "wait"]
+#     spin:
+#       plugin: "nav2_recoveries/Spin"
+#     back_up:
+#       plugin: "nav2_recpveries/BackUp"
+#     wait:
+#       plugin: "nav2_recoveries/Wait"
+#     global_frame: map
+#     robot_base_frame: base_link
+#     transform_imeout: 0.1
+#     use_sim_time: false
+#     simulated_ahead_time: 0.1
+#     max_rotational_vel: 0.5
+#     min_rotational_vel: 0.15
+#     rotational_acc_lim: 0.27
 
-behavior_server:
-  ros__parameters:
-    local_costmap_topic: local_costmap/costmap_raw
-    global_costmap_topic: global_costmap/costmap_raw
-    local_footprint_topic: local_costmap/published_footprint
-    global_footprint_topic: global_costmap/published_footprint
-    cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
-    spin:
-      plugin: "nav2_behaviors/Spin"
-    backup:
-      plugin: "nav2_behaviors/BackUp"
-    drive_on_heading:
-      plugin: "nav2_behaviors/DriveOnHeading"
-    wait:
-      plugin: "nav2_behaviors/Wait"
-    assisted_teleop:
-      plugin: "nav2_behaviors/AssistedTeleop"
-    global_frame: map
-    robot_base_frame: base_link
-    transform_tolerance: 0.1
-    use_sim_time: false
-    simulate_ahead_time: 2.0
-    max_rotational_vel: 0.4
-    min_rotational_vel: 0.15
-    rotational_acc_lim: 0.2
+# behavior_server:
+#   ros__parameters:
+#     local_costmap_topic: local_costmap/costmap_raw
+#     global_costmap_topic: global_costmap/costmap_raw
+#     local_footprint_topic: local_costmap/published_footprint
+#     global_footprint_topic: global_costmap/published_footprint
+#     cycle_frequency: 10.0
+#     behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+#     spin:
+#       plugin: "nav2_behaviors/Spin"
+#     backup:
+#       plugin: "nav2_behaviors/BackUp"
+#     drive_on_heading:
+#       plugin: "nav2_behaviors/DriveOnHeading"
+#     wait:
+#       plugin: "nav2_behaviors/Wait"
+#     assisted_teleop:
+#       plugin: "nav2_behaviors/AssistedTeleop"
+#     global_frame: map
+#     robot_base_frame: base_link
+#     transform_tolerance: 0.1
+#     use_sim_time: false
+#     simulate_ahead_time: 2.0
+#     max_rotational_vel: 0.5
+#     min_rotational_vel: 0.15
+#     rotational_acc_lim: 0.27
 
 robot_state_publisher:
   ros__parameters:
@@ -416,8 +423,8 @@ velocity_smoother:
     feedback: "OPEN_LOOP"
     max_velocity: [0.21, 0.0, 0.45]
     min_velocity: [-0.21, 0.0, -0.45]
-    max_accel: [1.0, 0.0, 0.22]
-    max_decel: [-2.0, 0.0, -0.22]
+    max_accel: [1.0, 0.0, 0.35]
+    max_decel: [-2.0, 0.0, -0.35]
     odom_topic: "fused_nav_ekf_odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

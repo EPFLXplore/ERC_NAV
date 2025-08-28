@@ -54,7 +54,7 @@ class WaypointFollower(Node):
         self.curr_waypoint_index = 0
 
         #timer to periodically print the current position and distance to the current target waypoint
-        self.timer = self.create_timer(2.0, self.print_current_position)
+        self.timer = self.create_timer(1.0, self.print_current_position)
 
         #subscribe to /wheel_odom to get speed
         self.create_subscription(
@@ -218,10 +218,17 @@ class WaypointFollower(Node):
         # ]
 
         waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
-            (12.328, 6.779,    3.1415),
-            (6.807, 10.375, -2.61),
-            (12.328, 6.779,    0.0),
-            (18.6625, 10.8159, -1.57)
+            (13.2623, 8.671, 3.1415),
+            (6.8073, 10.1746, 2.8),
+            (0.1, 8.37, -1.57),
+            (1.4, 1.0, -0.17),
+            (10.0126, 0.0, 0.0),
+            (15.66, -0.76, 0.0),
+            (25.2349, 2.0235, 0.0),
+            (20.0, 5.75, 0.785),
+            (24.4818, 7.9578, 0.785),
+            (20.0, 5.75, 0.785),
+            (18.6625, 10.8159, 1.57)
         ]
 
 

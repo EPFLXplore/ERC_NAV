@@ -366,7 +366,7 @@ public:
 
                 if (is_fault)
                 {
-                    RCLCPP_ERROR(get_logger(), "FAULT STATE Navigation Motors Detected");
+                    RCLCPP_ERROR(get_logger(), "FAULT STATE Navigation Motors Detected, %d", motor);
                     this->cleanup();
                     return;
                 }

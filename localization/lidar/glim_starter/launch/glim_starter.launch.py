@@ -20,6 +20,7 @@ def generate_launch_description():
             executable='static_transform_publisher',
             name='static_tf_imu_to_base',
             arguments=['0.235', '-0.15', '0.0', '0', '0', '0', 'base_link_glim', 'imu_link_glim'],
+
         ),
 
         # Static TF: lidar_link_glim <- base_link_glim
@@ -28,7 +29,7 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_lidar_to_base',
-            arguments=['0.0', '0.0','0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
+            arguments=['-0.16', '-0.18', '0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
         # Launch the GLIM odometry republisher that chagnes the covariance to avoids tfs conflicts
@@ -51,8 +52,8 @@ def generate_launch_description():
                                             0.0, 0.0, 0.04]},
 
                 {'reflect_x_after': True},     # set True only if a downstream consumer expects the old sign
-                {'rotation_sign': -1},          # try +1 only if motion still looks “old-frame”
-                {'debug_logs': False},
+                {'rotation_sign': True},          # try +1 only if motion still looks “old-frame”
+                {'debug_logs': True},
             ]
         )
     ])

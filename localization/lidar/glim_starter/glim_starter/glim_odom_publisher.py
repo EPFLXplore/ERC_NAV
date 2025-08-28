@@ -29,6 +29,8 @@ class GlimOdomRepublisher(Node):
         self.declare_parameter('position_covariance',    [0.05, 0.0, 0.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.07])
         self.declare_parameter('orientation_covariance', [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04])
         # If you need an x-axis reflection for legacy consumers, set true.
+        self.declare_parameter('rotation_sign', True)
+
         self.declare_parameter('reflect_x_after', True)
         self.declare_parameter('debug_logs', True)
 
@@ -41,6 +43,7 @@ class GlimOdomRepublisher(Node):
         self.orientation_covariance = self.get_parameter('orientation_covariance').get_parameter_value().double_array_value
         self.reflect_x_after = self.get_parameter('reflect_x_after').get_parameter_value().bool_value
         self.debug_logs = self.get_parameter('debug_logs').get_parameter_value().bool_value
+        self.rotation_sign = self.get_parameter('rotation_sign').get_parameter_value().bool_value
 
         # Pub/Sub
         self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
@@ -85,6 +88,8 @@ class GlimOdomRepublisher(Node):
         y = msg.pose.position.y
         z = msg.pose.position.z
         yaw = yaw_from_quaternion(msg.pose.orientation)
+        self.get_logger().info(f"raw odom message: x{x} y{y} yaw{yaw}" )
+
 
         # Capture once
         if self._capture_next:
@@ -113,15 +118,19 @@ class GlimOdomRepublisher(Node):
         if self.debug_logs and self._zeroed:
             self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
 
-        qx, qy, qz, qw = quaternion_from_yaw(yaw_r)
+
+        if self.rotation_sign :
+            yaw_r = (-1.0)*yaw_r
+            
+        qx, qy, qz, qw = quaternion_from_yaw(yaw)
 
         odom = Odometry()
         odom.header.stamp = now.to_msg()
         odom.header.frame_id = self.odom_frame_id
         odom.child_frame_id = self.child_frame_id
 
-        odom.pose.pose.position.x = xr
-        odom.pose.pose.position.y = yr
+        odom.pose.pose.position.x = x
+        odom.pose.pose.position.y = y
         odom.pose.pose.position.z = z
 
         odom.pose.pose.orientation.x = qx
