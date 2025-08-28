@@ -189,7 +189,7 @@ class WaypointFollower(Node):
     def create_waypoints(self):
         poses = []
 
-        def make_pose(x, y, yaw_deg):
+        def make_pose(x, y, yaw_rad):
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.pose.position.x = x
@@ -198,7 +198,7 @@ class WaypointFollower(Node):
 
             # Convert yaw (in degrees) to quaternion
 
-            q = tf_transformations.quaternion_from_euler(0, 0, math.radians(yaw_deg))
+            q = tf_transformations.quaternion_from_euler(0, 0, yaw_rad)
             pose.pose.orientation.x = q[0]
             pose.pose.orientation.y = q[1]
             pose.pose.orientation.z = q[2]
@@ -207,27 +207,28 @@ class WaypointFollower(Node):
 
         # Hardcoded waypoints (x, y, yaw_rad) in the ERC map frame !!!
         # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
-        # waypoint_list = [
-        #     (1.85, 16.5, 1.57),
-        #     (12.3, 17.8, 0.0),
-        #     (19.15, 16.07, 0.0),
-        #     (12.3, 17.8, 3.14),
-        #     (1.85, 18.5, 1.57),
-        #     (0.655, 2.515, -1.57),
+
+
+        # waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
+        #     (12.328, 6.779,    0.0),
+        #     (6.807, 10.375, -3.141),
+        #     (15.116, -3.085, -2.61),
+        #     (19.727, 5.238, 0.785),
+        #     (18.6625, 10.8159, 1.57)
         # ]
 
         waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
-            (20.13, 0.0,    0.0),
-            (10.01, 0.0, -3.141),
-            (12.33, 6.78, -2.61),
-            (25.23, 2.02, 0.785),
-            (18.66, 10.82, 1.57)
+            (12.328, 6.779,    3.1415),
+            (6.807, 10.375, -2.61),
+            (12.328, 6.779,    0.0),
+            (18.6625, 10.8159, -1.57)
         ]
+
 
 
         for x, y, yaw in waypoint_list:
             poses.append(make_pose(x, (-1.0)*y, (-1.0)*yaw))
-            self.get_logger().info(f"waypoint in map NOT erc_map: X={x}, Y={-y}")
+            self.get_logger().info(f"waypoint in map NOT erc_map: X={x}, Y={-y}, yaw : {-yaw}")
 
         return poses
 

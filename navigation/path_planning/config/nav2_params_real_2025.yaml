@@ -100,11 +100,13 @@ controller_server:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 3.141592
+      yaw_goal_tolerance: 0.3
+
+
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.4
+      desired_linear_vel: 0.2
       lookahead_dist: 1.8
       min_lookahead_dist: 0.6
       max_lookahead_dist: 1.5
@@ -129,8 +131,7 @@ controller_server:
       rotate_to_heading_min_angle: 0.785
       max_angular_accel: 0.15
       min_distance_to_obstacle: 1.35
-      stateful: false
-
+      stateful: true
 
 
 local_costmap:
@@ -207,6 +208,7 @@ local_costmap:
   local_costmap_rclcpp_node:
     ros__parameters:
       use_sim_time: false
+
 
 global_costmap:
   global_costmap:
@@ -306,10 +308,10 @@ planner_server:
       analytic_expansion_max_cost: 200.0  # The maximum single cost for any part of an analytic expansion to contain and be valid, except when necessary on approach to goal
       analytic_expansion_max_cost_override: false  #  Whether or not to override the maximum cost setting if within critical distance to goal (ie probably required)
       minimum_turning_radius: 0.60        # minimum turning radius in m of path / vehicle
-      reverse_penalty: 2.0                # Penalty to apply if motion is reversing, must be => 1
+      reverse_penalty: 2.5               # Penalty to apply if motion is reversing, must be => 1
       change_penalty: 0.0                 # Penalty to apply if motion is changing directions (L to R), must be >= 0
-      non_straight_penalty: 2.5           # Penalty to apply if motion is non-straight, must be => 1
-      cost_penalty: 15.0                  # Penalty to apply to higher cost areas when adding into the obstacle map dynamic programming distance expansion heuristic. This drives the robot more towards the center of passages. A value between 1.3 - 3.5 is reasonable.
+      non_straight_penalty: 1.0           # Penalty to apply if motion is non-straight, must be => 1
+      cost_penalty: 3.5                  # Penalty to apply to higher cost areas when adding into the obstacle map dynamic programming distance expansion heuristic. This drives the robot more towards the center of passages. A value between 1.3 - 3.5 is reasonable.
       retrospective_penalty: 0.015
       lookup_table_size: 20.0             # Size of the dubin/reeds-sheep distance window to cache, in meters.
       cache_obstacle_heuristic: false     # Cache the obstacle map dynamic programming distance expansion heuristic between subsequent replannings of the same goal location. Dramatically speeds up replanning performance (40x) if costmap is largely static.
@@ -358,9 +360,9 @@ recoveries_server:
     transform_imeout: 0.1
     use_sim_time: false
     simulated_ahead_time: 0.1
-    max_rotational_vel: 0.5
-    min_rotational_vel: 0.2
-    rotational_acc_lim: 0.3
+    max_rotational_vel: 0.4
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 0.2
 
 behavior_server:
   ros__parameters:
@@ -385,9 +387,9 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: false
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.5
-    min_rotational_vel: 0.2
-    rotational_acc_lim: 0.3
+    max_rotational_vel: 0.4
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 0.2
 
 robot_state_publisher:
   ros__parameters:
@@ -403,7 +405,7 @@ waypoint_follower:
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"
       enabled: true
-      waypoint_pause_duration: 15000
+      waypoint_pause_duration: 20000
       #^10 seconds pause (milliseconds)
 
 velocity_smoother:
@@ -412,10 +414,10 @@ velocity_smoother:
     smoothing_frequency: 5.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.55, 0.0, 0.3]
-    min_velocity: [-0.55, 0.0, -0.3]
-    max_accel: [1.0, 0.0, 0.5]
-    max_decel: [-2.0, 0.0, -0.5]
+    max_velocity: [0.21, 0.0, 0.45]
+    min_velocity: [-0.21, 0.0, -0.45]
+    max_accel: [1.0, 0.0, 0.22]
+    max_decel: [-2.0, 0.0, -0.22]
     odom_topic: "fused_nav_ekf_odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
