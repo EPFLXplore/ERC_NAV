@@ -146,20 +146,20 @@ class NavCSInterface(Node):
         motor_request = ChangeState.Request()
         motor_request.transition.id = state
         motor_request.transition.label = label
-        self.get_logger().info(f"TAMEERRRRRRE")
+        #self.get_logger().info(f"TAMEERRRRRRE")
 
 
         future = self.motor_change_service.call_async(motor_request)
-        self.get_logger().info(f"TAMEERRRRRRE 2")
+        #self.get_logger().info(f"TAMEERRRRRRE 2")
 
         future.add_done_callback(lambda f: self.default_transition_check_callback(f, next_state, mode, message_response, response))
-        self.get_logger().info(f"TAMEERRRRRRE 3")
+        #self.get_logger().info(f"TAMEERRRRRRE 3")
 
     
     def default_transition_check_callback(self, future, next_state, mode, message_response, response):
-        self.get_logger().info(f"TAMEERRRRRRE 6")
+        #self.get_logger().info(f"TAMEERRRRRRE 6")
         if future.result().success:
-            self.get_logger().info(f"TAMEERRRRRRE 4")
+            #self.get_logger().info(f"TAMEERRRRRRE 4")
 
             self.state_motor_control = next_state
             self.change_mode(mode, 0, response, message_response)
