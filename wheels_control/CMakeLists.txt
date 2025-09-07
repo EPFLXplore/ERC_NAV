@@ -64,7 +64,7 @@ install(DIRECTORY
 #   DESTINATION share/${PROJECT_NAME}/
 # )
 
-set(Eigen3_DIR ${CMAKE_SOURCE_DIR}/localization/wheels_odometry)
+set(Eigen3_DIR ${CMAKE_SOURCE_DIR}/localization/eigen_library)
 
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})

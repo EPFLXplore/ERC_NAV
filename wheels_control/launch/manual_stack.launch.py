@@ -13,7 +13,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
     global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
-    config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
+    #config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
     
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"

@@ -7,8 +7,8 @@
 [submodule "xplore_description"]
 	path = xplore_description
 	url = git@github.com:EPFLXplore/ERC_DESCRIPTION.git
-[submodule "localization/wheels_odometry"]
-	path = localization/wheels_odometry
+[submodule "localization/eigen_library"]
+	path = localization/eigen_library
 	url = https://gitlab.com/libeigen/eigen.git
 [submodule "localization/lidar/liorf"]
 	path = localization/lidar/liorf
