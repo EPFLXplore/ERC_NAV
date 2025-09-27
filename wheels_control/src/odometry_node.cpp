@@ -174,6 +174,10 @@ private:
             b(2*i+1)   =  wheel_speeds_[i];
         }
 
+
+
+
+
         Eigen::Vector3d twist = A.colPivHouseholderQr().solve(b);
         double v_x     = twist(0);     // body-frame forward
         double v_y     = twist(1);     // body-frame left
@@ -183,11 +187,16 @@ private:
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
-        double world_vx =  v_x*std::cos(pos_theta_) - v_y*std::sin(pos_theta_);
-        double world_vy =  v_x*std::sin(pos_theta_) + v_y*std::cos(pos_theta_);
 
-        pos_x_     += world_vx * dt;
-        pos_y_     += world_vy * dt;
+        std::tie(pos_x_, pos_y_) = integrate_rk4(pos_x_, pos_y_, pos_theta_, v_x, v_y, omega_z, dt);
+
+        //previous forward euler integration
+        // double world_vx =  v_x*std::cos(pos_theta_) - v_y*std::sin(pos_theta_);
+        // double world_vy =  v_x*std::sin(pos_theta_) + v_y*std::cos(pos_theta_);
+
+        // pos_x_     += world_vx * dt;
+        // pos_y_     += world_vy * dt;
+        //////// end of previous forward euler integration ////////
 
         /* keep θ in (-π, π] */
         pos_theta_ = std::atan2(std::sin(pos_theta_), std::cos(pos_theta_));
@@ -425,12 +434,40 @@ private:
 
         prev_time_ = now;
     }
+    
+    
+    std::pair<double, double> integrate_rk4(double x=0, double y=0, double theta=0, double v_x=0, double v_y=0, double omega_z=0, double dt=0){
+
+        // La vitesse du robot dans le repère global est la suivante : 
+        // double world_vx =  v_x*std::cos(pos_theta_) - v_y*std::sin(pos_theta_);
+        // double world_vy =  v_x*std::sin(pos_theta_) + v_y*std::cos(pos_theta_);
+
+        double k1[3],k2[3],k3[3],k4[3];
+        k1[0] = v_x * cos(theta) - v_y * sin(theta);
+        k1[1] = v_x * sin(theta) + v_y * cos(theta);
+        k1[2] = omega_z;
+        k2[0] = v_x * cos(theta + 0.5*dt*k1[2]) - v_y * sin(theta + 0.5*dt*k1[2]);
+        k2[1] = v_x * sin(theta + 0.5*dt*k1[2]) + v_y * cos(theta + 0.5*dt*k1[2]);
+        k2[2] = omega_z;
+        k3[0] = v_x * cos(theta + 0.5*dt*k2[2]) - v_y * sin(theta + 0.5*dt*k2[2]);
+        k3[1] = v_x * sin(theta + 0.5*dt*k2[2]) + v_y * cos(theta + 0.5*dt*k2[2]);
+        k3[2] = omega_z;
+        k4[0] = v_x * cos(theta + dt*k3[2]) - v_y * sin(theta + dt*k3[2]);
+        k4[1] = v_x * sin(theta + dt*k3[2]) + v_y * cos(theta + dt*k3[2]);
+        k4[2] = omega_z;
+        x += (dt/6.0) * (k1[0] + 2.0*k2[0] + 2.0*k3[0] + k4[0]);
+        y += (dt/6.0) * (k1[1] + 2.0*k2[1] + 2.0*k3[1] + k4[1]);
+        return std::make_pair(x,y);
+    };
 
     rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr subscription_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr time_publisher_;
     rclcpp::TimerBase::SharedPtr timer_;
+
+    
+
 
 
 
