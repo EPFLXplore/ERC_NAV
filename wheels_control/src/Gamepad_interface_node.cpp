@@ -73,7 +73,7 @@ class GamepadInterface : public rclcpp::Node
       
     }
 
-    double apply_deadzone(double value, double deadzone = 0.1){
+    double apply_deadzone(double value, double deadzone = 0.01){
       double abs_val = std::abs(value);
       if(abs_val < deadzone){
         return 0.0;
@@ -173,16 +173,32 @@ class GamepadInterface : public rclcpp::Node
       }
     }
 
+    double expo_filtering(const double input){
+      if (fabs(input) < JOYSTICK_THRESHOLD){
+        return 0.0;
+      }else if(fabs(input) >= 1.0){
+        return (input > 0 ? 1.0 : -1.0);
+      }else{
+        return (input)*(input)*(input); // cubic filtering
+      }
+    }
+
     void callback_gamepad(const sensor_msgs::msg::Joy::SharedPtr msg)
     {
       float v_x = 0;
       float v_y = 0;
       float r_z = 0;
 
-      float R2_val = apply_deadzone(msg->axes[GP_AXIS_R2], 0.08);
-      float L2_val = apply_deadzone(msg->axes[GP_AXIS_L2], 0.08);
-      float joy_left_vert = apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_VERTICAL]);
-      float joy_left_horiz = apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]);
+      float R2_val = apply_deadzone(msg->axes[GP_AXIS_R2], 0.03);
+      float L2_val = apply_deadzone(msg->axes[GP_AXIS_L2], 0.03);
+      float joy_left_vert = expo_filtering(apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_VERTICAL]));
+      float joy_left_horiz = expo_filtering(apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]));
+
+      //print before and after filtering
+      // RCLCPP_INFO(this->get_logger(), "joy left vert pre filtering: %.3f", msg->axes[GP_AXIS_JOYSTICK_LEFT_VERTICAL]);
+      // RCLCPP_INFO(this->get_logger(), "joy left vert post filtering: %.3f", joy_left_vert);
+      // RCLCPP_INFO(this->get_logger(), "joy left horiz pre filtering: %.3f", msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]);
+      // RCLCPP_INFO(this->get_logger(), "joy left horiz post filtering: %.3f", joy_left_horiz);
 
 
       if (current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL)
