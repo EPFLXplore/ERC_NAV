@@ -25,6 +25,7 @@
 #define IDX_VX   3
 #define IDX_VY   4
 
+
 // Odometry covariance indices
 #define COV_XX   0
 #define COV_YY   7
@@ -53,6 +54,7 @@ public:
   Eigen::Matrix2d           R_xy;   // wheel-odom x,y variance
   Eigen::Matrix2d           R_xy_lidar;   // lidar x,y variance
   Eigen::Matrix3d R_wheel_vel; // wheel velocity measurement noise
+  double                    z_int=0.51; //initial height of plate on the rover
 
 
 
@@ -306,6 +308,8 @@ public:
     P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
   }
 
+
+
   // void updateAccel(double ax, double ay, double dt){
   //   // We have measurements: a_x and a_y
   //   Eigen::Vector2d meas_a(ax, ay);
@@ -409,6 +413,8 @@ public:
     timer_ = create_wall_timer(
       std::chrono::milliseconds(10),
       std::bind(&NavEKFNode::timer_callback, this));
+
+    
   }
 
 private:
@@ -438,6 +444,8 @@ private:
     tf2::fromMsg(msg->orientation, q);
     double roll, pitch, yaw;
     tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+    current_rot_matrix = tf2::Matrix3x3(q);
 
     if(!initial_frame_set_){
       initial_yaw_ = yaw;
@@ -582,6 +590,7 @@ private:
     double odom_vx_world = cos_yaw * odom[0] - sin_yaw*odom[1];
     double odom_vy_world = sin_yaw * odom[0] + cos_yaw*odom[1];
     ekf_->updateWheelVelocities(odom_vx_world, odom_vy_world);
+    updateZ(current_rot_matrix, dt);
     
     nav_msgs::msg::Odometry out;
     out.header.stamp    = now;
@@ -590,6 +599,9 @@ private:
 
     out.pose.pose.position.x = ekf_->x(IDX_X);
     out.pose.pose.position.y = ekf_->x(IDX_Y);
+    out.pose.pose.position.z = ekf_->z_int; //ekf_->z_int; // only from IMU and orientation for now, to be updated with 3D map if necessary
+
+
     tf2::Quaternion qt;
     qt.setRPY(0, 0, ekf_->x(IDX_YAW));
     qt.normalize();
@@ -609,7 +621,7 @@ private:
 
     transform_stamped.transform.translation.x = ekf_->x(IDX_X);
     transform_stamped.transform.translation.y = ekf_->x(IDX_Y);
-    transform_stamped.transform.translation.z = 0.0;
+    transform_stamped.transform.translation.z = ekf_->z_int; //ekf_->z_int; // only from IMU and orientation for now, to be updated with 3D map if necessary
 
     qt.setRPY(0, 0, ekf_->x(IDX_YAW));
     qt.normalize();
@@ -619,6 +631,15 @@ private:
 
 
   }
+
+   void updateZ(tf2::Matrix3x3 rot_mat, double dt){
+
+    // Getting the measured and best value of vx and vy and computing z
+
+    double vzw = rot_mat[2][0]*ekf_-> x(IDX_VX) + rot_mat[2][1]*ekf_-> x(IDX_VY); 
+    ekf_ -> z_int += vzw * dt;
+  }
+
 
   std::shared_ptr<ExtendedKalmanFilter2D> ekf_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
@@ -632,6 +653,7 @@ private:
   rclcpp::Time                                             last_time_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr        bias_client_, zero_quat_client_, zero_pose_client_;
   double last_gyro_z_, last_vel_;
+  tf2::Matrix3x3 current_rot_matrix;
   bool initial_frame_set_ = false;
   double initial_yaw_ = 0.0;
   bool include_lidar_ = true;
