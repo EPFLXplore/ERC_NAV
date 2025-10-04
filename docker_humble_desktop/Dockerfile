@@ -5,6 +5,16 @@ FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+
+RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+RUN apt update && apt install ros2-apt-source  
+RUN rm /etc/apt/sources.list.d/ros2.list
+RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
+
+RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg | apt-key add -
+RUN sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -cs` main" > /etc/apt/sources.list.d/gazebo-stable.list'
+
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
 RUN apt-get update && apt-get upgrade -y
@@ -22,8 +32,10 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
-    ros-${ROS_DISTRO}-gazebo-ros2-control \
+    # ros-${ROS_DISTRO}-gazebo-ros2-control \  For gazebo 1
     ros-${ROS_DISTRO}-rqt-tf-tree \
+    ignition-fortress \
+    ros-${ROS_DISTRO}-ros-gz \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -58,6 +70,7 @@ RUN rosdep update \
 
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
+RUN echo "export XDG_RUNTIME_DIR=/tmp/runtime-${USERNAME}" >> /home/${USERNAME}/.bashrc
 
 # Install additional Python packages
 RUN pip install opencv-python --no-cache-dir

@@ -36,19 +36,20 @@ USERNAME=xplore
 docker run -it \
     --name nav_humble_desktop \
     --rm \
-    --runtime=nvidia \
     --gpus all \
     --privileged \
     --net=host \
-    -e DISPLAY=unix$DISPLAY \
+    -e DISPLAY=$DISPLAY \
     -e QT_X11_NO_MITSHM=1 \
     -e XAUTHORITY=$XAUTH \
+    -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+    -e XDG_RUNTIME_DIR=/tmp/runtime-xplore \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_desktop_home_volume:/home/xplore \
-    --add-host=os-122140001125.local:169.254.55.220 \
-    ghcr.io/epflxplore/nav:humble-desktop \
-    /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"
+    -v /home/jeffreyyu/Documents/Xplore/ERC_NAV/docker_humble_desktop/entrypoint.sh:/entrypoint.sh \
+    --entrypoint /entrypoint.sh \
+    ghcr.io/epflxplore/nav:humble-desktop
