@@ -118,17 +118,20 @@ public:
             std::bind(&MotorCmdsLifecycle::motors_param_callback, this)
         );
 
-        auto qos = rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort();
+        auto qos_best_effort = rclcpp::QoS(rclcpp::KeepLast(1));
+        qos_best_effort.reliability(rclcpp::ReliabilityPolicy::BestEffort);
+        qos_best_effort.durability(rclcpp::DurabilityPolicy::Volatile);
+
         
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
-            "/NAV/motor_nav_status", qos);
+            "/NAV/motor_nav_status", qos_best_effort);
 
 
         // subscription into sub_service_group
         // rclcpp::SubscriptionOptions sub_opts;
         // sub_opts.callback_group = sub_service_group;
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
-            "/NAV/displacement", 1,
+            "/NAV/steering_servoing", qos_best_effort,
             std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1)
         );
 

@@ -240,6 +240,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen"
     )
 
+    slip_control_node = launch_ros.actions.Node(
+        package="wheels_control",
+        executable="NAV_steer_control",
+        name="motor_steering_servoing",
+        output="screen"
+    )
+
 
     return [
         motor_cmds_arg,
@@ -259,7 +266,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         #odom_preprocessor,
         nav_cameras_launch,
         #delayed_aruco_launch,
-        jetson_stats
+        jetson_stats,
+        slip_control_node,
     ]
 
 def generate_launch_description():

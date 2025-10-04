@@ -53,7 +53,7 @@ class GamepadInterface : public rclcpp::Node
       qos_best_effort.reliability(rclcpp::ReliabilityPolicy::BestEffort);
       qos_best_effort.durability(rclcpp::DurabilityPolicy::Volatile);
 
-      pub_cmd_vel_manual = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_manual", 10); 
+      pub_cmd_vel_manual = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_manual", 1); 
 
       // Listens to the gamepad topic of the CS
       sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(

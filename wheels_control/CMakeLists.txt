@@ -92,6 +92,9 @@ add_executable(NAV_odometry_node src/odometry_node.cpp)
 ament_target_dependencies(NAV_odometry_node rclcpp nav_msgs tf2 tf2_geometry_msgs Eigen3 custom_msg)
 
 
+add_executable(NAV_steer_control src/Motors_steering_servoing_node.cpp)
+ament_target_dependencies(NAV_steer_control rclcpp custom_msg)
+
 add_executable(NAV_displacement_cmds 
   src/Displacement_cmds_node.cpp
   src/kinematic_models/normal_kinematic_model.cpp
@@ -128,6 +131,7 @@ install(TARGETS
   NAV_displacement_cmds
   NAV_motor_cmds
   NAV_odometry_node
+  NAV_steer_control
   
   DESTINATION lib/${PROJECT_NAME})
 

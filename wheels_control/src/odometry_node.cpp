@@ -43,18 +43,18 @@ public:
           pos_theta_(0.0) {
 
         prev_time_ = this->get_clock()->now();
-        auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{10}).best_effort();
+        auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{1}).best_effort();
         subscription_ = this->create_subscription<custom_msg::msg::MotorStatus>(
             "/NAV/motor_nav_status", sub_qos,
             std::bind(&ForwardKinematicsNode::publish_odometry, this, _1));
 
         imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-        "/olive/imu/id001/ahrs", 10,
+        "/olive/imu/id001/ahrs", 1,
         std::bind(&ForwardKinematicsNode::imu_callback, this, std::placeholders::_1));
 
-        odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
+        odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 1);
 
-        time_publisher_ = this->create_publisher<builtin_interfaces::msg::Time>("/NAV/nav_time", 10);
+        time_publisher_ = this->create_publisher<builtin_interfaces::msg::Time>("/NAV/nav_time", 1);
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(300), 
                                          std::bind(&ForwardKinematicsNode::timer_callback, this)

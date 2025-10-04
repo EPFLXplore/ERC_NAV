@@ -46,13 +46,13 @@ class CmdvelManager : public rclcpp::Node
   public:
     CmdvelManager() : Node("NAV_cmd_vel_manager"), count_(0)
     {
-      pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", 10); 
+      pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", 1); 
       
       sub_cmd_vel_manual = this->create_subscription<geometry_msgs::msg::Twist>(
-        "/NAV/cmd_vel_manual", 10, std::bind(&CmdvelManager::callback_cmd_vel_manual, this, std::placeholders::_1));
+        "/NAV/cmd_vel_manual", 1, std::bind(&CmdvelManager::callback_cmd_vel_manual, this, std::placeholders::_1));
 
       sub_cmd_vel_auto = this->create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", 10, std::bind(&CmdvelManager::callback_cmd_vel_auto, this, std::placeholders::_1));
+        "/cmd_vel", 1, std::bind(&CmdvelManager::callback_cmd_vel_auto, this, std::placeholders::_1));
     
       // Listens on the NAVCSInterface for the actual mode of the rover
       sub_state_system = this->create_subscription<std_msgs::msg::String>(
