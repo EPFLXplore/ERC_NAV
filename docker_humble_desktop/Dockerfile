@@ -5,6 +5,11 @@ FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Refresh ROS 2 signing key (handles 2024+ key rotation) and ensure required tools
+RUN apt-get update && apt-get install -y curl gnupg software-properties-common \
+    && rm -f /usr/share/keyrings/ros-archive-keyring.gpg || true
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
 RUN apt-get update && apt-get upgrade -y
