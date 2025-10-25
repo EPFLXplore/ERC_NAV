@@ -15,6 +15,8 @@ RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
 RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg | apt-key add -
 RUN sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -cs` main" > /etc/apt/sources.list.d/gazebo-stable.list'
 
+# velodyne simulator is for 3D lidar point cloud
+
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
 RUN apt-get update && apt-get upgrade -y
@@ -34,6 +36,11 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-gazebo-ros2-control \
     ros-${ROS_DISTRO}-rqt-tf-tree \
+    ros-${ROS_DISTRO}-gazebo-plugins \
+    ros-${ROS_DISTRO}-velodyne-simulator \
+    ros-${ROS_DISTRO}-velodyne-description \
+    ros-${ROS_DISTRO}-velodyne-gazebo-plugins \
+    ros-${ROS_DISTRO}-velodyne-msgs \
     ignition-fortress \
     ros-${ROS_DISTRO}-ros-gz \
     python3-zmq \
