@@ -32,7 +32,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
-    # ros-${ROS_DISTRO}-gazebo-ros2-control \  For gazebo 1
+    ros-${ROS_DISTRO}-gazebo-ros2-control \
     ros-${ROS_DISTRO}-rqt-tf-tree \
     ignition-fortress \
     ros-${ROS_DISTRO}-ros-gz \
