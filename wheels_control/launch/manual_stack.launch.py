@@ -13,7 +13,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
     global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
-    config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
+    # config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
     
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
@@ -36,11 +36,19 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         default_value=default_pub_urdf,
         description="Publish the URDF via the robot state publisher"
     )
+    
+    default_sim = "false"
+    sim_arg = DeclareLaunchArgument(
+        "sim",
+        default_value=default_sim,
+        description="Enable simulation mode - disables real hardware nodes"
+    )
 
     motor_cmds = LaunchConfiguration("motor_cmds", default=default_motor_cmds)
     homing = LaunchConfiguration("homing", default=default_homing)
     publish_urdf = LaunchConfiguration("pub_urdf", default=default_pub_urdf)
-    
+    sim_mode = LaunchConfiguration("sim", default=default_sim)
+
 
     # ------------- Launch Nodes -------------
     cs_interface = launch_ros.actions.Node(
@@ -104,6 +112,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(FindPackageShare("camera").find("camera"), "launch", "camera_node_nav.launch.py")
         ),
         launch_arguments={}.items(),
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
 
     # -........... liorf Launch File ---------------
@@ -121,7 +130,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     aruco_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
             os.path.join(FindPackageShare("ros2_aruco").find("ros2_aruco"), "launch", "aruco.launch.py")
-        )
+        ),
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
     # -........... description (URDF) Launch File ---------------
     description_launch = IncludeLaunchDescription(
@@ -196,6 +206,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='olive_imu_restamper_node',
         name='olive_imu_restamper_node',
         output='screen',
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
 
     delayed_launch = TimerAction(
@@ -210,7 +221,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             #arduino_imu_pub,
             #local_ekf_node,
             #global_ekf_node,
-        ]
+        ],
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
 
     delayed_aruco_launch = TimerAction(
@@ -218,12 +230,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         actions=[
             LogInfo(msg="Cameras started! Launching aruco nodes..."),
             aruco_launch
-        ]
+        ],
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
     
     jetson_stats = launch_ros.actions.Node(
         package="jetson_stats",
-        executable="launch_stats"
+        executable="launch_stats",
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
 
 
@@ -256,9 +270,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         custom_local_ekf_node,
         ouster_launch,
         # delayed_launch,
-        #odom_preprocessor,
+        # odom_preprocessor,
         nav_cameras_launch,
-        #delayed_aruco_launch,
+        # delayed_aruco_launch,
         jetson_stats
     ]
 
