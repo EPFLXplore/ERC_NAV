@@ -29,7 +29,7 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_lidar_to_base',
-            arguments=['-0.16', '-0.18', '0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
+            arguments=['-0.16', '-0.18', '0.6',  '0', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
         # Launch the GLIM odometry republisher that chagnes the covariance to avoids tfs conflicts

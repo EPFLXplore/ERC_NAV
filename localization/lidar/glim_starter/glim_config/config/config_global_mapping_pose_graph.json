@@ -34,11 +34,11 @@
     "enable_optimization": true,
     "init_pose_damping_scale": 1e6,
     // Loop detection settings
-    "registration_type": "VGICP",
+    "registration_type": "VGICP", 
     "min_travel_dist": 50.0,
     "max_neighbor_dist": 5.0,
     "min_inliear_fraction": 0.5,
-    "subsample_target": 10000,
+    "subsample_target": 10000, //10000 7500
     "subsample_rate": 0.1,
     "gicp_max_correspondence_dist": 2.0,
     "vgicp_voxel_resolution": 2.0,
@@ -52,6 +52,6 @@
     "use_isam2_dogleg": false,
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
-    "num_threads": 2
+    "num_threads": 4 //2 
   }
 }

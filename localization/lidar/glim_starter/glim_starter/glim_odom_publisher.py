@@ -4,6 +4,7 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry
 import math
+import numpy as np
 
 def yaw_from_quaternion(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -46,12 +47,13 @@ class GlimOdomRepublisher(Node):
         self.rotation_sign = self.get_parameter('rotation_sign').get_parameter_value().bool_value
 
         # Pub/Sub
-        self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
 
-
-        qos = QoSProfile(depth=10)
-        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos = QoSProfile(depth=1)
+        qos.reliability = ReliabilityPolicy.BEST_EFFORT
         qos.history = HistoryPolicy.KEEP_LAST
+
+        self.odom_pub = self.create_publisher(Odometry, self.odom_topic, qos)
+
 
         self.pose_sub = self.create_subscription(
             PoseStamped,
@@ -88,39 +90,47 @@ class GlimOdomRepublisher(Node):
         y = msg.pose.position.y
         z = msg.pose.position.z
         yaw = yaw_from_quaternion(msg.pose.orientation)
-        self.get_logger().info(f"raw odom message: x{x} y{y} yaw{yaw}" )
+        # self.get_logger().info(f"raw odom message: x{x} y{y} yaw{yaw}" )
 
 
         # Capture once
-        if self._capture_next:
-            self._x0, self._y0, self._yaw0 = x, y, yaw
-            # Precompute rotation R(-yaw0)
-            self._Rc = math.cos(-self._yaw0)
-            self._Rs = math.sin(-self._yaw0)
-            self._zeroed = True
-            self._capture_next = False
-            self.get_logger().info(f"Captured x0={self._x0:.3f}, y0={self._y0:.3f}, yaw0={self._yaw0:.3f} rad")
+        # if self._capture_next:
+        #     self._x0, self._y0, self._yaw0 = x, y, yaw
+        #     # Precompute rotation R(-yaw0)
+        #     self._Rc = math.cos(-self._yaw0)
+        #     self._Rs = math.sin(-self._yaw0)
+        #     self._zeroed = True
+        #     self._capture_next = False
+        #     # self.get_logger().info(f"Captured x0={self._x0:.3f}, y0={self._y0:.3f}, yaw0={self._yaw0:.3f} rad")
 
-        # Translate to origin, then rotate by -yaw0
-        dx = x - self._x0
-        dy = y - self._y0
-        xr = self._Rc * dx - self._Rs * dy
-        yr = self._Rs * dx + self._Rc * dy
+        # # Translate to origin, then rotate by -yaw0
+        # dx = x - self._x0
+        # dy = y - self._y0
+        # xr = self._Rc * dx - self._Rs * dy
+        # yr = self._Rs * dx + self._Rc * dy
 
-        # Re-zero yaw
-        yaw_r = wrap_pi(yaw - self._yaw0) if self._zeroed else yaw
+        # # Re-zero yaw
+        # yaw_r = wrap_pi(yaw - self._yaw0) if self._zeroed else yaw
 
-        # Optional post-rotation reflection for legacy consumers
-        if self.reflect_x_after:
-            xr = -xr
-            yaw_r = -yaw_r  # keep forward direction consistent under reflection
+        # # Optional post-rotation reflection for legacy consumers
+        # if self.reflect_x_after:
+        #     xr = -xr
+        #     yaw_r = -yaw_r  # keep forward direction consistent under reflection
 
-        if self.debug_logs and self._zeroed:
-            self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
+        # if self.debug_logs and self._zeroed:
+        #     self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
 
 
-        if self.rotation_sign :
-            yaw_r = (-1.0)*yaw_r
+        # if self.rotation_sign :
+        #     yaw_r = (-1.0)*yaw_r
+
+
+        
+        # Matrice de rotation : bricolage
+
+        rot = np.array([[ math.cos(math.pi), -math.sin(math.pi)],
+                        [math.sin(math.pi),  math.cos(math.pi)]])
+
             
         qx, qy, qz, qw = quaternion_from_yaw(yaw)
 
@@ -128,6 +138,10 @@ class GlimOdomRepublisher(Node):
         odom.header.stamp = now.to_msg()
         odom.header.frame_id = self.odom_frame_id
         odom.child_frame_id = self.child_frame_id
+
+        x =  (rot @ np.array([x,y]) )[0]
+        y =  (rot @ np.array([x,y]) )[1]
+
 
         odom.pose.pose.position.x = x
         odom.pose.pose.position.y = y

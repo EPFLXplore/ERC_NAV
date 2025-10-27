@@ -21,7 +21,7 @@
     "keyframe_update_interval_rot": 0.01,
     "keyframe_update_interval_trans": 0.1,
     // Submap issue criteria
-    "max_num_keyframes": 50,
+    "max_num_keyframes": 5,
     "max_num_voxels": -1,
     "adaptive_max_num_voxels": 2.5,
     // Submap creation params

@@ -20,8 +20,8 @@
     "distance_near_thresh": 0.5,
     "distance_far_thresh": 50.0,
     "use_random_grid_downsampling": true,
-    "downsample_resolution": 1.0,
-    "random_downsample_target": 15000,
+    "downsample_resolution": 1, //1 0.5
+    "random_downsample_target": 10000, //15000
     "random_downsample_rate": 0.1,
     "enable_outlier_removal": false,
     "outlier_removal_k": 10,
@@ -31,6 +31,6 @@
     "crop_bbox_min": [-1.0, -1.0, -1.0],
     "crop_bbox_max": [1.0, 1.0, 1.0],
     "k_correspondences": 20,
-    "num_threads": 2
+    "num_threads": 4
   }
 }

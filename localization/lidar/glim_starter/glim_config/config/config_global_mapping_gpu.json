@@ -39,7 +39,7 @@
     "submap_voxel_resolution_max": 1.0,
     "submap_voxel_resolution_dmin": 5.0,
     "submap_voxel_resolution_dmax": 20.0,
-    "submap_voxelmap_levels": 4,
+    "submap_voxelmap_levels": 2, //4
     "submap_voxelmap_scaling_factor": 2.0,
     "max_implicit_loop_distance": 100.0,
     "min_implicit_loop_overlap": 0.2,

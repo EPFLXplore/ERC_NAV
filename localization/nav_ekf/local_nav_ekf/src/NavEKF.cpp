@@ -381,17 +381,20 @@ public:
     call_trigger(zero_quat_client_, "setZeroQuaternion");
     call_trigger(zero_pose_client_, "setZeroPose");
 
+
+    
+
+
+    auto qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
+
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-      "/olive/imu/id001/ahrs", 10,
+      "/olive/imu/id001/ahrs", qos,
       std::bind(&NavEKFNode::imu_callback, this, std::placeholders::_1));
 
     
     lidar_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/odom_glim_repub", 10,
+      "/odom_glim_repub", qos,
       std::bind(&NavEKFNode::lidar_callback, this, std::placeholders::_1));
-
-
-    auto qos = rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort();
 
     wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
       "/NAV/motor_nav_status", qos,
@@ -399,13 +402,13 @@ public:
     
 
     wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/wheel_odom", 10,
+      "/wheel_odom", qos,
       std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
 
       //publsher
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-      "/fused_nav_ekf_odom", 10);
+      "/fused_nav_ekf_odom", qos);
 
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -414,6 +417,10 @@ public:
       std::chrono::milliseconds(10),
       std::bind(&NavEKFNode::timer_callback, this));
 
+    moving_avg_pitch.reserve(moving_avg_size);
+    moving_avg_roll.reserve(moving_avg_size);
+    moving_avg_index = 0;
+    moving_avg_size = 10;
     
   }
 
@@ -632,12 +639,42 @@ private:
 
   }
 
-   void updateZ(tf2::Matrix3x3 rot_mat, double dt){
+  
+
+  void updateZ(tf2::Matrix3x3 rot_mat, double dt){
 
     // Getting the measured and best value of vx and vy and computing z
+    double roll, pitch, yaw;
+    rot_mat.getRPY(roll, pitch, yaw);
 
-    double vzw = rot_mat[2][0]*ekf_-> x(IDX_VX) + rot_mat[2][1]*ekf_-> x(IDX_VY); 
+    //current_rot_matrix = tf2::Matrix3x3(q);
+    roll = calculate_moving_avg_val(moving_avg_roll, roll);
+    pitch = calculate_moving_avg_val(moving_avg_pitch, pitch);
+
+    tf2::Quaternion q;
+    q.setRPY(roll, pitch, yaw);
+    tf2::Matrix3x3 rot_mat_avged = tf2::Matrix3x3(q);
+
+    double vzw = rot_mat_avged[2][0]*ekf_-> x(IDX_VX) + rot_mat_avged[2][1]*ekf_-> x(IDX_VY); 
     ekf_ -> z_int += vzw * dt;
+  }
+
+  double calculate_moving_avg_val(std::vector<double> &vect, const double val){
+    
+    if(vect.size() < moving_avg_size){
+      vect.push_back(val);
+      return val;
+    }else if (vect.size() >= moving_avg_size){
+      vect.erase(vect.begin());
+      vect.push_back(val);
+      double sum = 0.0;
+      for (double value : vect){
+        sum += value;
+      }
+      sum = sum/moving_avg_size;
+      return sum;
+    }
+    
   }
 
 
@@ -658,7 +695,10 @@ private:
   double initial_yaw_ = 0.0;
   bool include_lidar_ = true;
   Eigen::Vector2d initial_pos_{0.0, 0.0};
-
+  long unsigned int moving_avg_size = 10;
+  std::vector<double> moving_avg_pitch = {};
+  std::vector<double> moving_avg_roll = {};
+  int moving_avg_index = 0;
   // double last_accel_x = 0.0;
   // double last_accel_y = 0.0;
   rclcpp::Time last_imu_stamp_;
