@@ -30,9 +30,9 @@ class LidarPhiFilterNode : public rclcpp::Node {
 public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node") {
         // Valeurs par défaut (sans déclaration de paramètres)
-        tolerance_deg_ = 7.0;
-        input_cloud_topic_ = "/ouster/points";
-        output_cloud_topic_ = "/ouster/points_aruco";
+        tolerance_deg_ = 15.0;
+        input_cloud_topic_ = "/ouster_points";
+        output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;
         // subscriber de POINTCLOUD2
@@ -49,7 +49,7 @@ public:
                 detect_3_best_camera(msg);
             });
 
-        cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 10);
+        cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 1);
     }
 
 private:
@@ -113,9 +113,9 @@ private:
         double angles_local[3];
         size_t k = selected_count_;
         for (size_t i = 0; i < k && i < 3; ++i) angles_local[i] = selected_angles_aruco_deg_[i];
-        if (k == 0) {
-            return; // pas d'angles -> pas de filtrage
-        }
+        // if (k == 0) {
+        //     return; // pas d'angles -> pas de filtrage
+        // }
 
         // Extraire XYZ dans un tableau simple
         std::vector<std::array<float, 3>> points;
@@ -143,7 +143,7 @@ private:
             const double angle_pointcloud_deg = wrap180(atan2(static_cast<double>(p[1]), static_cast<double>(p[0])) * 180.0 / M_PI);
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
-                if (angDeltaDeg(angle_pointcloud_deg, angles_local[i]) <= tolerance_deg_) { match = true; break; }
+                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_) { match = true; break; }
             }
             if (!match) continue;
 

@@ -1,19 +1,36 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>ros2_aruco</name>
+  <name>ros2_aruco_with_lidar</name>
   <version>0.1.0</version>
   <description>ROS2 Aruco Marker Pose Estimation</description>
   <maintainer email="margueritebenoist@gmail.com">Marguerite Benoist</maintainer>
   <license>TODO: License declaration</license>
 
+  <!-- Build tool -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <!-- C++ dependencies -->
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ros2_aruco_interfaces</depend>
+  <!-- Add other C++ dependencies here -->
+
+  <!-- Python dependencies -->
+  <depend>rclpy</depend>
+  
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  
   <exec_depend>ros2launch</exec_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

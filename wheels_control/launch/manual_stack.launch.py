@@ -258,7 +258,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         # delayed_launch,
         #odom_preprocessor,
         nav_cameras_launch,
-        #delayed_aruco_launch,
+        #w,
         jetson_stats
     ]
 
