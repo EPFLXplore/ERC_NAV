@@ -31,6 +31,7 @@ public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node") {
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15.0;
+        tolerance_radius_ = 0.5; 
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
@@ -105,15 +106,20 @@ private:
         selected_count_ = count;
         for (size_t i = 0; i < count && i < 3; ++i) {
             selected_angles_aruco_deg_[i] = best_ang[i];
+            selected_ranges_[i] = best_rng[i];
+
         }
     }
 
     void onCloud(const sensor_msgs::msg::PointCloud2::SharedPtr in) {
         // copie locale des angles sélectionnés (max 3)
         double angles_local[3];
+        double ranges_local[3];
         size_t k = selected_count_;
-        for (size_t i = 0; i < k && i < 3; ++i) angles_local[i] = selected_angles_aruco_deg_[i];
-        // if (k == 0) {
+        for (size_t i = 0; i < k && i < 3; ++i) {
+            angles_local[i] = selected_angles_aruco_deg_[i];
+            ranges_local[i] = selected_ranges_[i];
+        }        // if (k == 0) {
         //     return; // pas d'angles -> pas de filtrage
         // }
 
@@ -141,9 +147,11 @@ private:
         size_t kept = 0;
         for (const auto &p : points) {
             const double angle_pointcloud_deg = wrap180(atan2(static_cast<double>(p[1]), static_cast<double>(p[0])) * 180.0 / M_PI);
+            const double r_point = hypot(static_cast<double>(p[0]), static_cast<double>(p[1]));
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
-                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_) { match = true; break; }
+                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ &&
+                    fabs(r_point - ranges_local[i]) <= tolerance_radius_ ) { match = true; break; }
             }
             if (!match) continue;
 
@@ -164,6 +172,8 @@ private:
 private:
     // paramètres
     double tolerance_deg_;
+    double tolerance_radius_;
+
     string input_cloud_topic_;
     string output_cloud_topic_;
     string aruco_topic_;
@@ -176,6 +186,8 @@ private:
     // angles sélectionnés (max 3)
     size_t selected_count_;
     double selected_angles_aruco_deg_[3];
+    double selected_ranges_[3];
+
 };
 
 int main(int argc, char **argv) {
