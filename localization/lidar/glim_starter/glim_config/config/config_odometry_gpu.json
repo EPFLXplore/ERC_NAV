@@ -36,11 +36,13 @@
   // num_threads                  : Number of threads for odometry estimation
   */
 
+
+  // IMPORTANT GPU ODOMETRY IS ALWAYS USING VGICP_GPU FOR REGISTRATION ERROR FACTORS
   "odometry_estimation": {
     "so_name": "libodometry_estimation_gpu.so",
     // Initialization params
     "initialization_mode": "LOOSE",
-    "initialization_window_size": 1.0,
+    "initialization_window_size": 2.0,
     "init_pose_damping_scale": 1e10,
     // Optimization params
     "smoother_lag": 5.0,
@@ -49,20 +51,20 @@
     "isam2_relinearize_thresh": 0.1,
     "fix_imu_bias": false,
     // Voxel params
-    "voxel_resolution": 0.25, //0.5
-    "voxel_resolution_max": 0.5, //0.65
+    "voxel_resolution": 0.1, //0.5
+    "voxel_resolution_max": 0.65,
     "voxel_resolution_dmin": 5.0,
     "voxel_resolution_dmax": 20.0,
     "voxelmap_levels": 2,
     "voxelmap_scaling_factor": 2.0,
     "full_connection_window_size": 2,
     // Keyframe params
-    "keyframe_update_strategy": "OVERLAP",
-    "max_num_keyframes": 15, //20
+    "keyframe_update_strategy": "OVERLAP", //OVERLAP meilleur en extérieur et DISPLACEMENT meilleur en intérieur
+    "max_num_keyframes": 20,
     "keyframe_min_overlap": 0.01,
-    "keyframe_max_overlap": 0.7,
-    "keyframe_delta_trans": 2.0, //0.5
-    "keyframe_delta_rot": 0.5, //0.1
+    "keyframe_max_overlap": 0.5, //avec 0.7 Il faut au moins 30% de nouveauté pour créer une nouvelle keyframe
+    "keyframe_delta_trans": 0.01, //Résolution de 1cm, nouvelle key frame tous les cm
+    "keyframe_delta_rot": 0.1,
     "keyframe_entropy_thresh": 0.99,
     // MISC
     "save_imu_rate_trajectory": true,

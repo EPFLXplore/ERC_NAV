@@ -35,23 +35,23 @@
     "enable_optimization": true,
     // Keyframe update strategy
     "max_num_keyframes": 5,
-    "keyframe_update_strategy": "OVERLAP",
-    "keyframe_update_min_points": 50, //500
-    "keyframe_update_interval_rot": 0.01, //0.2 3.14
-    "keyframe_update_interval_trans": 0.1, //0.2 1.0
-    "max_keyframe_overlap": 0.6, //1.0
+    "keyframe_update_strategy": "DISPLACEMENT",
+    "keyframe_update_min_points": 500,
+    "keyframe_update_interval_rot": 0.2, // 0.2 radians = ~11.5 degrees
+    "keyframe_update_interval_trans": 0.2, // 0.2 meters
+    "max_keyframe_overlap": 1.0, // 100% 
     // Relative pose factors
     "create_between_factors": false,
     "between_registration_type": "GICP",
     // Registration error factors
     "registration_error_factor_type": "VGICP_GPU",
-    "keyframe_randomsampling_rate": 1.0,
-    "keyframe_voxel_resolution": 0.25,
+    "keyframe_randomsampling_rate": 0.5,
+    "keyframe_voxel_resolution": 0.5,
     "keyframe_voxelmap_levels":2,
     "keyframe_voxelmap_scaling_factor": 2.0,
     // Post processing
-    "submap_downsample_resolution": 0.1, //0.3
+    "submap_downsample_resolution": 0.1,
     "submap_voxel_resolution": 0.5,
-    "submap_target_num_points": 50000 //60000 20000
+    "submap_target_num_points": 60000
   }
 }

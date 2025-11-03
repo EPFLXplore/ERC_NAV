@@ -47,6 +47,7 @@ docker run -it \
     -e DISPLAY=$DISPLAY \
     -e QT_X11_NO_MITSHM=1 \
     -e XAUTHORITY=$XAUTH \
+    -e USERNAME=$USERNAME \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
@@ -57,4 +58,13 @@ docker run -it \
     -v nav_humble_jetson_home_volume:/home/xplore \
     -w /home/xplore/dev_ws/ \
     glim-humble-jetson \
-    /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"
+    /bin/bash -c "sudo chown -R \$USERNAME:\$USERNAME /home/\$USERNAME; \
+source /opt/ros/humble/setup.bash; \
+if [ ! -f /home/\$USERNAME/dev_ws/install/setup.bash ] || [ \"\$(find /home/\$USERNAME/dev_ws/src/localization/lidar/glim_starter -type f -newer /home/\$USERNAME/dev_ws/install/setup.bash | wc -l)\" -gt 0 ]; then \
+  echo 'Building glim_starter...'; \
+  colcon build --packages-select glim_starter --symlink-install; \
+else \
+  echo 'Using existing build'; \
+fi; \
+source /home/\$USERNAME/dev_ws/install/setup.bash 2>/dev/null || true; \
+/bin/bash"
