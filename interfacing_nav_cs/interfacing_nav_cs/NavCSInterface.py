@@ -37,6 +37,10 @@ class NavCSInterface(Node):
     def __init__(self):
         super().__init__("NavCSInterfacing")
 
+        # Declare and get simulation mode parameter
+        self.declare_parameter('sim_mode', False)
+        self.sim_mode = self.get_parameter('sim_mode').get_parameter_value().bool_value
+
         with open('/home/xplore/dev_ws/src/custom_msg/config/nav_interface_names.yaml', 'r') as file:
             self.nav_names = yaml.safe_load(file)["/**"]["ros__parameters"]
 
@@ -52,18 +56,25 @@ class NavCSInterface(Node):
         # Change Mode
         self.cs_request = self.create_service(ChangeModeSystem, self.rover_names['rover_change_nav_mode'], self.execute_service, callback_group=group2)
         self.mode_publisher = self.create_publisher(String, self.nav_names['system_status'], 1)
-        self.timer_mode = self.create_timer(2.0, self.pub_state)
+        # self.timer_mode = self.create_timer(2.0, self.pub_state)
 
-        # Motor Health
-        self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURED
-        self.check_motor_health = self.create_timer(2.0, self.get_state_motor_control)
-        self.motor_change_service = self.create_client(ChangeState, 
-                                                      '/NAV_motor_cmds/change_state', callback_group=group2)
-        self.motor_check_service = self.create_client(GetState, 
-                                                      '/NAV_motor_cmds/get_state')
-
+        # Motor Health - only create in real robot mode
+        self.state_motor_control = State.PRIMARY_STATE_INACTIVE if self.sim_mode else State.PRIMARY_STATE_UNCONFIGURED
+        
+        if not self.sim_mode:
+            self.check_motor_health = self.create_timer(2.0, self.get_state_motor_control)
+            self.motor_change_service = self.create_client(ChangeState, 
+                                                          '/NAV_motor_cmds/change_state', callback_group=group2)
+            self.motor_check_service = self.create_client(GetState, 
+                                                          '/NAV_motor_cmds/get_state')
+        else:
+            self.get_logger().info("Running in simulation mode - skipping motor health checks")
 
     def pub_state(self):
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.get_logger().info(f"DEBUG [{timestamp}]: pub_state called - publishing mode: '{self.mode}'")
+
         m = String()
         m.data = self.mode
         self.mode_publisher.publish(m)
@@ -73,14 +84,17 @@ class NavCSInterface(Node):
 
     def execute_service(self, request, response):
         mode = request.mode
-
+       
         if self.mode == Mode[mode]:
             response.new_mode = mode
             response.error_type = 1
             response.error_message = "already in that state"
             return response
 
+        self.get_logger().info(f"DEBUG: Service request received - mode: {mode}, Mode[mode]: {Mode[mode]}")
+        self.get_logger().info(f"DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDdd: Current mode: {self.mode}, sim_mode: {self.sim_mode}")
 
+        
         # Transition to Manual or Omni mode from Off
         # Warning, don't transition directly to Auto!
         if self.mode == 'Off' and (Mode[mode] == 'Ackermann' or Mode[mode] == 'Omni'):
@@ -125,46 +139,69 @@ class NavCSInterface(Node):
     # GET STATE MOTOR
 
     def get_state_motor_control(self):
-        
+        self.get_logger().info(f"DEBUG: get_state_motor_control called - sim_mode: {self.sim_mode} dddddddddddddddddddddd")
+
+        # Skip motor state checking in simulation
+        if self.sim_mode:
+            self.get_logger().info("DEBUG: Skipping motor control check due to simulation mode")
+            return
+            
         request = GetState.Request()
         future = self.motor_check_service.call_async(request)
         future.add_done_callback(self.get_state_callback)
 
     def get_state_callback(self, future):
+        self.get_logger().info(f"DEBUG: get_state_callback called - sim_mode: {self.sim_mode} AAAAAAAAAAAAAAAAAAAAAAAa")
 
-        self.state_motor_control = future.result().current_state.id
-        
-        # If for some reasons the motors go off while being in Manual mode
-        if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED and self.mode != 'Off':
-            self.mode = 'Off'
-            #self.pub_state()
+        # Skip motor state callbacks in simulation
+        if self.sim_mode:
+            self.get_logger().info("DEBUG: Skipping state callback due to simulation mode")
             return
+            
+        try:
+            self.state_motor_control = future.result().current_state.id
+            
+            # If for some reasons the motors go off while being in Manual mode
+            if self.state_motor_control == State.PRIMARY_STATE_UNCONFIGURED and self.mode != 'Off':
+                self.mode = 'Off'
+                self.get_logger().warn("Motor control lost - reverting to Off mode")
+                return
+        except Exception as e:
+            self.get_logger().error(f"Motor state check failed: {e}")
     
     # ------------------------------------------------------------------------
 
     def transition_state(self, state, label, next_state, callback_transition, mode, message_response, response):
+        # In simulation mode, simulate successful transition
+        
+        self.get_logger().info(f"DEBUG: transition_state called - mode: {mode}, Mode[mode]: {Mode[mode]}, sim_mode: {self.sim_mode}")
+
+        
+        if self.sim_mode:
+            self.get_logger().info(f"Simulating transition to {Mode[mode]}")
+            self.state_motor_control = next_state
+            self.change_mode(mode, 0, response, message_response)
+            self.transitioning_state = False
+            return
+        
+        # Real robot mode - use actual motor service
+        self.get_logger().info(f"DEBUG: Taking real robot path (not simulation)")
         motor_request = ChangeState.Request()
         motor_request.transition.id = state
         motor_request.transition.label = label
-        self.get_logger().info(f"TAMEERRRRRRE")
-
+        self.get_logger().info(f"Transitioning motor state: {label}")
 
         future = self.motor_change_service.call_async(motor_request)
-        self.get_logger().info(f"TAMEERRRRRRE 2")
-
         future.add_done_callback(lambda f: self.default_transition_check_callback(f, next_state, mode, message_response, response))
-        self.get_logger().info(f"TAMEERRRRRRE 3")
 
-    
     def default_transition_check_callback(self, future, next_state, mode, message_response, response):
-        self.get_logger().info(f"TAMEERRRRRRE 6")
+        self.get_logger().info(f"Transition callback executed")
+        
         if future.result().success:
-            self.get_logger().info(f"TAMEERRRRRRE 4")
-
+            self.get_logger().info(f"Transition successful")
             self.state_motor_control = next_state
             self.change_mode(mode, 0, response, message_response)
             self.get_logger().info(message_response)
-    
         else:
             self.change_mode(Mode_to_CS[self.mode], 1, response, "NAV lifecycle change state failed")
             self.get_logger().error("NAV lifecycle change state failed")
@@ -172,6 +209,7 @@ class NavCSInterface(Node):
         self.transitioning_state = False
     
     def change_mode(self, mode, error_type, response, message_response):
+        self.get_logger().info(f"DEBUG: change_mode called - mode: {mode}, Mode[mode]: {Mode[mode]}")
         self.mode = Mode[mode]
         #self.pub_state()
         response.new_mode = mode
@@ -314,4 +352,4 @@ if self.mode == 'Auto' and Mode[mode] == 'Off':
         response.error_type = 1
         response.error_message = "NAV lifecycle change state failed"
         return response
-'''   
+'''

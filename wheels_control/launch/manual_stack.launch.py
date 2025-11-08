@@ -52,9 +52,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     # ------------- Launch Nodes -------------
     cs_interface = launch_ros.actions.Node(
-        package="interfacing_nav_cs",
-        executable="interface",
-        name="NavCSInterfacing",
+    package="interfacing_nav_cs",
+    executable="interface",
+    name="NavCSInterfacing",
+    parameters=[{"sim_mode": sim_mode}]  # Pass the sim_mode parameter
     )
 
     gamepad_interface_node = launch_ros.actions.Node(
@@ -73,7 +74,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_displacement_cmds",
         name="NAV_displacement_cmds",
-        parameters=[{"motor_cmds": motor_cmds}],
+        parameters=[{"sim_mode": sim_mode}],  # Pass sim_mode parameter
+        output="screen"
     )
 
     motor_cmds_node = launch_ros.actions.Node(
@@ -81,7 +83,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable="NAV_motor_cmds",
         name="NAV_motor_cmds",
         parameters=[{"homing": homing}],
-        condition=IfCondition(motor_cmds),
+        condition=IfCondition(
+        launch.substitutions.AndSubstitution(
+            motor_cmds,
+            launch.substitutions.NotSubstitution(sim_mode)  # Only launch if NOT in sim mode
+            )
+        )
     )
 
     wheel_odom_node = launch_ros.actions.Node(
@@ -103,7 +110,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             os.path.join(FindPackageShare("ros2_ouster").find("ros2_ouster"), "launch", "driver_launch.py")
         ),
         launch_arguments={}.items(),
-        condition=IfCondition(publish_urdf)
+        condition=IfCondition(
+            launch.substitutions.AndSubstitution(
+                publish_urdf,
+                launch.substitutions.NotSubstitution(sim_mode)
+            )
+        )
     )
 
     # -------------- ERC_CAMERAS NAV Launch file --------
@@ -199,6 +211,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='nav_ekf_node',
         name='nav_custom_ekf',
         output='screen',
+        condition=IfCondition(launch.substitutions.NotSubstitution(sim_mode))  # Only launch if NOT in sim mode
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
@@ -259,6 +272,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         motor_cmds_arg,
         homing_arg,
         pub_urdf_arg,
+        sim_arg,  # Add the missing sim argument
         cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,

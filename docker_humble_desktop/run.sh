@@ -44,6 +44,10 @@ docker run -it \
     -e XAUTHORITY=$XAUTH \
     -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
     -e XDG_RUNTIME_DIR=/tmp/runtime-xplore \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    -e LIBGL_ALWAYS_INDIRECT=0 \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \

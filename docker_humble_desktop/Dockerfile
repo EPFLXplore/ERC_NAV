@@ -51,7 +51,8 @@ RUN apt-get install -y --no-install-recommends \
     iproute2 \
     dnsmasq \
     libgtsam-dev \
-    libgtsam-unstable-dev 
+    libgtsam-unstable-dev \
+    mesa-utils
 
 
 # Add USB rules
