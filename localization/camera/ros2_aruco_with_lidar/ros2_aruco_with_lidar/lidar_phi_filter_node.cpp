@@ -32,7 +32,8 @@ public:
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
         tolerance_radius_ = 1.0; 
-        hauteur_z= -1.8;
+        hauteur_z_min= -1.8;
+        hauteur_z_max= 1.5;
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
@@ -167,7 +168,7 @@ private:
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
                 if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+100) <= tolerance_deg_ &&
-                    fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z ) 
+                    fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z_min && p[2]< hauteur_z_max) 
                     { 
                         match = true;
                         // RCLCPP_INFO(this->get_logger(), "Distance lidar - arucotag : %f", fabs(r_point - ranges_local[i])); 
@@ -200,7 +201,8 @@ private:
     // paramètres
     double tolerance_deg_;
     double tolerance_radius_;
-    double hauteur_z;
+    double hauteur_z_min;
+    double hauteur_z_max;
 
     string input_cloud_topic_;
     string output_cloud_topic_;
