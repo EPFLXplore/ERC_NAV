@@ -72,18 +72,10 @@ private:
             det.x0 = x0; det.y0 = y0; det.z0 = z0;
             det.dx = dx; det.dy = dy; det.dz = dz;
             lines.push_back(det);
-            
-            // Extraire les inliers
+
             pcl::ExtractIndices<pcl::PointXYZ> extract;
             extract.setInputCloud(pointcloud_ou_on_va_supprimer_point_petit);
             extract.setIndices(inliers);
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_inliers(new pcl::PointCloud<pcl::PointXYZ>());
-            extract.setNegative(false);
-            extract.filter(*cloud_inliers);
-
-            
-
-            // Retirer les inliers de la copie de travail
             extract.setNegative(true);
             pcl::PointCloud<pcl::PointXYZ>::Ptr remainder(new pcl::PointCloud<pcl::PointXYZ>());
             extract.filter(*remainder);
