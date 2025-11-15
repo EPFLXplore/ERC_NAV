@@ -18,11 +18,18 @@ find_package(rclpy REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(ros2_aruco_interfaces REQUIRED)
+find_package(PCL REQUIRED)
+find_package(pcl_conversions REQUIRED)
 # Add other C++ dependencies here
 
 # C++ executables
 add_executable(lidar_phi_filter_node ros2_aruco_with_lidar/lidar_phi_filter_node.cpp)
+add_executable(detect_cube ros2_aruco_with_lidar/detect_cube.cpp)
+
 ament_target_dependencies(lidar_phi_filter_node rclcpp sensor_msgs ros2_aruco_interfaces)
+ament_target_dependencies(detect_cube rclcpp sensor_msgs ros2_aruco_interfaces PCL pcl_conversions
+)
+
 target_compile_features(lidar_phi_filter_node PUBLIC c_std_99 cxx_std_17)
 
 # Install C++ executables
@@ -31,6 +38,10 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(TARGETS
+  detect_cube
+  DESTINATION lib/${PROJECT_NAME}
+)
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
 
