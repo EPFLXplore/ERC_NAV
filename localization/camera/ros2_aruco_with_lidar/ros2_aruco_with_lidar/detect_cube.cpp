@@ -1,6 +1,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/point.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
@@ -32,6 +34,8 @@ public:
             }
         );
         lines_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
+        markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("detected_lines_markers", qos);
+
         RCLCPP_INFO(this->get_logger(), "initialized detect_cube_node");
 
     }
@@ -43,7 +47,10 @@ private:
             new pcl::PointCloud<pcl::PointXYZ>());
         pcl::fromROSMsg(cloud_msg, *pointcloud_minus_lines);
         sensor_msgs::msg::PointCloud2 cloud_without_lines;
-        
+        pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers(new pcl::PointCloud<pcl::PointXYZ>());
+
+        visualization_msgs::msg::MarkerArray markers;
+
         struct LineDetection {
             float x0, y0, z0;
             float dx, dy, dz; 
@@ -85,26 +92,28 @@ private:
             det.dx = dx; det.dy = dy; det.dz = dz;
             lines.push_back(det);
 
+            // Extraire d'abord tous les inliers de cette ligne
             pcl::ExtractIndices<pcl::PointXYZ> extract;
             extract.setInputCloud(pointcloud_minus_lines);
             extract.setIndices(inliers);
+            extract.setNegative(false);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr detected_lines(new pcl::PointCloud<pcl::PointXYZ>());
+            extract.filter(*detected_lines);
+
+            // Les ajouter au nuage global de lignes
+            *all_inliers += *detected_lines;
+
             extract.setNegative(true);
             pcl::PointCloud<pcl::PointXYZ>::Ptr remainder(new pcl::PointCloud<pcl::PointXYZ>());
             extract.filter(*remainder);
             pointcloud_minus_lines.swap(remainder);
-          
-
-            pcl::ExtractIndices<pcl::PointXYZ> extract_only_lines;
-            extract_only_lines.setInputCloud(pointcloud_minus_lines);
-            extract_only_lines.setIndices(inliers);
-            extract_only_lines.setNegative(false);
-            pcl::PointCloud<pcl::PointXYZ>::Ptr detected_lines(new pcl::PointCloud<pcl::PointXYZ>());
-            extract_only_lines.filter(*detected_lines);
-            toROSMsg(*(detected_lines), cloud_without_lines);
-            lines_pub_->publish(cloud_without_lines);
 
 
         }
+        sensor_msgs::msg::PointCloud2 cloud_with_all_lines;
+        pcl::toROSMsg(*all_inliers, cloud_with_all_lines);
+        cloud_with_all_lines.header = cloud_msg.header;
+        lines_pub_->publish(cloud_with_all_lines);
 
         if (!lines.empty()) {
             for (size_t i = 0; i < lines.size(); ++i) {
@@ -133,6 +142,8 @@ private:
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscriber_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lines_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
+
 };
 
 int main(int argc, char **argv) {
