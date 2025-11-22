@@ -4,7 +4,7 @@
 # ROS 2 Humble
 source /opt/ros/humble/setup.bash
 
-# Gazebo environment
+# # Gazebo environment
 source /usr/share/gazebo/setup.sh
 
 # OpenGL / GPU
