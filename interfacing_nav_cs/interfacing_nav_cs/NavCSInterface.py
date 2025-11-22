@@ -28,7 +28,7 @@ from rclpy.node import Node
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
                        QoSReliabilityPolicy)
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Float32, String, Bool
+from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import SetBool
 
 # Custom message imports
@@ -267,12 +267,12 @@ class NavCSInterface(Node):
             callback_group=group2
         )
 
-        # Screenshot service (subscription for trigger)
-        self.screenshot_srv = self.create_subscription(
+        # Screenshot topic subscriber (CS publishes Bool messages to trigger)
+        self.screenshot_sub = self.create_subscription(
             Bool,
             '/NAV/ScreenshotAllCameras',
             self.handle_screenshot,
-            qos_profile=self.qos_profile
+            1
         )
 
         # Camera control clients
