@@ -1,10 +1,22 @@
 """
 INTERFACING NAV-CS 2024
 -----------------------
-Author: Giovanni Ranieri
-Year: 2024
+Initial Author: Giovanni Ranieri
+Modifying Author: Arno Laurie
+Year: 2025
 Description: Node handling service requests from the CS to change the mode of navigation.
              Going from Off or Manual to Auto enables nav2 stack and deactivates it otherwise.
+
+
+What this file does:
+- Gamepad forwarding to nav
+- Front servo angle publisher
+- speed change subscriber and publisher
+- subscribes to all info from nav and publishes it as a single summarizing message at 2hz
+- camera rgb activation service clients
+- camera depth activation service clients
+- camera screenshot topic subscribing
+
 """
 
 # Standard library imports
