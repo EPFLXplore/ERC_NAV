@@ -141,7 +141,7 @@ class NavCSInterface(Node):
         # ====================================================================
         # Camera Servo Control
         # ====================================================================
-        self.cam_cmd_pub = self.create_publisher(
+        self.front_cam_servo_pub = self.create_publisher(
             ServoRequest, 
             self.el_names["SERVO_REQ_TOPIC"], 
             1
@@ -189,6 +189,8 @@ class NavCSInterface(Node):
         # Hardware constants (for motor calculations)
         self.wheels_radius = 0.1325  # meters
         self.gear_ratio = 1.0 / 53.0
+        self.min_rover_speed = 0.5
+        self.max_rover_speed = 2.0
 
         # ====================================================================
         # Full State Publishing
@@ -409,13 +411,13 @@ class NavCSInterface(Node):
         Validates speed is within safe operating range before forwarding.
         
         Args:
-            msg: Float32 message with speed value [0.5, 2.31]
+            msg: Float32 message with safe speed value
         """
         # Validate speed range
-        if msg.data <= 0.5 or msg.data >= 2.31:
-            self.get_logger().warning(f"Speed {msg.data} out of range [0.5, 2.31]")
+        if msg.data <= self.min_rover_speed or msg.data >= self.max_rover_speed:
+            self.get_logger().warning(f"Speed {msg.data} out of range [{self.min_rover_speed}, {self.max_rover_speed}]")
             return
-        
+
         self.get_logger().info(f"Speed change requested: {msg.data}")
         self.speed_pub.publish(msg)
 
@@ -449,11 +451,11 @@ class NavCSInterface(Node):
         
         if increase == 1:
             angle.increment = 20
-            self.cam_cmd_pub.publish(angle)
+            self.front_cam_servo_pub.publish(angle)
             self.last_increment = 1
         elif decrease == 1:
             angle.increment = -20
-            self.cam_cmd_pub.publish(angle)
+            self.front_cam_servo_pub.publish(angle)
             self.last_increment = 1
 
     # ========================================================================
