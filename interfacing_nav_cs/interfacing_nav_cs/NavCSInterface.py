@@ -68,6 +68,93 @@ MODE_TO_CS = {
     "Auto": 3
 }
 
+# Configuration file paths
+CONFIG_BASE_PATH = '/home/xplore/dev_ws/src/custom_msg/config'
+NAV_CONFIG_FILE = f'{CONFIG_BASE_PATH}/nav_interface_names.yaml'
+ROVER_CONFIG_FILE = f'{CONFIG_BASE_PATH}/rover_interface_names.yaml'
+EL_CONFIG_FILE = f'{CONFIG_BASE_PATH}/el_interface_names.yaml'
+CS_CONFIG_FILE = f'{CONFIG_BASE_PATH}/cs_interface_names.yaml'
+
+# Topic names
+CS_GAMEPAD_TOPIC = '/CS/GamepadCmdsNav'
+NAV_STATE_TOPIC = '/NAV/State'
+CAMERA_MODE_SERVICE = '/NAV/ChangeModeCamera'
+RGBD_MODE_SERVICE = '/NAV/ChangeModeRGB'
+SCREENSHOT_TOPIC = '/NAV/ScreenshotAllCameras'
+
+# Camera service names
+CAMERA_NAV_0_SERVICE = '/NAV/req_camera_nav_0'
+CAMERA_NAV_1_SERVICE = '/NAV/req_camera_nav_1'
+CAMERA_NAV_2_SERVICE = '/NAV/req_camera_nav_2'
+RGBD_DEPTH_SERVICE = '/NAV/depth_req_camera_nav_0'
+SCREENSHOT_SERVICE = '/NAV/screenshot_camera_nav_0'
+
+# Camera status topics
+CAMERA_0_STATUS_TOPIC = '/NAV/status_camera_nav_0'
+CAMERA_1_STATUS_TOPIC = '/NAV/status_camera_nav_1'
+CAMERA_2_STATUS_TOPIC = '/NAV/status_camera_nav_2'
+DEPTH_STATUS_TOPIC = '/NAV/state_depth_camera_nav_0'
+
+# Camera identifiers
+CAMERA_NAV_0 = 'camera_nav_0'
+CAMERA_NAV_1 = 'camera_nav_1'
+CAMERA_NAV_2 = 'camera_nav_2'
+
+# Camera display names
+CAMERA_FRONT = 'Front'
+CAMERA_UP1 = 'Up1'
+CAMERA_UP2 = 'Up2'
+
+# Motor lifecycle service paths
+MOTOR_CHANGE_STATE_SERVICE = '/NAV_motor_cmds/change_state'
+MOTOR_GET_STATE_SERVICE = '/NAV_motor_cmds/get_state'
+
+# Hardware constants
+WHEELS_RADIUS_M = 0.1325  # meters
+GEAR_RATIO = 1.0 / 53.0
+MIN_ROVER_SPEED_MS = 0.5  # m/s
+MAX_ROVER_SPEED_MS = 2.0  # m/s
+
+# Motor conversion constants
+PI = 3.1415
+ENCODER_COUNTS_PER_REV = 65536
+DEGREES_PER_CIRCLE = 360
+SECONDS_PER_MINUTE = 60.0
+
+# Motor indices (for MotorStatus arrays)
+MOTOR_DRIVE_FL = 0  # Front Left Drive
+MOTOR_DRIVE_FR = 1  # Front Right Drive
+MOTOR_DRIVE_RR = 2  # Rear Right Drive
+MOTOR_DRIVE_RL = 3  # Rear Left Drive
+MOTOR_STEER_FL = 4  # Front Left Steer
+MOTOR_STEER_FR = 5  # Front Right Steer
+MOTOR_STEER_RR = 6  # Rear Right Steer
+MOTOR_STEER_RL = 7  # Rear Left Steer
+
+# Gamepad button indices
+GAMEPAD_NAV_SELECT_BUTTON = 0  # Button to confirm gamepad is for NAV
+GAMEPAD_CAMERA_UP_BUTTON = 2   # Button to tilt camera up
+GAMEPAD_CAMERA_DOWN_BUTTON = 3 # Button to tilt camera down
+
+# Camera servo settings
+CAMERA_SERVO_ID = 1
+CAMERA_SERVO_INCREMENT_DEG = 20
+
+# Timer periods (seconds)
+FULL_STATE_PUBLISH_PERIOD = 2.0
+MODE_PUBLISH_PERIOD = 2.0
+MOTOR_HEALTH_CHECK_PERIOD = 2.0
+
+# QoS settings
+QOS_DEPTH = 1
+
+# Service response codes
+SERVICE_SUCCESS = 0
+SERVICE_ERROR = 1
+
+# Transition timing
+TRANSITION_WAIT_TIME = 1  # seconds
+
 
 # ============================================================================
 # Main Node Class
@@ -91,10 +178,10 @@ class NavCSInterface(Node):
         # ====================================================================
         # Load Configuration Files
         # ====================================================================
-        self.nav_names = self._load_config('/home/xplore/dev_ws/src/custom_msg/config/nav_interface_names.yaml')
-        self.rover_names = self._load_config('/home/xplore/dev_ws/src/custom_msg/config/rover_interface_names.yaml')
-        self.el_names = self._load_config('/home/xplore/dev_ws/src/custom_msg/config/el_interface_names.yaml')
-        self.cs_names = self._load_config('/home/xplore/dev_ws/src/custom_msg/config/cs_interface_names.yaml')
+        self.nav_names = self._load_config(NAV_CONFIG_FILE)
+        self.rover_names = self._load_config(ROVER_CONFIG_FILE)
+        self.el_names = self._load_config(EL_CONFIG_FILE)
+        self.cs_names = self._load_config(CS_CONFIG_FILE)
 
         # ====================================================================
         # State Variables
@@ -117,7 +204,7 @@ class NavCSInterface(Node):
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.VOLATILE,
             history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=QOS_DEPTH,
         )
 
         # ====================================================================
@@ -126,7 +213,7 @@ class NavCSInterface(Node):
         # Subscribe to gamepad commands from CS
         self.gamepad_sub = self.create_subscription(
             Joy,
-            '/CS/GamepadCmdsNav',
+            CS_GAMEPAD_TOPIC,
             self.handle_gamepad,
             qos_profile=self.qos_profile
         )
@@ -144,7 +231,7 @@ class NavCSInterface(Node):
         self.front_cam_servo_pub = self.create_publisher(
             ServoRequest, 
             self.el_names["SERVO_REQ_TOPIC"], 
-            1
+            QOS_DEPTH
         )
 
         # ====================================================================
@@ -155,14 +242,14 @@ class NavCSInterface(Node):
             Float32,
             self.cs_names['cs_pubsub_speed_rover'],
             self.handle_speed_change,
-            10
+            QOS_DEPTH
         )
 
         # Forward speed commands to motor controller
         self.speed_pub = self.create_publisher(
             Float32,
             self.rover_names["rover_change_nav_speed"],
-            1
+            QOS_DEPTH
         )
 
         # ====================================================================
@@ -187,10 +274,10 @@ class NavCSInterface(Node):
         }
 
         # Hardware constants (for motor calculations)
-        self.wheels_radius = 0.1325  # meters
-        self.gear_ratio = 1.0 / 53.0
-        self.min_rover_speed = 0.5
-        self.max_rover_speed = 2.0
+        self.wheels_radius = WHEELS_RADIUS_M
+        self.gear_ratio = GEAR_RATIO
+        self.min_rover_speed = MIN_ROVER_SPEED_MS
+        self.max_rover_speed = MAX_ROVER_SPEED_MS
 
         # ====================================================================
         # Full State Publishing
@@ -198,10 +285,10 @@ class NavCSInterface(Node):
         # Publish comprehensive state for CS (replaces ROVER aggregation)
         self.state_publisher = self.create_publisher(
             String, 
-            '/NAV/State', 
+            NAV_STATE_TOPIC, 
             qos_profile=self.qos_profile
         )
-        self.timer_full_state = self.create_timer(2.0, self.publish_full_state)
+        self.timer_full_state = self.create_timer(FULL_STATE_PUBLISH_PERIOD, self.publish_full_state)
 
         # Initialize full state dictionary
         self.nav_full_state = {
@@ -241,25 +328,25 @@ class NavCSInterface(Node):
         self.mode_publisher = self.create_publisher(
             String, 
             self.nav_names['system_status'], 
-            1
+            QOS_DEPTH
         )
-        self.timer_mode = self.create_timer(2.0, self.pub_state)
+        self.timer_mode = self.create_timer(MODE_PUBLISH_PERIOD, self.pub_state)
 
         # ====================================================================
         # Motor Lifecycle Management
         # ====================================================================
         # Timer to check motor health
-        self.check_motor_health = self.create_timer(2.0, self.get_state_motor_control)
+        self.check_motor_health = self.create_timer(MOTOR_HEALTH_CHECK_PERIOD, self.get_state_motor_control)
         
         # Service clients for motor lifecycle control
         self.motor_change_service = self.create_client(
             ChangeState, 
-            '/NAV_motor_cmds/change_state', 
+            MOTOR_CHANGE_STATE_SERVICE, 
             callback_group=group2
         )
         self.motor_check_service = self.create_client(
             GetState, 
-            '/NAV_motor_cmds/get_state'
+            MOTOR_GET_STATE_SERVICE
         )
         
         # ====================================================================
@@ -268,7 +355,7 @@ class NavCSInterface(Node):
         # Camera mode change service
         self.camera_mode_srv = self.create_service(
             ChangeModeCamera,
-            '/NAV/ChangeModeCamera',
+            CAMERA_MODE_SERVICE,
             self.handle_camera_mode_change,
             callback_group=group2
         )
@@ -276,7 +363,7 @@ class NavCSInterface(Node):
         # RGBD depth mode service
         self.rgbd_mode_srv = self.create_service(
             SetBool,
-            '/NAV/ChangeModeRGB',
+            RGBD_MODE_SERVICE,
             self.handle_rgbd_mode,
             callback_group=group2
         )
@@ -284,39 +371,39 @@ class NavCSInterface(Node):
         # Screenshot topic subscriber (CS publishes Bool messages to trigger)
         self.screenshot_sub = self.create_subscription(
             Bool,
-            '/NAV/ScreenshotAllCameras',
+            SCREENSHOT_TOPIC,
             self.handle_screenshot,
-            1
+            QOS_DEPTH
         )
 
         # Camera control clients
-        self.camera_nav_0 = self.create_client(SetBool, '/NAV/req_camera_nav_0')
-        self.camera_nav_1 = self.create_client(SetBool, '/NAV/req_camera_nav_1')
-        self.camera_nav_2 = self.create_client(SetBool, '/NAV/req_camera_nav_2')
+        self.camera_nav_0 = self.create_client(SetBool, CAMERA_NAV_0_SERVICE)
+        self.camera_nav_1 = self.create_client(SetBool, CAMERA_NAV_1_SERVICE)
+        self.camera_nav_2 = self.create_client(SetBool, CAMERA_NAV_2_SERVICE)
         
         # RGBD and screenshot clients
-        self.rgbd_client = self.create_client(SetBool, '/NAV/depth_req_camera_nav_0')
-        self.screenshot_client = self.create_client(SetBool, '/NAV/screenshot_camera_nav_0')
+        self.rgbd_client = self.create_client(SetBool, RGBD_DEPTH_SERVICE)
+        self.screenshot_client = self.create_client(SetBool, SCREENSHOT_SERVICE)
         # ====================================================================
         # Camera Status Monitoring
         # ====================================================================
         # Initialize camera state tracking
         self.camera_states = {
-            "Front": {
-                "name": "camera_nav_0",
+            CAMERA_FRONT: {
+                "name": CAMERA_NAV_0,
                 "status": False,
                 "node": False,
                 "data_rate": "0",
                 "depth": False
             },
-            "Up1": {
-                "name": "camera_nav_1", 
+            CAMERA_UP1: {
+                "name": CAMERA_NAV_1, 
                 "status": False,
                 "node": False,
                 "data_rate": "0"
             },
-            "Up2": {
-                "name": "camera_nav_2",
+            CAMERA_UP2: {
+                "name": CAMERA_NAV_2,
                 "status": False,
                 "node": False,
                 "data_rate": "0"
@@ -327,31 +414,31 @@ class NavCSInterface(Node):
         # You'll need to create these topics in your camera nodes
         self.camera_0_status_sub = self.create_subscription(
             Bool,
-            '/NAV/status_camera_nav_0',
-            lambda msg: self.update_camera_status("Front", msg.data),
-            1
+            CAMERA_0_STATUS_TOPIC,
+            lambda msg: self.update_camera_status(CAMERA_FRONT, msg.data),
+            QOS_DEPTH
         )
 
         self.camera_1_status_sub = self.create_subscription(
             Bool,
-            '/NAV/status_camera_nav_1',
-            lambda msg: self.update_camera_status("Up1", msg.data),
-            1
+            CAMERA_1_STATUS_TOPIC,
+            lambda msg: self.update_camera_status(CAMERA_UP1, msg.data),
+            QOS_DEPTH
         )
 
         self.camera_2_status_sub = self.create_subscription(
             Bool,
-            '/NAV/status_camera_nav_2',
-            lambda msg: self.update_camera_status("Up2", msg.data),
-            1
+            CAMERA_2_STATUS_TOPIC,
+            lambda msg: self.update_camera_status(CAMERA_UP2, msg.data),
+            QOS_DEPTH
         )
 
         # Subscribe to RGBD depth status
         self.depth_status_sub = self.create_subscription(
             Bool,
-            '/NAV/state_depth_camera_nav_0',
-            lambda msg: self.update_depth_status("Front", msg.data),
-            1
+            DEPTH_STATUS_TOPIC,
+            lambda msg: self.update_depth_status(CAMERA_FRONT, msg.data),
+            QOS_DEPTH
         )
 
 
@@ -387,22 +474,22 @@ class NavCSInterface(Node):
 
         # Map frontend camera names (enum values) to actual topic names
         camera_name_map = {
-            'Front': 'camera_nav_0',
-            'Up1': 'camera_nav_1',
-            'Up2': 'camera_nav_2',
+            CAMERA_FRONT: CAMERA_NAV_0,
+            CAMERA_UP1: CAMERA_NAV_1,
+            CAMERA_UP2: CAMERA_NAV_2,
             # Also support direct topic names for backwards compatibility
-            'camera_nav_0': 'camera_nav_0',
-            'camera_nav_1': 'camera_nav_1',
-            'camera_nav_2': 'camera_nav_2',
+            CAMERA_NAV_0: CAMERA_NAV_0,
+            CAMERA_NAV_1: CAMERA_NAV_1,
+            CAMERA_NAV_2: CAMERA_NAV_2,
         }
         # Translate frontend name to topic name
         topic_camera_name = camera_name_map.get(camera_name, camera_name)
         
         # Map camera names to clients
         camera_clients = {
-            'camera_nav_0': self.camera_nav_0,
-            'camera_nav_1': self.camera_nav_1,
-            'camera_nav_2': self.camera_nav_2,
+            CAMERA_NAV_0: self.camera_nav_0,
+            CAMERA_NAV_1: self.camera_nav_1,
+            CAMERA_NAV_2: self.camera_nav_2,
         }
         
         if topic_camera_name in camera_clients:
@@ -413,10 +500,10 @@ class NavCSInterface(Node):
             if camera_name in self.camera_states:
                 self.camera_states[camera_name]["status"] = activate
             
-            response.error_type = 0
+            response.error_type = SERVICE_SUCCESS
             response.error_message = f"Camera {camera_name} command sent"
         else:
-            response.error_type = 1
+            response.error_type = SERVICE_ERROR
             response.error_message = f"Unknown camera: {camera_name}"
         
         return response
@@ -472,7 +559,7 @@ class NavCSInterface(Node):
             msg: Joy message from CS with axes and buttons
         """
         # Security check: verify message is for navigation
-        if int(msg.buttons[0]) != 1:
+        if int(msg.buttons[GAMEPAD_NAV_SELECT_BUTTON]) != 1:
             return
         
         # Only forward if in manual mode (Ackermann or Omni)
@@ -518,8 +605,8 @@ class NavCSInterface(Node):
             msg: Joy message with button states
         """
         # Arrow up/down buttons
-        increase = msg.buttons[2]  # +1
-        decrease = msg.buttons[3]  # -1
+        increase = msg.buttons[GAMEPAD_CAMERA_UP_BUTTON]  # +1
+        decrease = msg.buttons[GAMEPAD_CAMERA_DOWN_BUTTON]  # -1
         
         # Reset debounce state when buttons released
         if increase == 0 and decrease == 0:
@@ -532,15 +619,15 @@ class NavCSInterface(Node):
         
         # Create servo request
         angle = ServoRequest()
-        angle.id = 1
+        angle.id = CAMERA_SERVO_ID
         angle.zero_in = False
         
         if increase == 1:
-            angle.increment = 20
+            angle.increment = CAMERA_SERVO_INCREMENT_DEG
             self.front_cam_servo_pub.publish(angle)
             self.last_increment = 1
         elif decrease == 1:
-            angle.increment = -20
+            angle.increment = -CAMERA_SERVO_INCREMENT_DEG
             self.front_cam_servo_pub.publish(angle)
             self.last_increment = 1
 
@@ -571,55 +658,55 @@ class NavCSInterface(Node):
             return
         
         # Conversion factor: RPS to m/s
-        rps_to_ms = 2 * 3.1415 * self.wheels_radius / 60.0
+        rps_to_ms = 2 * PI * self.wheels_radius / SECONDS_PER_MINUTE
         
         # Extract data per wheel
         # Front Left (drive=0, steer=4)
         self.motor_data['wheels']['front_left'] = {
-            'current_driving': abs(msg.average_current[0]),
-            'current_steering': abs(msg.average_current[4]),
-            'speed': abs(round(msg.velocity[0] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[0]) / 65536 * 360),
-            'driving_motor_state': msg.state[0],
-            'steering_motor_state': msg.state[4],
-            'driving_fault': msg.fault_state[0],
-            'steering_fault': msg.fault_state[4]
+            'current_driving': abs(msg.average_current[MOTOR_DRIVE_FL]),
+            'current_steering': abs(msg.average_current[MOTOR_STEER_FL]),
+            'speed': abs(round(msg.velocity[MOTOR_DRIVE_FL] * rps_to_ms * self.gear_ratio, 1)),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FL]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'driving_motor_state': msg.state[MOTOR_DRIVE_FL],
+            'steering_motor_state': msg.state[MOTOR_STEER_FL],
+            'driving_fault': msg.fault_state[MOTOR_DRIVE_FL],
+            'steering_fault': msg.fault_state[MOTOR_STEER_FL]
         }
 
         # Front Right (drive=1, steer=5)
         self.motor_data['wheels']['front_right'] = {
-            'current_driving': abs(msg.average_current[1]),
-            'current_steering': abs(msg.average_current[5]),
-            'speed': abs(round(msg.velocity[1] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[1]) / 65536 * 360),
-            'driving_motor_state': msg.state[1],
-            'steering_motor_state': msg.state[5],
-            'driving_fault': msg.fault_state[1],
-            'steering_fault': msg.fault_state[5]
+            'current_driving': abs(msg.average_current[MOTOR_DRIVE_FR]),
+            'current_steering': abs(msg.average_current[MOTOR_STEER_FR]),
+            'speed': abs(round(msg.velocity[MOTOR_DRIVE_FR] * rps_to_ms * self.gear_ratio, 1)),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FR]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'driving_motor_state': msg.state[MOTOR_DRIVE_FR],
+            'steering_motor_state': msg.state[MOTOR_STEER_FR],
+            'driving_fault': msg.fault_state[MOTOR_DRIVE_FR],
+            'steering_fault': msg.fault_state[MOTOR_STEER_FR]
         }
 
         # Rear right (drive=2, steer=6)
         self.motor_data['wheels']['rear_right'] = {
-            'current_driving': abs(msg.average_current[2]),
-            'current_steering': abs(msg.average_current[6]),
-            'speed': abs(round(msg.velocity[2] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[2]) / 65536 * 360),
-            'driving_motor_state': msg.state[2],
-            'steering_motor_state': msg.state[6],
-            'driving_fault': msg.fault_state[2],
-            'steering_fault': msg.fault_state[6]
+            'current_driving': abs(msg.average_current[MOTOR_DRIVE_RR]),
+            'current_steering': abs(msg.average_current[MOTOR_STEER_RR]),
+            'speed': abs(round(msg.velocity[MOTOR_DRIVE_RR] * rps_to_ms * self.gear_ratio, 1)),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RR]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'driving_motor_state': msg.state[MOTOR_DRIVE_RR],
+            'steering_motor_state': msg.state[MOTOR_STEER_RR],
+            'driving_fault': msg.fault_state[MOTOR_DRIVE_RR],
+            'steering_fault': msg.fault_state[MOTOR_STEER_RR]
         }
 
         # Rear left (drive=3, steer=7)
         self.motor_data['wheels']['rear_left'] = {
-            'current_driving': abs(msg.average_current[3]),
-            'current_steering': abs(msg.average_current[7]),
-            'speed': abs(round(msg.velocity[3] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[3]) / 65536 * 360),
-            'driving_motor_state': msg.state[3],
-            'steering_motor_state': msg.state[7],
-            'driving_fault': msg.fault_state[3],
-            'steering_fault': msg.fault_state[7]
+            'current_driving': abs(msg.average_current[MOTOR_DRIVE_RL]),
+            'current_steering': abs(msg.average_current[MOTOR_STEER_RL]),
+            'speed': abs(round(msg.velocity[MOTOR_DRIVE_RL] * rps_to_ms * self.gear_ratio, 1)),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RL]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'driving_motor_state': msg.state[MOTOR_DRIVE_RL],
+            'steering_motor_state': msg.state[MOTOR_STEER_RL],
+            'driving_fault': msg.fault_state[MOTOR_DRIVE_RL],
+            'steering_fault': msg.fault_state[MOTOR_STEER_RL]
         }
 
     # ========================================================================
@@ -715,7 +802,7 @@ class NavCSInterface(Node):
         # Check if already in requested mode
         if self.mode == MODE[mode]:
             response.new_mode = mode
-            response.error_type = 1
+            response.error_type = SERVICE_ERROR
             response.error_message = "already in that state"
             return response
 
@@ -735,13 +822,13 @@ class NavCSInterface(Node):
             
             # Wait for transition to complete
             while self.transitioning_state:
-                time.sleep(1)
+                time.sleep(TRANSITION_WAIT_TIME)
 
             return response 
         
         # Case 2: Change between manual modes (no lifecycle change needed)
         if self.mode != "Off" and MODE[mode] != 'Off':
-            self.change_mode(mode, 0, response, "no errors")
+            self.change_mode(mode, SERVICE_SUCCESS, response, "no errors")
             return response 
 
         # Case 3: Transition to Off mode from any active state
@@ -761,7 +848,7 @@ class NavCSInterface(Node):
             
             # Wait for transition to complete
             while self.transitioning_state:
-                time.sleep(1)
+                time.sleep(TRANSITION_WAIT_TIME)
 
             return response
 
@@ -840,10 +927,10 @@ class NavCSInterface(Node):
         """
         if future.result().success:
             self.state_motor_control = next_state
-            self.change_mode(mode, 0, response, message_response)
+            self.change_mode(mode, SERVICE_SUCCESS, response, message_response)
             self.get_logger().info(message_response)
         else:
-            self.change_mode(MODE_TO_CS[self.mode], 1, response, "NAV lifecycle change state failed")
+            self.change_mode(MODE_TO_CS[self.mode], SERVICE_ERROR, response, "NAV lifecycle change state failed")
             self.get_logger().error("NAV lifecycle change state failed")
         
         self.transitioning_state = False
