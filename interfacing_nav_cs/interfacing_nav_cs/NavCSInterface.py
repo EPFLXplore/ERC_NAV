@@ -242,14 +242,14 @@ class NavCSInterface(Node):
             Float32,
             self.cs_names['cs_pubsub_speed_rover'],
             self.handle_speed_change,
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
         # Forward speed commands to motor controller
         self.speed_pub = self.create_publisher(
             Float32,
             self.rover_names["rover_change_nav_speed"],
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
         # ====================================================================
@@ -416,21 +416,21 @@ class NavCSInterface(Node):
             Bool,
             CAMERA_0_STATUS_TOPIC,
             lambda msg: self.update_camera_status(CAMERA_FRONT, msg.data),
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
         self.camera_1_status_sub = self.create_subscription(
             Bool,
             CAMERA_1_STATUS_TOPIC,
             lambda msg: self.update_camera_status(CAMERA_UP1, msg.data),
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
         self.camera_2_status_sub = self.create_subscription(
             Bool,
             CAMERA_2_STATUS_TOPIC,
             lambda msg: self.update_camera_status(CAMERA_UP2, msg.data),
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
         # Subscribe to RGBD depth status
@@ -438,7 +438,7 @@ class NavCSInterface(Node):
             Bool,
             DEPTH_STATUS_TOPIC,
             lambda msg: self.update_depth_status(CAMERA_FRONT, msg.data),
-            QOS_DEPTH
+            qos_profile=self.qos_profile
         )
 
 
