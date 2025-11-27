@@ -122,7 +122,7 @@ private:
             selected_angles_aruco_deg_[i] = best_ang[i];
 
             selected_ranges_[i] = best_rng[i];
-            RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", i);
+            // RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", i);
 
 
         }
