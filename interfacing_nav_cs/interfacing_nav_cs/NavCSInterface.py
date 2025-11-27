@@ -297,6 +297,63 @@ class NavCSInterface(Node):
         # RGBD and screenshot clients
         self.rgbd_client = self.create_client(SetBool, '/NAV/depth_req_camera_nav_0')
         self.screenshot_client = self.create_client(SetBool, '/NAV/screenshot_camera_nav_0')
+        # ====================================================================
+        # Camera Status Monitoring
+        # ====================================================================
+        # Initialize camera state tracking
+        self.camera_states = {
+            "Front": {
+                "name": "camera_nav_0",
+                "status": False,
+                "node": False,
+                "data_rate": "0",
+                "depth": False
+            },
+            "Up1": {
+                "name": "camera_nav_1", 
+                "status": False,
+                "node": False,
+                "data_rate": "0"
+            },
+            "Up2": {
+                "name": "camera_nav_2",
+                "status": False,
+                "node": False,
+                "data_rate": "0"
+            }
+        }
+
+        # Subscribe to camera status topics (if they exist)
+        # You'll need to create these topics in your camera nodes
+        self.camera_0_status_sub = self.create_subscription(
+            Bool,
+            '/NAV/status_camera_nav_0',
+            lambda msg: self.update_camera_status("Front", msg.data),
+            1
+        )
+
+        self.camera_1_status_sub = self.create_subscription(
+            Bool,
+            '/NAV/status_camera_nav_1',
+            lambda msg: self.update_camera_status("Up1", msg.data),
+            1
+        )
+
+        self.camera_2_status_sub = self.create_subscription(
+            Bool,
+            '/NAV/status_camera_nav_2',
+            lambda msg: self.update_camera_status("Up2", msg.data),
+            1
+        )
+
+        # Subscribe to RGBD depth status
+        self.depth_status_sub = self.create_subscription(
+            Bool,
+            '/NAV/state_depth_camera_nav_0',
+            lambda msg: self.update_depth_status("Front", msg.data),
+            1
+        )
+
 
     # ========================================================================
     # Utility Methods
@@ -327,6 +384,19 @@ class NavCSInterface(Node):
         """
         camera_name = request.camera_name
         activate = request.activate
+
+        # Map frontend camera names (enum values) to actual topic names
+        camera_name_map = {
+            'Front': 'camera_nav_0',
+            'Up1': 'camera_nav_1',
+            'Up2': 'camera_nav_2',
+            # Also support direct topic names for backwards compatibility
+            'camera_nav_0': 'camera_nav_0',
+            'camera_nav_1': 'camera_nav_1',
+            'camera_nav_2': 'camera_nav_2',
+        }
+        # Translate frontend name to topic name
+        topic_camera_name = camera_name_map.get(camera_name, camera_name)
         
         # Map camera names to clients
         camera_clients = {
@@ -335,9 +405,14 @@ class NavCSInterface(Node):
             'camera_nav_2': self.camera_nav_2,
         }
         
-        if camera_name in camera_clients:
+        if topic_camera_name in camera_clients:
             req = SetBool.Request(data=activate)
-            future = camera_clients[camera_name].call_async(req)
+            future = camera_clients[topic_camera_name].call_async(req)
+            
+            # Update local camera state
+            if camera_name in self.camera_states:
+                self.camera_states[camera_name]["status"] = activate
+            
             response.error_type = 0
             response.error_message = f"Camera {camera_name} command sent"
         else:
@@ -368,6 +443,17 @@ class NavCSInterface(Node):
         """
         if msg.data:
             self.screenshot_client.call_async(SetBool.Request(data=True))
+
+    def update_camera_status(self, camera_name, is_active):
+        """Update camera status when camera publishes state."""
+        if camera_name in self.camera_states:
+            self.camera_states[camera_name]["status"] = is_active
+            self.camera_states[camera_name]["node"] = True  # Node is running if we're receiving messages
+
+    def update_depth_status(self, camera_name, depth_active):
+        """Update RGBD depth mode status."""
+        if camera_name in self.camera_states:
+            self.camera_states[camera_name]["depth"] = depth_active
 
     # ========================================================================
     # Gamepad and Manual Control Handlers
@@ -562,6 +648,9 @@ class NavCSInterface(Node):
         
         # Update active nodes (check which NAV nodes are running)
         self.nav_full_state["software"]["nodes"] = self.check_nav_nodes()
+
+        # Update camera states
+        self.nav_full_state["cameras"] = self.camera_states
         
         # Publish as JSON string
         msg = String()
