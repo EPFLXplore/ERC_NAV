@@ -68,6 +68,10 @@ MODE_TO_CS = {
     "Auto": 3
 }
 
+#Nav EKF Topic (pose in the map frame)
+from nav_msgs.msg import Odometry
+NAV_POSE_TOPIC = "fused_nav_ekf_odom"
+
 # Configuration file paths
 CONFIG_BASE_PATH = '/home/xplore/dev_ws/src/custom_msg/config'
 NAV_CONFIG_FILE = f'{CONFIG_BASE_PATH}/nav_interface_names.yaml'
@@ -222,6 +226,16 @@ class NavCSInterface(Node):
         self.gamepad_pub = self.create_publisher(
             Joy,
             self.rover_names['rover_pubsub_nav_gamepad'],
+            qos_profile=self.qos_profile
+        )
+        # ====================================================================
+        # Navigation Localization
+        # ====================================================================
+        # Subscribe to EKF output for localization data
+        self.localization_sub = self.create_subscription(
+            Odometry,
+            NAV_POSE_TOPIC,
+            self.handle_localization,
             qos_profile=self.qos_profile
         )
 
@@ -456,6 +470,21 @@ class NavCSInterface(Node):
         m = String()
         m.data = self.mode
         self.mode_publisher.publish(m)
+
+
+
+    # ========================================================================
+    # Localization Handler
+    # ========================================================================
+    def handle_localization(self, msg):
+        """
+        Update localization data from EKF odometry message.
+        
+        Args:
+            msg: Odometry message with position data
+        """
+        self.nav_full_state["localization"]["position"]["x"] = msg.pose.pose.position.x
+        self.nav_full_state["localization"]["position"]["y"] = msg.pose.pose.position.y
 
     # ========================================================================
     # Camera Management Handlers
