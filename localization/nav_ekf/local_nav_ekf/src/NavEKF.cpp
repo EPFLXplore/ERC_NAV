@@ -656,7 +656,7 @@ private:
     tf2::Matrix3x3 rot_mat_avged = tf2::Matrix3x3(q);
 
     double vzw = rot_mat_avged[2][0]*ekf_-> x(IDX_VX) + rot_mat_avged[2][1]*ekf_-> x(IDX_VY); 
-    ekf_ -> z_int += vzw * dt;
+    ekf_->z_int += vzw * dt;
   }
 
   double calculate_moving_avg_val(std::vector<double> &vect, const double val){

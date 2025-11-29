@@ -219,9 +219,11 @@ public:
 
                 if(current_faulty_motors[id-1] == true){
                     bool cleared_fault = motor->clear_fault();
+                    bool reset_successful = motor->reset_device();
                     if (error_code != 0){
                         RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id-1);
                     }else{
+                        RCLCPP_INFO(get_logger(), "SUCCESS RESET FAULT for motor %d", id-1);
                         current_faulty_motors[id-1] = false;
                     }
                 }

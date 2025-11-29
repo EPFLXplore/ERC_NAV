@@ -79,6 +79,8 @@ public:
      *          if the motor is not yet in the correct mode, this function
      *          automatically sets the controller into the right mode
      */
+
+    bool reset_device();
     bool set_position_ref(long pos);
 
     /* reset_position_counter
