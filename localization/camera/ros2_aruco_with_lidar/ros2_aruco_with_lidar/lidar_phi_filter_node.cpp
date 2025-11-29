@@ -30,8 +30,10 @@ class LidarPhiFilterNode : public rclcpp::Node {
 public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node") {
         // Valeurs par défaut (sans déclaration de paramètres)
-        tolerance_deg_ = 15.0;
-        tolerance_radius_ = 0.5; 
+        tolerance_deg_ = 15;
+        tolerance_radius_ = 1.0; 
+        hauteur_z_min= -1.8;
+        hauteur_z_max= 1.5;
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
@@ -73,28 +75,39 @@ private:
     }
     void detect_3_best_camera(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
         size_t n = msg->ar_angles_list.size();
-        if (msg->landmark_map_pos_x.size() < n) n = msg->landmark_map_pos_x.size();
-        if (msg->landmark_map_pos_y.size() < n) n = msg->landmark_map_pos_y.size();
+        //if (msg->poses.size() < n) n = msg->poses.size();
+        RCLCPP_INFO(this->get_logger(), "n : %f", n);
 
         const double INF = 1e10;
         double best_ang[3] = {0.0, 0.0, 0.0};
+        double z_aruco[3] = {0.0, 0.0, 0.0};
+
         double best_rng[3] = {INF, INF, INF};
 
         for (size_t i = 0; i < n; ++i) {
-            const double x = msg->landmark_map_pos_x[i];
-            const double y = msg->landmark_map_pos_y[i];
+            const double x = msg->poses[i].position.x;
+            const double y = msg->poses[i].position.y;
+            const double z = msg->poses[i].position.z;
+
+            //RCLCPP_INFO(this->get_logger(), "x : %f", x);
+            //RCLCPP_INFO(this->get_logger(), "y : %f", y);
+
             const double r = sqrt(x * x + y * y);
             const double a = wrap180(msg->ar_angles_list[i]);
 
             if (r < best_rng[0]) {
-                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1];
-                best_rng[1] = best_rng[0]; best_ang[1] = best_ang[0];
-                best_rng[0] = r;           best_ang[0] = a;
+                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
+                best_rng[1] = best_rng[0]; best_ang[1] = best_ang[0]; z_aruco[1] = z_aruco[0];
+                best_rng[0] = r;           best_ang[0] = a; z_aruco[0] = z;
+                RCLCPP_INFO(this->get_logger(), "premierif : %f", i);
+
             } else if (r < best_rng[1]) {
-                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1];
-                best_rng[1] = r;           best_ang[1] = a;
+                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
+                best_rng[1] = r;           best_ang[1] = a; z_aruco[1] = z;
+                RCLCPP_INFO(this->get_logger(), "deuxieme : %f", i);
+
             } else if (r < best_rng[2]) {
-                best_rng[2] = r;           best_ang[2] = a;
+                best_rng[2] = r;           best_ang[2] = a; z_aruco[2] = z;
             }
         }
 
@@ -102,11 +115,15 @@ private:
         if (best_rng[0] < INF) ++count;
         if (best_rng[1] < INF) ++count;
         if (best_rng[2] < INF) ++count;
+        //RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", count);
 
         selected_count_ = count;
         for (size_t i = 0; i < count && i < 3; ++i) {
             selected_angles_aruco_deg_[i] = best_ang[i];
+
             selected_ranges_[i] = best_rng[i];
+            // RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", i);
+
 
         }
     }
@@ -150,10 +167,21 @@ private:
             const double r_point = hypot(static_cast<double>(p[0]), static_cast<double>(p[1]));
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
-                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ &&
-                    fabs(r_point - ranges_local[i]) <= tolerance_radius_ ) { match = true; break; }
+                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+100) <= tolerance_deg_ &&
+                    fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z_min && p[2]< hauteur_z_max) 
+                    { 
+                        match = true;
+                        // RCLCPP_INFO(this->get_logger(), "Distance lidar - arucotag : %f", fabs(r_point - ranges_local[i])); 
+                        //RCLCPP_INFO(this->get_logger(), "Distance lidar à aruco tag R point : %f", fabs(r_point - ranges_local[i]));
+                        //RCLCPP_INFO(this->get_logger(), "z filtre: %f", p[2]);
+
+                        break;
+                    }
+                // if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ ) { match = true; break; }
+                         
             }
             if (!match) continue;
+            
 
             *ox = p[0]; *oy = p[1]; *oz = p[2];
             ++ox; ++oy; ++oz;
@@ -173,6 +201,8 @@ private:
     // paramètres
     double tolerance_deg_;
     double tolerance_radius_;
+    double hauteur_z_min;
+    double hauteur_z_max;
 
     string input_cloud_topic_;
     string output_cloud_topic_;
@@ -197,5 +227,4 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
-
 

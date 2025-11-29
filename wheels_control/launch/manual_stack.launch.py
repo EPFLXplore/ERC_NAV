@@ -13,7 +13,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
     global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
-    config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
+    #config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
     
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
@@ -240,6 +240,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen"
     )
 
+    slip_control_node = launch_ros.actions.Node(
+        package="wheels_control",
+        executable="NAV_steer_control",
+        name="motor_steering_servoing",
+        output="screen"
+    )
+
 
     return [
         motor_cmds_arg,
@@ -258,8 +265,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         # delayed_launch,
         #odom_preprocessor,
         nav_cameras_launch,
-        #w,
-        jetson_stats
+        delayed_aruco_launch,
+        jetson_stats,
+        slip_control_node,
     ]
 
 def generate_launch_description():

@@ -27,7 +27,7 @@ public:
         distance_threshold_inliers = 0.01; 
         max_iterations_ = 300;
         t=0.25; //longeur des normes des coté du cube 
-        min_inliers_ = 30; // at least 20 points to define a line
+        min_inliers_ = 35; // at least 20 points to define a line
         max_lines_ = 3; // at least 2 lines to form a corner
         
         
@@ -77,8 +77,8 @@ private:
         lines.reserve(static_cast<size_t>(max_lines_));
         RCLCPP_INFO(this->get_logger(), "avant le for");
 
-
-        for (int line_idx = 0; line_idx < max_lines_*2; ++line_idx) {
+        unsigned int cant_find_line_counter = 0;
+        for (int line_idx = 0; line_idx < max_lines_; ++line_idx) {
 
             pcl::SACSegmentation<pcl::PointXYZ> seg;
             seg.setOptimizeCoefficients(true);
@@ -94,6 +94,7 @@ private:
 
             if (inliers->indices.size() < static_cast<size_t>(min_inliers_)) {
                 RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne");
+                cant_find_line_counter++;
                 break;
             }
             RCLCPP_INFO(this->get_logger(), "detecte une ligne avec %zu inliers", inliers->indices.size());
@@ -116,7 +117,7 @@ private:
             // if (!lines.empty()){
             //     for (const auto &L : lines) {
             //         float norm_existing = sqrt(L.dx * L.dx + L.dy * L.dy + L.dz * L.dz);
-            //         float ex = L.dx / norm_existing;
+            //    is_parallel     float ex = L.dx / norm_existing;
             //         float ey = L.dy / norm_existing;
             //         float ez = L.dz / norm_existing;
 
@@ -218,6 +219,7 @@ private:
 
             // markers.markers.push_back(line_marker);
             
+            RCLCPP_INFO(this->get_logger(), "avantswap111");
 
 
             extract.setNegative(true);
@@ -228,6 +230,11 @@ private:
 
         }
 
+        // if(cant_find_line_counter >= ){
+        //     return;
+        // }
+
+
         pcl::PointCloud<pcl::PointXYZ>::Ptr projected_cloud(new pcl::PointCloud<pcl::PointXYZ>());
             projected_cloud->reserve(all_inliers->size());
         for (const auto& point : all_inliers->points) {
@@ -236,6 +243,12 @@ private:
                 p.y = point.y;
                 p.z = 0.0;  
                 projected_cloud->push_back(p);
+                RCLCPP_INFO(this->get_logger(), "forrr point");
+                RCLCPP_INFO(this->get_logger(), "all_inliers size: %zu", all_inliers->size());
+                RCLCPP_INFO(this->get_logger(), "forrr point", point.x, point.y, point.z);
+
+
+
             }
 
         
@@ -247,7 +260,13 @@ private:
         pcl::PointCloud<pcl::PointXYZ>::Ptr projected_cloud_temp(new pcl::PointCloud<pcl::PointXYZ>());
         *projected_cloud_temp = *projected_cloud;
         
-        for (int line_idx_2d = 0; line_idx_2d < max_lines_; ++line_idx_2d) {
+        for (int line_idx_2d = 0; line_idx_2d < 2; ++line_idx_2d) {
+            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            
+            if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers_)) {
+                RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne 2d AAAAAA");
+                break;
+            }
 
             pcl::SACSegmentation<pcl::PointXYZ> seg_2d;
             seg_2d.setOptimizeCoefficients(true);
@@ -256,11 +275,12 @@ private:
             seg_2d.setDistanceThreshold(distance_threshold_inliers);
             seg_2d.setMaxIterations(max_iterations_);
             seg_2d.setInputCloud(projected_cloud_temp);
-        
+            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+
             pcl::PointIndices::Ptr inliers_2d(new pcl::PointIndices());
             pcl::ModelCoefficients::Ptr coefficients_2d(new pcl::ModelCoefficients());
             seg_2d.segment(*inliers_2d, *coefficients_2d);
-
+            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
             const float x0_2d = coefficients_2d->values[0];
             const float y0_2d = coefficients_2d->values[1];
             const float z0_2d = coefficients_2d->values[2];  // devrait être ~0
@@ -284,7 +304,8 @@ private:
             det_2d.p_first = p_first_2d;
             det_2d.p_last = p_last_2d;
             lines_2d.push_back(det_2d);
-            
+            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+
             // Créer un marker pour cette ligne 2D
             visualization_msgs::msg::Marker line_marker_2d;
             line_marker_2d.header = cloud_msg.header;
@@ -303,7 +324,7 @@ private:
             line_marker_2d.points.push_back(p_last_2d);
             
             markers.markers.push_back(line_marker_2d);
-            
+            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
             
             // Retirer les inliers du nuage temporaire
             pcl::ExtractIndices<pcl::PointXYZ> extract_2d;
@@ -330,7 +351,9 @@ private:
         lines_pub_->publish(cloud_with_all_lines);
         markers_pub_->publish(markers);
 
-        geometry_msgs::msg::Point p_centre;
+
+        
+        std::vector<geometry_msgs::msg::Point> cube_centres;
 
         if (!lines.empty()) {
             // Vérifier les paires de lignes proches (< 0.6 m entre les milieux)
@@ -339,6 +362,10 @@ private:
             int non_prendpasligne2=10;
             int non_prendpasligne3=10;
             for (size_t i = 0; i < lines_2d.size(); ++i) {
+                
+                RCLCPP_INFO(this->get_logger(), "forrr detectlinesss1");
+                geometry_msgs::msg::Point p_centre;
+
                 const auto &L1 = lines_2d[i];
                 // milieu de la ligne i
                 geometry_msgs::msg::Point mid1;
@@ -346,145 +373,70 @@ private:
                 mid1.y = 0.5 * (L1.p_first.y + L1.p_last.y);
                 mid1.z = 0.5 * (L1.p_first.z + L1.p_last.z);
 
-                for (size_t j = i + 1; j < lines_2d.size(); ++j) {
-                    const auto &L2 = lines_2d[j];
-                    geometry_msgs::msg::Point mid2;
-                    mid2.x = 0.5 * (L2.p_first.x + L2.p_last.x);
-                    mid2.y = 0.5 * (L2.p_first.y + L2.p_last.y);
-                    mid2.z = 0.5 * (L2.p_first.z + L2.p_last.z);
+                // vecteur normal:
+                float norm_dir = sqrt(L1.dx * L1.dx + L1.dy * L1.dy + L1.dz * L1.dz);
+                float ndx = -L1.dy / norm_dir;
+                float ndy = L1.dx / norm_dir;
 
-                    float dx = mid1.x - mid2.x;
-                    float dy = mid1.y - mid2.y;
-                    float dz = mid1.z - mid2.z;
-                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
+                // vérifier l'orientation du vecteur normal
+                //vecteur lidar->milieu
+                float v_lidar_mid_x = mid1.x;
+                float v_lidar_mid_y = mid1.y;
 
-                    if (dist < distance_threshold_lines) {
-                        p_centre.x = lines_2d[i].x0 + lines_2d[j].dx * t / 2;
-                        p_centre.y = lines_2d[i].y0 + lines_2d[j].dy * t / 2;
-                        p_centre.z = lines_2d[i].z0 + lines_2d[j].dz * t / 2;
-
-                        float dist_cote_1 = sqrt(lines_2d[i].x0 * lines_2d[i].x0 + lines_2d[i].y0 * lines_2d[i].y0 + lines_2d[i].z0 * lines_2d[i].z0);
-                        float dist_centre_cube = sqrt(p_centre.x * p_centre.x + p_centre.y * p_centre.y + p_centre.z * p_centre.z);
-                        // Si le centre est "avant" le côté, on prend l'autre direction
-                        if (dist_centre_cube < dist_cote_1) {
-                            p_centre.x = lines_2d[i].x0 - lines_2d[j].dx * t / 2;
-                            p_centre.y = lines_2d[i].y0 - lines_2d[j].dy * t / 2;
-                            p_centre.z = lines_2d[i].z0 - lines_2d[j].dz * t / 2;
-                        }
-
-                        if (non_prendpasligne1 == 10){
-                            non_prendpasligne1 = static_cast<int>(j);
-                        }
-                        else if (non_prendpasligne2 == 10){
-                            non_prendpasligne2 = static_cast<int>(j);
-                        }
-                        else if (non_prendpasligne3 == 10){
-                            non_prendpasligne3 = static_cast<int>(j);
-                        }
-
-                        // Marker RViz pour 
-                        visualization_msgs::msg::Marker centre_marker;
-                        centre_marker.header = cloud_msg.header;
-                        centre_marker.ns = "cube_centers";
-                        centre_marker.id = static_cast<int>(i * lines_2d.size() + j);
-                        centre_marker.type = visualization_msgs::msg::Marker::SPHERE;
-                        centre_marker.action = visualization_msgs::msg::Marker::ADD;
-                        centre_marker.pose.position = p_centre;
-                        centre_marker.pose.orientation.x = 0.0;
-                        centre_marker.pose.orientation.y = 0.0;
-                        centre_marker.pose.orientation.z = 0.0;
-                        centre_marker.pose.orientation.w = 1.0;
-                        centre_marker.scale.x = 0.08;
-                        centre_marker.scale.y = 0.08;
-                        centre_marker.scale.z = 0.08;
-                        centre_marker.color.r = 1.0f;
-                        centre_marker.color.g = 0.0f;
-                        centre_marker.color.b = 0.0f;
-                        centre_marker.color.a = 1.0f;
-
-                        points.markers.push_back(centre_marker);
-                    }
-                    //si probleme avec rvcentre_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-
-                    else{
-                        if (j==lines_2d.size()-1 && i!=non_prendpasligne1 && i!=non_prendpasligne2 && i!=non_prendpasligne3) {
-                            p_centre.x = lines_2d[i].x0 - lines_2d[j].dy * t / 2;
-                            p_centre.y = lines_2d[i].y0 + lines_2d[j].dx * t / 2;
-                            p_centre.z = lines_2d[i].z0 ;
-
-                            // Marker RViz 
-                            visualization_msgs::msg::Marker centre_marker;
-                            centre_marker.header = cloud_msg.header;
-                            centre_marker.ns = "cube_centers_alt";
-                            centre_marker.id = static_cast<int>(i * lines_2d.size() + j);
-                            centre_marker.type = visualization_msgs::msg::Marker::SPHERE;
-                            centre_marker.action = visualization_msgs::msg::Marker::ADD;
-                            centre_marker.pose.position = p_centre;
-                            centre_marker.pose.orientation.x = 0.0;
-                            centre_marker.pose.orientation.y = 0.0;
-                            centre_marker.pose.orientation.z = 0.0;
-                            centre_marker.pose.orientation.w = 1.0;
-                            centre_marker.scale.x = 0.08;
-                            centre_marker.scale.y = 0.08;
-                            centre_marker.scale.z = 0.08;
-                            centre_marker.color.r = 0.0f;
-                            centre_marker.color.g = 0.0f;
-                            centre_marker.color.b = 1.0f;
-                            centre_marker.color.a = 1.0f;
-
-                            points.markers.push_back(centre_marker);
-
-                        }
-
-                    }
+                float dot_product = ndx * v_lidar_mid_x + ndy * v_lidar_mid_y;
+                if (dot_product < 0) {
+                    // le vecteur normal pointe vers le lidar, on l'inverse
+                    ndx = -ndx;
+                    ndy = -ndy;
                 }
+
+                p_centre.x = mid1.x + ndx * t / 2;
+                p_centre.y = mid1.y + ndy * t / 2;
+                p_centre.z = lines_2d[i].z0;
+
+                cube_centres.push_back(p_centre);
+
             }
+
+
+            // calculer le centre moyen calcule pour chaque ligne
+            geometry_msgs::msg::Point centre_moyen;
+            centre_moyen.x = 0.0;
+            centre_moyen.y = 0.0;
+            centre_moyen.z = 0.0;
+            for (const auto& centre : cube_centres) {
+                centre_moyen.x += centre.x;
+                centre_moyen.y += centre.y;
+                centre_moyen.z += centre.z;
+            }
+
+            centre_moyen.x /= static_cast<float>(cube_centres.size());
+            centre_moyen.y /= static_cast<float>(cube_centres.size());
+            centre_moyen.z /= static_cast<float>(cube_centres.size());
+
+            // Marker RViz pour le centre moyen
+            visualization_msgs::msg::Marker centre_marker_moyen;
+            centre_marker_moyen.header = cloud_msg.header;
+            centre_marker_moyen.ns = "cube_center_mean";
+            centre_marker_moyen.id = 9999;  // ID fixe pour le centre moyen
+            centre_marker_moyen.type = visualization_msgs::msg::Marker::SPHERE;
+            centre_marker_moyen.action = visualization_msgs::msg::Marker::ADD;
+            centre_marker_moyen.pose.position = centre_moyen;
+            centre_marker_moyen.pose.orientation.x = 0.0;
+            centre_marker_moyen.pose.orientation.y = 0.0;
+            centre_marker_moyen.pose.orientation.z = 0.0;
+            centre_marker_moyen.pose.orientation.w = 1.0;
+            centre_marker_moyen.scale.x = 0.1;
+            centre_marker_moyen.scale.y = 0.1;
+            centre_marker_moyen.scale.z = 0.1;
+            centre_marker_moyen.color.r = 0.0f;
+            centre_marker_moyen.color.g = 1.0f;
+            centre_marker_moyen.color.b = 0.0f;
+            centre_marker_moyen.color.a = 1.0f;
+            points.markers.push_back(centre_marker_moyen);
+
         }
 
-        // geometry_msgs::msg::Point p_a_tester_1, p_a_tester_2;
-
-        // for (size_t i = 0; i < lines.size(); ++i) {
-        //     p_a_tester_1.x = lines[i].milieu.x + lines[i+1].dx*t_mileu;
-        //     p_a_tester_1.y = lines[i].milieu.y + lines[i+1].dy* t_milieu;
-        //     p_a_tester_1.z = lines[i].milieu.z + lines[i+1].dz* t_milieu;
-
-        //     p_a_tester_2.x = lines[i+1].milieu.x + lines[i].dx*t_mileu;
-        //     p_a_tester_2.y = lines[i+1].milieu.y + lines[i].dy* t_milieu;
-        //     p_a_tester_2.z = lines[i+1].milieu.z + lines[i].dz* t_milieu;
-        //test= sqrt((p_a_tester_1.x-p_a_tester_2.x)**2+ (p_a_tester_1.y-p_a_tester_2.y)**2+ (p_a_tester_1.z-p_a_tester_2.z)**2);
-        //if (test>0.05){
-        //      p_a_tester_1.x = lines[i].milieu.x - lines[i+1].dx*t_mileu;
-        // //   p_a_tester_1.y = lines[i].milieu.y - lines[i+1].dy* t_milieu;
-        // //   p_a_tester_1.z = lines[i].milieu.z - lines[i+1].dz* t_milieu;
-        //     }
-            // test= sqrt((p_a_tester_1.x-p_a_tester_2.x)**2+ (p_a_tester_1.y-p_a_tester_2.y)**2+ (p_a_tester_1.z-p_a_tester_2.z)**2);
-//             if (test>0.05){
-        //        p_a_tester_1.x = lines[i].milieu.x - lines[i+1].dx*t_mileu;
-        // //     p_a_tester_1.y = lines[i].milieu.y - lines[i+1].dy* t_milieu;
-        // //     p_a_tester_1.z = lines[i].milieu.z - lines[i+1].dz* t_milieu;
-        //     }
-
-
-
-
-            // }
-
-            // visualization_msgs::msg::Marker points;
-
-            // //line_marker.header = cloud_msg.header;
-            // line_marker.ns = "detected_lines";
-            // line_marker.type = visualization_msgs::msg::Marker::POINTS;
-            // line_marker.action = visualization_msgs::msg::Marker::ADD;
-            // line_marker.scale.x = 0.02; // épaisseur de la ligne
-            // line_marker.color.r = 0.0f;
-            // line_marker.color.g = 1.0f;
-            // line_marker.color.b = 0.0f;
-            // line_marker.color.a = 1.0f;
-
-
-
-
-            
         centre_pub_->publish(points);
 
 
