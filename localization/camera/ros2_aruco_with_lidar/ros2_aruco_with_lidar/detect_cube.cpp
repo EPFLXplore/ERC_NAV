@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/pose.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <pcl_conversions/pcl_conversions.h>
@@ -12,6 +13,9 @@
 #include <pcl/filters/filter.h>
 #include <vector>
 #include <cmath>
+#include <string>
+#include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
+
 
 // #include <pcl/filters/project_inliers.h>
 
@@ -24,6 +28,8 @@ public:
         : rclcpp::Node("detect_cube_node") {
         input_cloud_topic_ = "/ouster_points_aruco";
         output_cloud_topic_ = "/cloud_without_lines";
+        aruco_topic_ = "aruco_markers";
+
         distance_threshold_inliers = 0.01; 
         max_iterations_ = 300;
         t=0.25; //longeur des normes des coté du cube 
@@ -39,17 +45,40 @@ public:
                 detect_lignes(*message);
             }
         );
+
         lines_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
         markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("detected_lines_markers", qos);
         centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", qos);
+        //cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", qos);
 
-
-        RCLCPP_INFO(this->get_logger(), "initialized detect_cube_node");
+        aruco_subscriber_ = create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
+            aruco_topic_, rclcpp::SensorDataQoS(),
+            [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+                on_aruco_markers(msg);
+            }
+        );
+        //RCLCPP_INFO(this->get_logger(), "initialized detect_cube_node");
 
     }
 
 private:
-
+    void on_aruco_markers(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+        aruco_ids_ = msg->marker_ids;
+        aruco_poses_ = msg->poses;
+        
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 2000, 
+                             "ArUco markers reçus: %zu markers détectés", aruco_ids_.size());
+        
+        for (size_t i = 0; i < aruco_ids_.size(); ++i) {
+            double x = aruco_poses_[i].position.x;
+            double y = aruco_poses_[i].position.y;
+            double z = aruco_poses_[i].position.z;
+            
+            RCLCPP_DEBUG(this->get_logger(), 
+                        "Marker ID %ld: position (%.3f, %.3f, %.3f)", 
+                        aruco_ids_[i], x, y, z);
+        }
+    }
     void detect_lignes(const sensor_msgs::msg::PointCloud2 &cloud_msg) {
         pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(
             new pcl::PointCloud<pcl::PointXYZ>());
@@ -75,7 +104,7 @@ private:
         };
         std::vector<LineDetection> lines;
         lines.reserve(static_cast<size_t>(max_lines_));
-        RCLCPP_INFO(this->get_logger(), "avant le for");
+        //RCLCPP_INFO(this->get_logger(), "avant le for");
 
         unsigned int cant_find_line_counter = 0;
         for (int line_idx = 0; line_idx < max_lines_; ++line_idx) {
@@ -219,7 +248,7 @@ private:
 
             // markers.markers.push_back(line_marker);
             
-            RCLCPP_INFO(this->get_logger(), "avantswap111");
+            // RCLCPP_INFO(this->get_logger(), "avantswap111");
 
 
             extract.setNegative(true);
@@ -243,9 +272,9 @@ private:
                 p.y = point.y;
                 p.z = 0.0;  
                 projected_cloud->push_back(p);
-                RCLCPP_INFO(this->get_logger(), "forrr point");
-                RCLCPP_INFO(this->get_logger(), "all_inliers size: %zu", all_inliers->size());
-                RCLCPP_INFO(this->get_logger(), "forrr point", point.x, point.y, point.z);
+                // RCLCPP_INFO(this->get_logger(), "forrr point");
+                // RCLCPP_INFO(this->get_logger(), "all_inliers size: %zu", all_inliers->size());
+                // RCLCPP_INFO(this->get_logger(), "forrr point", point.x, point.y, point.z);
 
 
 
@@ -261,7 +290,7 @@ private:
         *projected_cloud_temp = *projected_cloud;
         
         for (int line_idx_2d = 0; line_idx_2d < 2; ++line_idx_2d) {
-            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            //RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
             
             if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers_)) {
                 RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne 2d AAAAAA");
@@ -275,12 +304,12 @@ private:
             seg_2d.setDistanceThreshold(distance_threshold_inliers);
             seg_2d.setMaxIterations(max_iterations_);
             seg_2d.setInputCloud(projected_cloud_temp);
-            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            //RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
 
             pcl::PointIndices::Ptr inliers_2d(new pcl::PointIndices());
             pcl::ModelCoefficients::Ptr coefficients_2d(new pcl::ModelCoefficients());
             seg_2d.segment(*inliers_2d, *coefficients_2d);
-            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            //(this->get_logger(), "forrr pointnummm2");
             const float x0_2d = coefficients_2d->values[0];
             const float y0_2d = coefficients_2d->values[1];
             const float z0_2d = coefficients_2d->values[2];  // devrait être ~0
@@ -304,7 +333,7 @@ private:
             det_2d.p_first = p_first_2d;
             det_2d.p_last = p_last_2d;
             lines_2d.push_back(det_2d);
-            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            //RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
 
             // Créer un marker pour cette ligne 2D
             visualization_msgs::msg::Marker line_marker_2d;
@@ -324,7 +353,7 @@ private:
             line_marker_2d.points.push_back(p_last_2d);
             
             markers.markers.push_back(line_marker_2d);
-            RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
+            //RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
             
             // Retirer les inliers du nuage temporaire
             pcl::ExtractIndices<pcl::PointXYZ> extract_2d;
@@ -363,7 +392,7 @@ private:
             int non_prendpasligne3=10;
             for (size_t i = 0; i < lines_2d.size(); ++i) {
                 
-                RCLCPP_INFO(this->get_logger(), "forrr detectlinesss1");
+                //RCLCPP_INFO(this->get_logger(), "forrr detectlinesss1");
                 geometry_msgs::msg::Point p_centre;
 
                 const auto &L1 = lines_2d[i];
@@ -384,6 +413,14 @@ private:
                 float v_lidar_mid_y = mid1.y;
 
                 float dot_product = ndx * v_lidar_mid_x + ndy * v_lidar_mid_y;
+                bool haut_cube = false;
+                for (size_t j = i + 1; j < lines_2d.size(); ++j) {
+                    float dot_lines = ndx * lines_2d[j].dx + ndy * lines_2d[j].dy;
+                    if (fabs(dot_lines) > 0.99) {  
+                        haut_cube = true;
+                        break;
+                    }
+                }
                 if (dot_product < 0) {
                     // le vecteur normal pointe vers le lidar, on l'inverse
                     ndx = -ndx;
@@ -393,47 +430,128 @@ private:
                 p_centre.x = mid1.x + ndx * t / 2;
                 p_centre.y = mid1.y + ndy * t / 2;
                 p_centre.z = lines_2d[i].z0;
-
-                cube_centres.push_back(p_centre);
+                if (!haut_cube){
+                    cube_centres.push_back(p_centre);
+                }
+                
 
             }
 
 
             // calculer le centre moyen calcule pour chaque ligne
-            geometry_msgs::msg::Point centre_moyen;
-            centre_moyen.x = 0.0;
-            centre_moyen.y = 0.0;
-            centre_moyen.z = 0.0;
-            for (const auto& centre : cube_centres) {
-                centre_moyen.x += centre.x;
-                centre_moyen.y += centre.y;
-                centre_moyen.z += centre.z;
+            int paire_1 =20;
+            int paire_2 =20;
+            int paire_3 =20;
+            int paire_4 =20;
+            int paire_5 =20;
+            
+            std::vector<geometry_msgs::msg::Point> cube_centres_moyenv2;
+            for (size_t i = 0; i < cube_centres.size(); ++i) {
+                geometry_msgs::msg::Point centre_moyen_1 = cube_centres[i];
+
+                for(size_t j = i+1; j < cube_centres.size(); ++j){
+                    geometry_msgs::msg::Point centre_moyen_2 = cube_centres[j];
+                    float dx_c = centre_moyen_1.x - centre_moyen_2.x;
+                    float dy_c = centre_moyen_1.y - centre_moyen_2.y;
+                    float dz_c = centre_moyen_1.z - centre_moyen_2.z;
+                    if(sqrt(dx_c*dx_c + dy_c*dy_c + dz_c*dz_c) < distance_threshold_lines){
+                        geometry_msgs::msg::Point centre_moy;
+                        centre_moy.x = (centre_moyen_1.x + centre_moyen_2.x) / 2.0;
+                        centre_moy.y = (centre_moyen_1.y + centre_moyen_2.y) / 2.0;
+                        centre_moy.z = (centre_moyen_1.z + centre_moyen_2.z) / 2.0;
+                        cube_centres_moyenv2.push_back(centre_moy);
+                        if (paire_1 == 20){
+                            paire_1 = static_cast<int>(j);
+                        }
+                        else if (paire_2 == 20){
+                            paire_2 = static_cast<int>(j);
+                        }
+                        else if (paire_3 == 20){
+                            paire_3 = static_cast<int>(j);
+                        }
+                        else if (paire_4 == 20){
+                            paire_4 = static_cast<int>(j);
+                        }
+                        else if (paire_5 == 20){
+                            paire_5 = static_cast<int>(j);
+
+                        }
+
+                }
+                if(paire_1 != i && paire_2 != i && paire_3 != i&& paire_4 != i && paire_5 != i){
+                    cube_centres_moyenv2.push_back(centre_moyen_1);
+                }
             }
+            for (size_t k = 0; k < cube_centres_moyenv2.size(); ++k) {
+                const auto& centre = cube_centres_moyenv2[k];
+                // Marker RViz pour le centre moyen 0
+                float min_distance =0.5; // distance minimale initiale
+                int closest_aruco_id = -1;
+                for (size_t a = 0; a < aruco_ids_.size(); ++a) {
+                    float dx = static_cast<float>(aruco_poses_[a].position.x) - static_cast<float>(centre.x);
+                    float dy = static_cast<float>(aruco_poses_[a].position.y) - static_cast<float>(centre.y);
+                    float dz = static_cast<float>(aruco_poses_[a].position.z) - static_cast<float>(centre.z);
+                    float dist = sqrt(dx*dx + dy*dy + dz*dz);
+                    
+                    if (dist < min_distance) {
+                        min_distance = dist;
+                        closest_aruco_id = aruco_ids_[a];
+                    }
+                }
 
-            centre_moyen.x /= static_cast<float>(cube_centres.size());
-            centre_moyen.y /= static_cast<float>(cube_centres.size());
-            centre_moyen.z /= static_cast<float>(cube_centres.size());
+                visualization_msgs::msg::Marker centre_marker_moyen;
+                centre_marker_moyen.header = cloud_msg.header;
+                centre_marker_moyen.ns = "cube_center_mean";
+                centre_marker_moyen.id = static_cast<int>(k * 2);  
+                centre_marker_moyen.type = visualization_msgs::msg::Marker::SPHERE;
+                centre_marker_moyen.action = visualization_msgs::msg::Marker::ADD;
+                centre_marker_moyen.pose.position = centre;
+                centre_marker_moyen.pose.orientation.x = 0.0;
+                centre_marker_moyen.pose.orientation.y = 0.0;
+                centre_marker_moyen.pose.orientation.z = 0.0;
+                centre_marker_moyen.pose.orientation.w = 1.0;
+                centre_marker_moyen.scale.x = 0.1;
+                centre_marker_moyen.scale.y = 0.1;
+                centre_marker_moyen.scale.z = 0.1;
+                centre_marker_moyen.color.r = 0.0f;
+                centre_marker_moyen.color.g = 1.0f;
+                centre_marker_moyen.color.b = 0.0f;
+                centre_marker_moyen.color.a = 1.0f;
+                points.markers.push_back(centre_marker_moyen);
 
-            // Marker RViz pour le centre moyen
-            visualization_msgs::msg::Marker centre_marker_moyen;
-            centre_marker_moyen.header = cloud_msg.header;
-            centre_marker_moyen.ns = "cube_center_mean";
-            centre_marker_moyen.id = 9999;  // ID fixe pour le centre moyen
-            centre_marker_moyen.type = visualization_msgs::msg::Marker::SPHERE;
-            centre_marker_moyen.action = visualization_msgs::msg::Marker::ADD;
-            centre_marker_moyen.pose.position = centre_moyen;
-            centre_marker_moyen.pose.orientation.x = 0.0;
-            centre_marker_moyen.pose.orientation.y = 0.0;
-            centre_marker_moyen.pose.orientation.z = 0.0;
-            centre_marker_moyen.pose.orientation.w = 1.0;
-            centre_marker_moyen.scale.x = 0.1;
-            centre_marker_moyen.scale.y = 0.1;
-            centre_marker_moyen.scale.z = 0.1;
-            centre_marker_moyen.color.r = 0.0f;
-            centre_marker_moyen.color.g = 1.0f;
-            centre_marker_moyen.color.b = 0.0f;
-            centre_marker_moyen.color.a = 1.0f;
-            points.markers.push_back(centre_marker_moyen);
+
+                visualization_msgs::msg::Marker text_marker;
+
+                text_marker.header = cloud_msg.header;
+                text_marker.ns = "cube_aruco_id";
+                text_marker.id = static_cast<int>(k * 2 + 1);
+                text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+                text_marker.action = visualization_msgs::msg::Marker::ADD;
+                text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+                text_marker.pose.position.x = centre.x;
+                text_marker.pose.position.y = centre.y;
+                text_marker.pose.position.z = centre.z + 0.15;  // Au-dessus de la sphère
+                text_marker.pose.orientation.w = 1.0;
+                text_marker.scale.z = 0.08;  // Taille du texte
+                text_marker.color.r = 1.0f;
+                text_marker.color.g = 1.0f;
+                text_marker.color.b = 1.0f;
+                text_marker.color.a = 1.0f;
+                if (closest_aruco_id >= 0) {
+                    text_marker.text = "ArUco " + std::to_string(closest_aruco_id);
+                    // cube_msg.marker_ids.push_back(closest_aruco_id);
+                    // geometry_msgs::msg::Pose pose;
+                    // pose.position = centre;
+                    // pose.orientation.w = 1.0;
+                    // cube_msg.poses.push_back(pose);
+                    // float angle_deg = std::atan2(centre.y, centre.x) * 180.0f / static_cast<float>(M_PI);
+                    // cube_msg.ar_angles_list.push_back(angle_deg);
+                }
+                else {
+                    text_marker.text = "No ArUco nearby";
+                }
+                points.markers.push_back(text_marker);
+                //cube_markers_pub_->publish(cube_msg);
 
         }
 
@@ -456,11 +574,14 @@ private:
 
         }
 
+        }
+    }
     }
 
 private:
     std::string input_cloud_topic_;
     std::string output_cloud_topic_;
+    std::string aruco_topic_;
     double distance_threshold_inliers;
     int max_iterations_;
     int min_inliers_;
@@ -471,6 +592,10 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lines_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;      
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
+    rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr aruco_subscriber_;
+    std::vector<int64_t> aruco_ids_;
+    std::vector<geometry_msgs::msg::Pose> aruco_poses_;
+    //rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
 
 
 };
