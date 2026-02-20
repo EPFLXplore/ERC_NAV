@@ -32,8 +32,8 @@ public:
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
         tolerance_radius_ = 1.0; 
-        hauteur_z_min= -1.8;
-        hauteur_z_max= 1.5;
+        hauteur_z_min= -0.8;
+        hauteur_z_max= 1;
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
@@ -167,6 +167,7 @@ private:
             const double r_point = hypot(static_cast<double>(p[0]), static_cast<double>(p[1]));
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
+                // RCLCPP_INFO(this->get_logger(), "position z pt cloud lidar: %.3f", p[2])
                 if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+100) <= tolerance_deg_ &&
                     fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z_min && p[2]< hauteur_z_max) 
                     { 

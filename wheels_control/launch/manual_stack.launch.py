@@ -189,6 +189,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='nav_ekf_node',
         name='nav_custom_ekf',
         output='screen',
+        parameters=[{'include_lidar': True}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
