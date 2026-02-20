@@ -54,6 +54,6 @@ docker run -it \
     -v /dev:/dev \
     -v $parent_dir:/home/xplore/dev_ws/src \
     -v nav_humble_desktop_home_volume:/home/xplore \
-    -v /home/jeffreyyu/Documents/Xplore/ERC_NAV/docker_humble_desktop/entrypoint.sh:/entrypoint.sh \
+    -v ${current_dir}/entrypoint.sh:/entrypoint.sh \
     --entrypoint /entrypoint.sh \
     ghcr.io/epflxplore/nav:humble-desktop

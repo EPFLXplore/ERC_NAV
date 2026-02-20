@@ -41,6 +41,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-velodyne-description \
     ros-${ROS_DISTRO}-velodyne-gazebo-plugins \
     ros-${ROS_DISTRO}-velodyne-msgs \
+    ros-${ROS_DISTRO}-pcl-ros \
     ignition-fortress \
     ros-${ROS_DISTRO}-ros-gz \
     python3-zmq \
