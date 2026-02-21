@@ -18,21 +18,7 @@ def generate_launch_description():
             executable='static_transform_publisher',
             name='velodyne_base_link',
             arguments=['-0.18209', '0.1575', '0.65', '0', '0', '0', 'base_link', 'velodyne']
-        ),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='map_odom',
-            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
-            parameters=[{'use_sim_time': True}]
-        ),
-        Node(
-            package='tf2_ros', 
-            executable='static_transform_publisher',
-            name='odom_base_link',
-            arguments=['0', '0', '0', '0', '0', '0', 'odom', 'base_link'],
-            parameters=[{'use_sim_time': True}]
-        ),
+        )
     ]
     
     # Traversability mapping nodes
@@ -85,7 +71,7 @@ def generate_launch_description():
         ),
         
         # Add all nodes
-        *static_transforms,
+        # *static_transforms,
         *traversability_nodes,
         # rviz_node
     ])

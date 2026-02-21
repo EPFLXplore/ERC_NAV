@@ -48,8 +48,8 @@ public:
             "/ouster_points", 10, std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
 
         pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 10);
-        pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
-        pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
+        // pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
+        // pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
         pubLaserScan = this->create_publisher<sensor_msgs::msg::LaserScan>("/pointcloud_2_laserscan", 5);
 
         allocateMemory();
@@ -129,7 +129,7 @@ public:
         // RCLCPP_INFO(this->get_logger(), "✓ Filters applied");
         
         // Step 5: Extract filtered points with obstacle labels
-        extractFilteredCloud();
+        // extractFilteredCloud();
         // RCLCPP_INFO(this->get_logger(), "✓ Filtered cloud extracted");
         
         // Step 6: Convert to regular grid and downsample

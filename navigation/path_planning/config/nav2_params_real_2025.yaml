@@ -226,9 +226,9 @@ global_costmap:
       static_map: false
       rolling_window: false
       # plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
-      plugins: ["static_layer", "voxel_layer", "denoise_layer", "inflation_layer"]
+      plugins: ["static_layer", "voxel_layer", "denoise_layer", "inflation_layer", "gradient_layer"]
       static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
+        plugin: "nav2_costmap_2d::StaticLayer"    #
         map_subscribe_transient_local: true
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -266,6 +266,10 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 1.5
         inflation_radius: 0.75
+
+      gradient_layer:
+        plugin: "nav2_gradient_costmap_plugin::GradientLayer"
+        enabled: true
       always_send_full_costmap: true
 
   global_costmap_client:
