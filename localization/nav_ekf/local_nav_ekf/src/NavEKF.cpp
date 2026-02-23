@@ -68,7 +68,7 @@ public:
     R_yaw   = 0.0001;
     R_accel = Eigen::Matrix2d::Identity() * 0.1;  // default, override per IMU msg
     R_xy    = Eigen::Matrix2d::Identity() * 0.08;
-    R_xy_lidar    = Eigen::Matrix2d::Identity() * 0.08;
+    R_xy_lidar    = Eigen::Matrix2d::Identity() * 0.01; // Var of 0.01 => std of 0.1: 10cm 
     R_wheel_vel = Eigen::Matrix3d::Identity() * 0.1;  // wheel velocity measurement noise
 
     prev_vx = 0.0;
@@ -377,17 +377,18 @@ public:
     call_trigger(zero_quat_client_, "setZeroQuaternion");
     call_trigger(zero_pose_client_, "setZeroPose");
 
+
+    auto qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
+
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-      "/olive/imu/id001/ahrs", 10,
+      "/olive/imu/id001/ahrs", qos,
       std::bind(&NavEKFNode::imu_callback, this, std::placeholders::_1));
 
     
     lidar_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/odom_glim_repub", 10,
+      "/odom_glim_repub", qos,
       std::bind(&NavEKFNode::lidar_callback, this, std::placeholders::_1));
 
-
-    auto qos = rclcpp::QoS{rclcpp::KeepLast{10}}.best_effort();
 
     wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
       "/NAV/motor_nav_status", qos,
@@ -395,13 +396,13 @@ public:
     
 
     wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/wheel_odom", 10,
+      "/wheel_odom", qos,
       std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
 
       //publsher
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-      "/fused_nav_ekf_odom", 10);
+      "/fused_nav_ekf_odom", qos);
 
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 

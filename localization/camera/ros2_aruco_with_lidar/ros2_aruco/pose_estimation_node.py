@@ -7,6 +7,9 @@ from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 import math
 from scipy.optimize import least_squares, fsolve
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+
+
 
 
 import cv2
@@ -109,17 +112,23 @@ class PoseEstimatorNode(Node):
         self.max_nbr_triplets = 5
         self.max_nbr_pairs = 10
 
+        qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST  # Optionnel (déjà implicite)
+        )
+
         self.subscription = self.create_subscription(
             ArucoMarkers,
-            '/aruco_markers',
+            '/cube_markers',
             self.listener_callback,
-            10)
+            qos)
         
         self.odometry_subscription = self.create_subscription(
             Odometry,
             '/fused_nav_ekf_odom',   
             self.odometry_callback,
-            10)
+            qos)
         self.odometry_subscription
 
         self.odom_pos_x = 0.0
