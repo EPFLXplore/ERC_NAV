@@ -8,6 +8,8 @@
 #include <string>
 #include <list>
 #include <array>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 using namespace std;
 // pas de placeholders: on utilise des lambdas pour les callbacks
@@ -52,7 +54,10 @@ public:
                 detect_3_best_camera(msg);
             });
 
-        cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 1);
+    cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 1);
+    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", rclcpp::QoS(10));
+    cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", rclcpp::QoS(10));
+
     }
 
 private:
@@ -95,19 +100,46 @@ private:
             const double r = sqrt(x * x + y * y);
             const double a = wrap180(msg->ar_angles_list[i]);
 
-            if (r < best_rng[0]) {
+            if (r < best_rng[0] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
                 best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
                 best_rng[1] = best_rng[0]; best_ang[1] = best_ang[0]; z_aruco[1] = z_aruco[0];
                 best_rng[0] = r;           best_ang[0] = a; z_aruco[0] = z;
                 RCLCPP_INFO(this->get_logger(), "premierif : %f", i);
 
-            } else if (r < best_rng[1]) {
+            } else if (r < best_rng[1] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
                 best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
                 best_rng[1] = r;           best_ang[1] = a; z_aruco[1] = z;
                 RCLCPP_INFO(this->get_logger(), "deuxieme : %f", i);
 
-            } else if (r < best_rng[2]) {
+            } else if (r < best_rng[2] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
                 best_rng[2] = r;           best_ang[2] = a; z_aruco[2] = z;
+            }
+            if (msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90) {
+                ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
+                cube_msg.ar_angles_list.push_back(msg->ar_angles_list[i]);
+                cube_msg.poses.push_back(msg->poses[i]);
+                cube_msg.marker_ids.push_back(msg->marker_ids[i]);
+                cube_markers_pub_->publish(cube_msg);
+
+                // Publish a MarkerArray with one marker at the detected ArUco pose
+                visualization_msgs::msg::MarkerArray markers;
+                visualization_msgs::msg::Marker marker;
+                marker.header.stamp = this->now();
+                marker.header.frame_id = "map"; // adjust frame as needed
+                marker.ns = "cube_centres";
+                marker.id = static_cast<int>(i);
+                marker.type = visualization_msgs::msg::Marker::SPHERE;
+                marker.action = visualization_msgs::msg::Marker::ADD;
+                marker.pose = msg->poses[i];
+                marker.scale.x = 0.1;
+                marker.scale.y = 0.1;
+                marker.scale.z = 0.1;
+                marker.color.r = 0.0f;
+                marker.color.g = 1.0f;
+                marker.color.b = 0.0f;
+                marker.color.a = 1.0f;
+                markers.markers.push_back(marker);
+                centre_pub_->publish(markers);
             }
         }
 
@@ -123,8 +155,6 @@ private:
 
             selected_ranges_[i] = best_rng[i];
             // RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", i);
-
-
         }
     }
 
@@ -212,6 +242,8 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr markers_sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
+    rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
     // état angles
     mutex angles_mutex_;
     // angles sélectionnés (max 3)
@@ -228,4 +260,5 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+
 
