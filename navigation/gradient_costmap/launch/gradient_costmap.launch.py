@@ -9,33 +9,26 @@ import os
 
 def generate_launch_description():
     # Package directories
-    traversability_pkg = get_package_share_directory('traversability_mapping')
+    traversability_pkg = get_package_share_directory('gradient_costmap')
     
-    # Static transforms for sensor setup
-    static_transforms = [
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='velodyne_base_link',
-            arguments=['-0.18209', '0.1575', '0.65', '0', '0', '0', 'base_link', 'velodyne']
-        )
-    ]
     
     # Traversability mapping nodes
     traversability_nodes = [
         Node(
-            package='traversability_mapping',
+            package='gradient_costmap',
             executable='traversability_filter',
             name='traversability_filter',
             output='screen',
-            parameters=[{'use_sim_time': True}]
+            parameters=[{'use_sim_time': True}],
+            emulate_tty=True
         ),
         Node(
-            package='traversability_mapping',
+            package='gradient_costmap',
             executable='traversability_map',
             name='traversability_map',
             output='screen',
-            parameters=[{'use_sim_time': True}]
+            parameters=[{'use_sim_time': True}],
+            emulate_tty=True
         ),
         # Node(
         #     package='traversability_mapping',
@@ -73,5 +66,5 @@ def generate_launch_description():
         # Add all nodes
         # *static_transforms,
         *traversability_nodes,
-        # rviz_node
+        rviz_node
     ])

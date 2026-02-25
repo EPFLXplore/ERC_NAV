@@ -90,10 +90,16 @@ public:
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         auto start = std::chrono::high_resolution_clock::now();
         
+        // Lock the the processes to prevent new data from interrupting old data
         std::lock_guard<std::mutex> lock(mtx);
         
         auto t1 = std::chrono::high_resolution_clock::now();
-        if (getRobotPosition() == false) return;
+        if (getRobotPosition() == false) 
+        {
+            RCLCPP_WARN(this->get_logger(), 
+            "Location not found");
+            return;
+        }
         
         auto t2 = std::chrono::high_resolution_clock::now();
         pcl::fromROSMsg(*laserCloudMsg, *laserCloud);
@@ -103,7 +109,6 @@ public:
         
         auto t4 = std::chrono::high_resolution_clock::now();
         publishMap();
-        
         auto end = std::chrono::high_resolution_clock::now();
         
         // Print timing breakdown
@@ -114,11 +119,9 @@ public:
         auto publish_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - t4).count();
         auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         
-        if (total_time > 100) {  // If processing takes > 100ms
-            RCLCPP_WARN(this->get_logger(), 
-                "Slow processing: total=%ldms (lock=%ld, tf=%ld, convert=%ld, update=%ld, publish=%ld)",
-                total_time, lock_time, tf_time, convert_time, update_time, publish_time);
-        }
+        RCLCPP_WARN(this->get_logger(), 
+        "Processing: total=%ldms (lock=%ld, tf=%ld, convert=%ld, update=%ld, publish=%ld)",
+            total_time, lock_time, tf_time, convert_time, update_time, publish_time);
     }
 
     void updateElevationMap(){
@@ -195,6 +198,10 @@ public:
         //     return;
 
         float z = point->z;
+        if (z > 0.05)
+        {
+            RCLCPP_WARN(this->get_logger(), "Height: %.3f", z);
+        }
         float var = 0.01; // measurement noise
 
         float mu = cell->elevation;
@@ -564,6 +571,9 @@ int main(int argc, char** argv){
         urbanMapping ? "Urban" : "Terrain");
 
     rclcpp::spin(tMapping);
+
+    RCLCPP_INFO(tMapping->get_logger(), "Traversability Mapping Scenario: %s", 
+    urbanMapping ? "Urban" : "Terrain");
 
     rclcpp::shutdown();
 

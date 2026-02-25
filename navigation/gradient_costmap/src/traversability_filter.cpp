@@ -48,8 +48,8 @@ public:
             "/ouster_points", 10, std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
 
         pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 10);
-        // pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
-        // pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
+        pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
+        pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
         pubLaserScan = this->create_publisher<sensor_msgs::msg::LaserScan>("/pointcloud_2_laserscan", 5);
 
         allocateMemory();
@@ -129,7 +129,7 @@ public:
         // RCLCPP_INFO(this->get_logger(), "✓ Filters applied");
         
         // Step 5: Extract filtered points with obstacle labels
-        // extractFilteredCloud();
+        extractFilteredCloud();
         // RCLCPP_INFO(this->get_logger(), "✓ Filtered cloud extracted");
         
         // Step 6: Convert to regular grid and downsample
@@ -256,13 +256,20 @@ public:
 
     void cloud2Matrix(){
 
+        int num_heights_above_0 = 0;
+
         for (int i = 0; i < N_SCAN; ++i){
             for (int j = 0; j < Horizon_SCAN; ++j){
                 int index = j  + i * Horizon_SCAN;
                 PointType p = laserCloudIn->points[index];
                 laserCloudMatrix[i][j] = p;
+                if (p.z > 0.05)
+                {
+                    num_heights_above_0++;
+                }
             }
         }
+        RCLCPP_ERROR(this->get_logger(), "Number of points above height 0.05: %d", num_heights_above_0);
     }
 
     // void applyFilter(){
