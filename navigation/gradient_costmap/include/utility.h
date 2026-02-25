@@ -84,8 +84,8 @@ extern const int mapArrayLength = 2000 / mapCubeLength; // the sub-map dimension
 extern const int rootCubeIndex = mapArrayLength / 2; // by default, robot is at the center of global map at the beginning
 
 // Cost Params
-constexpr float slopeCoeff = 0.8;           // how much the slope contributes to cost
-constexpr float roughnessCoeff = 0.2;       // how much roughness contributes to cost
+constexpr float slopeCoeff = 1.0;           // how much the slope contributes to cost
+constexpr float roughnessCoeff = 0;       // how much roughness contributes to cost
 
 // Static assertion to ensure coefficients sum to 1.0
 static_assert(

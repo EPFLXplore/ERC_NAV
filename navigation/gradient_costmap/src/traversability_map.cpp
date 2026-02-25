@@ -198,10 +198,6 @@ public:
         //     return;
 
         float z = point->z;
-        if (z > 0.05)
-        {
-            RCLCPP_WARN(this->get_logger(), "Height: %.3f", z);
-        }
         float var = 0.01; // measurement noise
 
         float mu = cell->elevation;
