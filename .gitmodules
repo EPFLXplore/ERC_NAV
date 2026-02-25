@@ -3,10 +3,10 @@
 	url = git@github.com:EPFLXplore/ros2_ouster_drivers_Xplore.git
 [submodule "custom_msg"]
 	path = custom_msg
-	url = git@github.com:EPFLXplore/ERC_SE_CustomMessages.git
+	url = git@github-epfl:EPFLXplore/ERC_SE_CustomMessages.git
 [submodule "xplore_description"]
 	path = xplore_description
-	url = git@github.com:EPFLXplore/ERC_DESCRIPTION.git
+	url = git@github-epfl:EPFLXplore/ERC_DESCRIPTION.git
 [submodule "localization/wheels_odometry"]
 	path = localization/wheels_odometry
 	url = https://gitlab.com/libeigen/eigen.git
