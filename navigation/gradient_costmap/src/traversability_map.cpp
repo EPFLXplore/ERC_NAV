@@ -54,8 +54,10 @@ public:
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "/cloud_pcd", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
-
-        // /filtered_pointcloud or /cloud_pcd
+        
+        // CHANGE ME:
+        // 1. If you want to use the gazebo pointcloud use /filtered_pointcloud
+        // 2. If you want to use the marsyard pcd file, use /cloud_pcd
 
         pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/occupancy_map_local", 10);
         // pubOccupancyMapLocalHeight = this->create_publisher<elevation_msgs::msg::OccupancyElevation>("/occupancy_map_local_height", 10);
@@ -140,6 +142,8 @@ public:
             // laserCloud->points[i].z -= 0.2; // TODO: CHANGEME, commented for visualization
             updateElevationMap(&laserCloud->points[i]);
         }
+
+        // for points in the map that don't have any 
     }
 
     void updateElevationMap(PointType *point){
@@ -382,7 +386,7 @@ public:
 
     void getNeighborCells(mapCell_t *cell, vector<PointType> &neighborPoints){
         // Get neighboring cells within a radius for analysis
-        float searchRadius = 0.4; // meters
+        float searchRadius = 0.6; // meters
         int searchGrids = searchRadius / mapResolution;
 
         grid_t grid = cell->grid;

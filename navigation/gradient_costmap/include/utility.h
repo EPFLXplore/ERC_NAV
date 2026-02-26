@@ -78,7 +78,7 @@ extern const int Horizon_SCAN = 440;        // horizontal scan lines
 
 // Map Params
 extern const float mapResolution = 0.1; // map resolution
-extern const float mapCubeLength = 1.0; // the length of a sub-map (meters)
+extern const float mapCubeLength = 0.2; // the length of a sub-map (meters)
 extern const int mapCubeArrayLength = mapCubeLength / mapResolution; // the grid dimension of a sub-map (mapCubeLength / mapResolution)
 extern const int mapArrayLength = 2000 / mapCubeLength; // the sub-map dimension of global map (2000m x 2000m)
 extern const int rootCubeIndex = mapArrayLength / 2; // by default, robot is at the center of global map at the beginning
@@ -99,7 +99,7 @@ extern const int scanNumSlopeFilter = 20;           // the number of lower scan 
 extern const int scanNumMax = std::max(scanNumCurbFilter, scanNumSlopeFilter);
 
 // Filter Threshold Params
-extern const float sensorMaxRangeLimit = 7; // only keep points with in a radius of x meters   
+extern const float sensorMaxRangeLimit = 5; // only keep points with in a radius of x meters   
 extern const float sensorMinRangeLimit = 0.5; // remove points within a radius of 0.5 meters
 extern const float filterHeightLimit = (urbanMapping == true) ? 0.1 : 0.3; // step diff threshold         
 extern const float filterAngleLimit = 35; // slope angle threshold     
@@ -117,7 +117,7 @@ extern const float large_log_odds = 100;
 extern const float max_log_odds_for_belief = 20;
 
 // 2D Map Publish Params
-extern const int localMapLength = 20; // length of the local occupancy grid map (meter)
+extern const int localMapLength = 1000; // length of the local occupancy grid map (meter)
 extern const int localMapArrayLength = localMapLength / mapResolution;
 
 // Visualization Params
@@ -125,7 +125,7 @@ extern const float visualizationRadius = 50;
 extern const float visualizationFrequency = 2; // n, skip n scans then publish, n=0, visualize at each scan
 
 // Robot Params
-extern const float robotRadius = 0.2;
+extern const float robotRadius = 0.4;
 extern const float sensorHeight = 0.5;
 
 // Traversability Params
