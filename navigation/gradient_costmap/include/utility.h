@@ -69,8 +69,8 @@ typedef pcl::PointXYZI  PointType;
 typedef struct kdtree kdtree_t;
 typedef struct kdres kdres_t;
 
-// Environment
-extern const bool urbanMapping = false;    // I set this to false
+// cloudHandler rate
+extern const int cloudHandlerRate = 250; // time in ms to wait before processing the next pointcloud
 
 // VLP-16
 extern const int N_SCAN = 32;   // vertical scan
@@ -101,7 +101,6 @@ extern const int scanNumMax = std::max(scanNumCurbFilter, scanNumSlopeFilter);
 // Filter Threshold Params
 extern const float sensorMaxRangeLimit = 5; // only keep points with in a radius of x meters   
 extern const float sensorMinRangeLimit = 0.5; // remove points within a radius of 0.5 meters
-extern const float filterHeightLimit = (urbanMapping == true) ? 0.1 : 0.3; // step diff threshold         
 extern const float filterAngleLimit = 35; // slope angle threshold     
 extern const float filterMaxRoughness = 0.1;      
 extern const int filterHeightMapArrayLength = sensorMaxRangeLimit*2 / mapResolution;    // size of the local height mat grid

@@ -53,7 +53,7 @@ public:
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/cloud_pcd", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+            "/filtered_pointcloud", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
         
         // CHANGE ME:
         // 1. If you want to use the gazebo pointcloud use /filtered_pointcloud
@@ -95,7 +95,7 @@ public:
         auto start = std::chrono::high_resolution_clock::now();
 
         // Limit the speed of the callback
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < 1000)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < cloudHandlerRate)
         {
             RCLCPP_WARN(this->get_logger(), "TOO EARLY");
             return;
@@ -257,7 +257,6 @@ public:
 
     void traversabilityMapCalculation(){
         // Copy data with lock
-        RCLCPP_INFO(this->get_logger(), "HERE");
 
         vector<mapCell_t*> cellsToProcess;
         {
@@ -265,7 +264,6 @@ public:
 
             if (observingList1.empty())
             {
-                RCLCPP_INFO(this->get_logger(), "Nothing to see");
                 return;
             
             } 
@@ -276,6 +274,7 @@ public:
             for (auto cell : cellsToProcess) {
                 calculateTraversability(cell);
             }
+            RCLCPP_WARN(this->get_logger(), "Calculating traversability");
     }
 
     void calculateTraversability(mapCell_t *cell)
@@ -306,12 +305,6 @@ public:
         float minElevation = matPoints.col(2).minCoeff();
         float maxElevation = matPoints.col(2).maxCoeff();
         float maxDifference = maxElevation - minElevation;
-
-        // if (maxDifference > filterHeightLimit) {  // filterHeightLimit = 0.5m
-        //     RCLCPP_ERROR(this->get_logger(), "Large height difference: %.2f m", maxDifference);
-        //     cell->updateOccupancy(1.0);
-        //     return;
-        // }
 
         // **************** Calculate Slope ****************
         // The slope s of a cell is calculated by fitting a plane in a circular region around the cell with a diameter corresponding
@@ -582,13 +575,9 @@ int main(int argc, char** argv){
     std::thread predictionThread(&TraversabilityMapping::TraversabilityThread, tMapping.get());
 
     RCLCPP_INFO(tMapping->get_logger(), "Traversability Mapping Started.");
-    RCLCPP_INFO(tMapping->get_logger(), "Traversability Mapping Scenario: %s", 
-        urbanMapping ? "Urban" : "Terrain");
 
     rclcpp::spin(tMapping);
 
-    RCLCPP_INFO(tMapping->get_logger(), "Traversability Mapping Scenario: %s", 
-    urbanMapping ? "Urban" : "Terrain");
 
     rclcpp::shutdown();
 

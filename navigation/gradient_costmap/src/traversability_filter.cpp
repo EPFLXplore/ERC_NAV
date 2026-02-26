@@ -255,21 +255,13 @@ public:
     }
 
     void cloud2Matrix(){
-
-        int num_heights_above_0 = 0;
-
         for (int i = 0; i < N_SCAN; ++i){
             for (int j = 0; j < Horizon_SCAN; ++j){
                 int index = j  + i * Horizon_SCAN;
                 PointType p = laserCloudIn->points[index];
                 laserCloudMatrix[i][j] = p;
-                if (p.z > 0.05)
-                {
-                    num_heights_above_0++;
-                }
             }
         }
-        RCLCPP_ERROR(this->get_logger(), "Number of points above height 0.05: %d", num_heights_above_0);
     }
 
     // void applyFilter(){
@@ -386,14 +378,8 @@ public:
                 thisPoint.y = localMapOrigin.y + j * mapResolution + mapResolution / 2.0;
                 thisPoint.z = maxHeight[i][j];
 
-                // if (obstFlag[i][j] == true || maxHeight[i][j] - minHeight[i][j] > filterHeightLimit){
-                //     obstFlag[i][j] = true;
-                //     thisPoint.intensity = 100; // obstacle
-                //     laserCloudTemp->push_back(thisPoint);
-                // }else{
                 thisPoint.intensity = 0; // free
                 laserCloudTemp->push_back(thisPoint);
-                //}
             }
         }
 
