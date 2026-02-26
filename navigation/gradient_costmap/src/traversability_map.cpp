@@ -22,6 +22,8 @@ private:
     nav_msgs::msg::OccupancyGrid occupancyMap2D; // local occupancy grid map
     // elevation_msgs::msg::OccupancyElevation occupancyMap2DHeight; // customized message that includes occupancy map and elevation info
 
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_time;
+
     int pubCount;
     
     // Map Arrays
@@ -51,9 +53,9 @@ public:
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/filtered_pointcloud", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+            "/cloud_pcd", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
 
-        // /filtered_pointcloud
+        // /filtered_pointcloud or /cloud_pcd
 
         pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/occupancy_map_local", 10);
         // pubOccupancyMapLocalHeight = this->create_publisher<elevation_msgs::msg::OccupancyElevation>("/occupancy_map_local_height", 10);
@@ -89,9 +91,17 @@ public:
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         auto start = std::chrono::high_resolution_clock::now();
+
+        // Limit the speed of the callback
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < 1000)
+        {
+            RCLCPP_WARN(this->get_logger(), "TOO EARLY");
+            return;
+        }
+        last_time = start;
         
         // Lock the the processes to prevent new data from interrupting old data
-        std::lock_guard<std::mutex> lock(mtx);
+        // std::lock_guard<std::mutex> lock(mtx);
         
         auto t1 = std::chrono::high_resolution_clock::now();
         if (getRobotPosition() == false) 
@@ -106,7 +116,7 @@ public:
         
         auto t3 = std::chrono::high_resolution_clock::now();
         updateElevationMap();
-        
+
         auto t4 = std::chrono::high_resolution_clock::now();
         publishMap();
         auto end = std::chrono::high_resolution_clock::now();
@@ -234,7 +244,7 @@ public:
 
     void TraversabilityThread(){
         rclcpp::Rate rate(10); // Hz
-        
+
         while (rclcpp::ok()){
             traversabilityMapCalculation();
             rate.sleep();
@@ -243,20 +253,25 @@ public:
 
     void traversabilityMapCalculation(){
         // Copy data with lock
+        RCLCPP_INFO(this->get_logger(), "HERE");
+
         vector<mapCell_t*> cellsToProcess;
         {
             std::lock_guard<std::mutex> lock(mtx);
-            
+
             if (observingList1.empty())
+            {
+                RCLCPP_INFO(this->get_logger(), "Nothing to see");
                 return;
             
-            cellsToProcess.swap(observingList1);  // Fast swap
-        } 
-        
-        // Process without lock
-        for (auto cell : cellsToProcess) {
-            calculateTraversability(cell);
+            } 
+            cellsToProcess.swap(observingList1);
         }
+        
+            // Process without lock
+            for (auto cell : cellsToProcess) {
+                calculateTraversability(cell);
+            }
     }
 
     void calculateTraversability(mapCell_t *cell)
