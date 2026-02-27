@@ -66,8 +66,6 @@
 using namespace std;
 
 typedef pcl::PointXYZI  PointType;
-typedef struct kdtree kdtree_t;
-typedef struct kdres kdres_t;
 
 // cloudHandler rate
 extern const int cloudHandlerRate = 250; // time in ms to wait before processing the next pointcloud
@@ -94,10 +92,10 @@ static_assert(
     "slopeCoeff and roughnessCoeff must sum to 1.0"
 );
 
-// Filter Ring Params
-extern const int scanNumCurbFilter = 8;             // Not needed    
-extern const int scanNumSlopeFilter = 20;           // the number of lower scan for slope analysis
-extern const int scanNumMax = std::max(scanNumCurbFilter, scanNumSlopeFilter);
+// Filter Ring Params -> Not used
+// extern const int scanNumCurbFilter = 8;             // Not needed    
+// extern const int scanNumSlopeFilter = 20;           // the number of lower scan for slope analysis
+// extern const int scanNumMax = std::max(scanNumCurbFilter, scanNumSlopeFilter);
 
 // Filter Threshold Params
 extern const float sensorMaxRangeLimit = 5; // only keep points with in a radius of x meters   
@@ -110,40 +108,25 @@ extern const int filterHeightMapArrayLength = sensorMaxRangeLimit*2 / mapResolut
 extern const bool predictionEnableFlag = true;
 extern const float predictionKernalSize = 0.2; // predict elevation within x meters
 
-// Occupancy Params
-extern const float p_occupied_when_laser = 0.9;
-extern const float p_occupied_when_no_laser = 0.2;
-extern const float large_log_odds = 100;
-extern const float max_log_odds_for_belief = 20;
+// Occupancy Params -> not used
+// extern const float p_occupied_when_laser = 0.9;
+// extern const float p_occupied_when_no_laser = 0.2;
+// extern const float large_log_odds = 100;
+// extern const float max_log_odds_for_belief = 20;
 
 // 2D Map Publish Params
-extern const int localMapLength = 5; // length of the local occupancy grid map (meter). This is equal to globalMapDim when creating the costmap for the entire map.
+extern const int localMapLength = 80; // length of the local occupancy grid map (meter). This is equal to globalMapDim when creating the costmap for the entire map.
 extern const int localMapArrayLength = localMapLength / mapResolution;
 
-// Visualization Params
-extern const float visualizationRadius = 50;
+// Visualization Params for visualizing the elevation pointcloud
+extern const float visualizationRadius = 10;
 extern const float visualizationFrequency = 2; // n, skip n scans then publish, n=0, visualize at each scan
 
 // Robot Params
 extern const float robotRadius = 0.4;
-extern const float sensorHeight = 0.5;
 
 // Traversability Params
 extern const int traversabilityObserveTimeTh = 10;
-extern const float traversabilityCalculatingDistance = 8.0;
-
-// Planning Cost Params
-extern const int NUM_COSTS = 3;
-extern const int tmp[] = {2};
-extern const std::vector<int> costHierarchy(tmp, tmp+sizeof(tmp)/sizeof(int));// c++11 initialization: costHierarchy{0, 1, 2}
-
-// PRM Planner Settings
-extern const bool planningUnknown = true;
-extern const float costmapInflationRadius = 0.1;
-extern const float neighborSampleRadius  = 0.5;
-extern const float neighborConnectHeight = 1.0;
-extern const float neighborConnectRadius = 2.0;
-extern const float neighborSearchRadius = localMapLength / 2;
 
 struct grid_t;
 struct mapCell_t;
@@ -277,81 +260,9 @@ struct childMap_t{
 };
 
 
-
-/*
-    Robot State Defination
-    */
-
-
-struct state_t{
-    double x[3]; //  1 - x, 2 - y, 3 - z
-    float theta;
-    int stateId;
-    float cost;
-    bool validFlag;
-    // # Cost types
-    // # 0. obstacle cost
-    // # 1. elevation cost
-    // # 2. distance cost
-    float costsToRoot[NUM_COSTS];
-    float costsToParent[NUM_COSTS]; // used in RRT*
-    float costsToGo[NUM_COSTS];
-
-    state_t* parentState; // parent for this state in PRM and RRT*
-    vector<neighbor_t> neighborList; // PRM adjencency list with edge costs
-    vector<state_t*> childList; // RRT*
-
-    // default initialization
-    state_t(){
-        parentState = NULL;
-        for (int i = 0; i < NUM_COSTS; ++i){
-            costsToRoot[i] = FLT_MAX;
-            costsToParent[i] = FLT_MAX;
-            costsToGo[i] = FLT_MAX;
-        }
-    }
-    // use a state input to initialize new state
-    
-    state_t(state_t* stateIn){
-        // pose initialization
-        for (int i = 0; i < 3; ++i)
-            x[i] = stateIn->x[i];
-        theta = stateIn->theta;
-        // regular initialization
-        parentState = NULL;
-        for (int i = 0; i < NUM_COSTS; ++i){
-            costsToRoot[i] = FLT_MAX;
-            costsToParent[i] = stateIn->costsToParent[i];
-        }
-    }
-};
-
-
-struct neighbor_t{
-    state_t* neighbor;
-    float edgeCosts[NUM_COSTS]; // the cost from this state to neighbor
-    neighbor_t(){
-        neighbor = NULL;
-        for (int i = 0; i < NUM_COSTS; ++i)
-            edgeCosts[i] = FLT_MAX;
-    }
-};
-
-
-
-
-
-
-
-
-
 ////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////      Some Functions    ////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
-state_t *compareState;
-bool isStateExsiting(neighbor_t neighborIn){
-    return neighborIn.neighbor == compareState ? true : false;
-}
 
 float pointDistance(PointType p1, PointType p2){
     return sqrt((p1.x-p2.x)*(p1.x-p2.x) + (p1.y-p2.y)*(p1.y-p2.y) + (p1.z-p2.z)*(p1.z-p2.z));

@@ -48,9 +48,9 @@ public:
             "/ouster_points", 10, std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
 
         pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 10);
-        pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
-        pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
-        pubLaserScan = this->create_publisher<sensor_msgs::msg::LaserScan>("/pointcloud_2_laserscan", 5);
+        // pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
+        // pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
+        // pubLaserScan = this->create_publisher<sensor_msgs::msg::LaserScan>("/pointcloud_2_laserscan", 5);
 
         allocateMemory();
 
@@ -124,51 +124,32 @@ public:
         cloud2Matrix();
         // RCLCPP_INFO(this->get_logger(), "✓ Cloud converted to matrix");
         
-        // // Step 4: Apply obstacle detection filters (curbs, slopes, distance)
-        // applyFilter(); // Not used since we are using a gradient, so no obstacles defined here
-        // RCLCPP_INFO(this->get_logger(), "✓ Filters applied");
-        
-        // Step 5: Extract filtered points with obstacle labels
+        // Step 4: Extract filtered points with obstacle labels
         extractFilteredCloud();
         // RCLCPP_INFO(this->get_logger(), "✓ Filtered cloud extracted");
         
-        // Step 6: Convert to regular grid and downsample
+        // Step 5: Convert to regular grid and downsample
         downsampleCloud();
         // RCLCPP_INFO(this->get_logger(), "✓ Cloud downsampled");
         
-        // Step 7: Use Gaussian Process to predict missing areas
+        // Step 6: Use Gaussian Process to predict missing areas
         predictCloudBGK();
         // RCLCPP_INFO(this->get_logger(), "✓ BGK prediction completed");
         
-        // Step 8: Publish final point cloud
+        // Step 7: Publish final point cloud
         publishCloud();
         // RCLCPP_INFO(this->get_logger(), "✓ Cloud published");
         
-        // Step 9: Convert obstacles to 2D laser scan for navigatio -> not used as just using a gradiant based map
-        // publishLaserScan();
-        // RCLCPP_INFO(this->get_logger(), "✓ Laser scan published");
-        
-        // Step 10: Clean up for next iteration
+        // Step 8: Clean up for next iteration
         resetParameters();
         // RCLCPP_INFO(this->get_logger(), "=== cloudHandler completed ===\n");
     }
 
     void extractRawCloud(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
-        // RCLCPP_INFO(this->get_logger(), "=== Starting extractRawCloud ===");
-        
-        // Check point cloud organization
-        // RCLCPP_INFO(this->get_logger(), "Point cloud info:");
-        // RCLCPP_INFO(this->get_logger(), "  Width: %d, Height: %d", laserCloudMsg->width, laserCloudMsg->height);
-        // RCLCPP_INFO(this->get_logger(), "  Total points: %d", laserCloudMsg->width * laserCloudMsg->height);
-        // RCLCPP_INFO(this->get_logger(), "  Is organized: %s", (laserCloudMsg->height > 1) ? "YES" : "NO");
-        // RCLCPP_INFO(this->get_logger(), "  Frame ID: %s", laserCloudMsg->header.frame_id.c_str());
-        
         // RCLCPP_INFO(this->get_logger(), "Converting ROS message to PCL...");
         pcl::fromROSMsg(*laserCloudMsg, *laserCloudIn);
-        // RCLCPP_INFO(this->get_logger(), "PCL cloud size: %zu", laserCloudIn->points.size());
         
         // Initialize matrices
-        // RCLCPP_INFO(this->get_logger(), "Initializing matrices...");
         obstacleMatrix.setTo(-1);  // -1 = invalid
         rangeMatrix.setTo(-1);     // -1 = invalid
         
@@ -210,14 +191,6 @@ public:
                 valid_points++;
             }
         }
-        // RCLCPP_INFO(this->get_logger(), "Out of bounds %d", out_of_bounds);
-        // RCLCPP_INFO(this->get_logger(), "=== extractRawCloud Results ===");
-        // RCLCPP_INFO(this->get_logger(), "Valid points processed: %d", valid_points);
-        // RCLCPP_INFO(this->get_logger(), "Points that are too close: %d", num_too_close);
-        // RCLCPP_INFO(this->get_logger(), "Expected total: %d (N_SCAN=%d x Horizon_SCAN=%d)", 
-        //             N_SCAN * Horizon_SCAN, N_SCAN, Horizon_SCAN);
-
-        // minDistFilter();
     }
 
     bool transformCloud(){
@@ -264,48 +237,6 @@ public:
         }
     }
 
-    // void applyFilter(){
-
-    //     // minDistFilter();
-    //     // slopeFilter();
-    // }
-
-    // void slopeFilter(){
-        
-    //     for (int i = 0; i < scanNumSlopeFilter; ++i){
-    //         for (int j = 0; j < Horizon_SCAN; ++j){
-    //             // Point that has been verified by other filters
-    //             if (obstacleMatrix.at<int>(i, j) == 1)
-    //                 continue;
-    //             // point without range value cannot be verified
-    //             if (rangeMatrix.at<float>(i, j) == -1 || rangeMatrix.at<float>(i+1, j) == -1)
-    //                 continue;
-    //             // point is too far away, skip comparison since it can be inaccurate
-    //             if (rangeMatrix.at<float>(i, j) > sensorMaxRangeLimit)
-    //                 continue;
-    //             // Two range filters here:
-    //             // 1. if a point's range is larger than scanNumSlopeFilter th ring point's range
-    //             // 2. if a point's range is larger than the upper point's range
-    //             // then this point is very likely on obstacle. i.e. a point under the car or on a pole
-    //             // if (  (rangeMatrix.at<float>(scanNumSlopeFilter, j) != -1 && rangeMatrix.at<float>(i, j) > rangeMatrix.at<float>(scanNumSlopeFilter, j))
-    //             //     || (rangeMatrix.at<float>(i, j) > rangeMatrix.at<float>(i+1, j)) ){
-    //             //     obstacleMatrix.at<int>(i, j) = 1;
-    //             //     continue;
-    //             // }
-    //             // Calculate slope angle
-    //             float diffX = laserCloudMatrix[i+1][j].x - laserCloudMatrix[i][j].x;
-    //             float diffY = laserCloudMatrix[i+1][j].y - laserCloudMatrix[i][j].y;
-    //             float diffZ = laserCloudMatrix[i+1][j].z - laserCloudMatrix[i][j].z;
-    //             float angle = atan2(diffZ, sqrt(diffX*diffX + diffY*diffY)) * 180 / M_PI;
-    //             // Slope angle is larger than threashold, mark as obstacle point TODO: This may not be good cause slope is lower at higher elevations
-    //             // if (angle < -filterAngleLimit || angle > filterAngleLimit){
-    //             //     obstacleMatrix.at<int>(i, j) = 1;
-    //             //     continue;
-                
-    //         }
-    //     }
-    // }
-
     void extractFilteredCloud(){
         for (int i = 0; i < N_SCAN; ++i){
             for (int j = 0; j < Horizon_SCAN; ++j){
@@ -319,19 +250,6 @@ public:
             }
         }
         // RCLCPP_INFO(this->get_logger(), "laserCloudOut contains %zu points", laserCloudOut->size());
-
-        // Publish laserCloudOut for visualization (before downsample and BGK prediction)
-        if (pubCloudVisualHiRes->get_subscription_count() != 0){
-            sensor_msgs::msg::PointCloud2 laserCloudTemp;
-            pcl::toROSMsg(*laserCloudOut, laserCloudTemp);
-            // ADD THIS DEBUG PRINT:
-            // RCLCPP_INFO(this->get_logger(), "laserCloudTemp contains %d points", 
-            // laserCloudTemp.width * laserCloudTemp.height);
-
-            laserCloudTemp.header.stamp = this->get_clock()->now();
-            laserCloudTemp.header.frame_id = "map";
-            pubCloudVisualHiRes->publish(laserCloudTemp);
-        }
     }
 
     void downsampleCloud(){
@@ -384,15 +302,6 @@ public:
         }
 
         *laserCloudOut = *laserCloudTemp;
-
-        // Publish laserCloudOut for visualization (after downsample but beforeBGK prediction)
-        if (pubCloudVisualLowRes->get_subscription_count() != 0){
-            sensor_msgs::msg::PointCloud2 laserCloudTemp;
-            pcl::toROSMsg(*laserCloudOut, laserCloudTemp);
-            laserCloudTemp.header.stamp = this->get_clock()->now();
-            laserCloudTemp.header.frame_id = "map";
-            pubCloudVisualLowRes->publish(laserCloudTemp);
-        }
     }
 
     void predictCloudBGK(){
@@ -504,48 +413,6 @@ public:
         pubCloud->publish(laserCloudTemp);
     }
 
-    void publishLaserScan(){
-
-        updateLaserScan();
-
-        laserScan.header.stamp = this->get_clock()->now();
-        pubLaserScan->publish(laserScan);
-        // initialize laser scan for new scan
-        std::fill(laserScan.ranges.begin(), laserScan.ranges.end(), laserScan.range_max + 1.0);
-    }
-
-    void updateLaserScan(){
-
-        try{
-            auto transform = tf_buffer_->lookupTransform("base_link", "map", tf2::TimePointZero);
-
-            laserCloudObstacles->header.frame_id = "map";
-            laserCloudObstacles->header.stamp = 0;
-            // transform obstacle cloud back to "base_link" frame
-            pcl::PointCloud<PointType> laserCloudTemp;
-            sensor_msgs::msg::PointCloud2 cloud_in_msg, cloud_out_msg;
-            pcl::toROSMsg(*laserCloudObstacles, cloud_in_msg);
-            tf2::doTransform(cloud_in_msg, cloud_out_msg, transform);
-            pcl::fromROSMsg(cloud_out_msg, laserCloudTemp);
-
-            //convert point to scan
-            int cloudSize = laserCloudTemp.points.size();
-            for (int i = 0; i < cloudSize; ++i){
-                PointType *point = &laserCloudTemp.points[i];
-                float x = point->x;
-                float y = point->y;
-                float range = std::sqrt(x*x + y*y);
-                float angle = std::atan2(y, x);
-                int index = (angle - laserScan.angle_min) / laserScan.angle_increment;
-                if (index >= 0 && index < laserScan.ranges.size())
-                    laserScan.ranges[index] = std::min(laserScan.ranges[index], range);
-            } 
-        }
-        catch (tf2::TransformException& ex){
-            RCLCPP_ERROR(this->get_logger(), "Transform failure: %s", ex.what());
-            return;
-        }
-    }
 
     void pointcloud2laserscanInitialization(){
 

@@ -103,7 +103,7 @@ public:
         last_time = start;
         
         // Lock the the processes to prevent new data from interrupting old data
-        // std::lock_guard<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
         
         auto t1 = std::chrono::high_resolution_clock::now();
         if (getRobotPosition() == false) 
@@ -470,33 +470,6 @@ public:
         pubOccupancyMapLocal->publish(occupancyMap2D);
     }
 
-    // void publishLocalOccupancyGridWithHeight(){
-    //     if (pubOccupancyMapLocalHeight->get_subscription_count() == 0)
-    //         return;
-
-    //     // Copy occupancy grid structure
-    //     occupancyMap2DHeight.occupancy = occupancyMap2D;
-        
-    //     // Reset and populate elevation data
-    //     occupancyMap2DHeight.elevation.clear();
-    //     occupancyMap2DHeight.elevation.resize(mapArrayLength * mapArrayLength, 0.0);
-
-    //     for (int i = 0; i < mapArrayLength; ++i){
-    //         for (int j = 0; j < mapArrayLength; ++j){
-    //             PointType point;
-    //             point.x = occupancyMap2DHeight.occupancy.info.origin.position.x + i * mapResolution + mapResolution/2.0;
-    //             point.y = occupancyMap2DHeight.occupancy.info.origin.position.y + j * mapResolution + mapResolution/2.0;
-                
-    //             mapCell_t *cell = getCellFromPoint(&point);
-    //             if (cell != NULL && cell->observeTimes > 0) {
-    //                 int index = i + j * mapArrayLength;
-    //                 occupancyMap2DHeight.elevation[index] = cell->elevation;
-    //             }
-    //         }
-    //     }
-
-    //     pubOccupancyMapLocalHeight->publish(occupancyMap2DHeight);
-    // }
 
     mapCell_t* getCellFromPoint(PointType *point){
         int cubeX, cubeY;
