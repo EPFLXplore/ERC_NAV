@@ -77,10 +77,11 @@ extern const int N_SCAN = 32;   // vertical scan
 extern const int Horizon_SCAN = 440;        // horizontal scan lines
 
 // Map Params
+const int globalMapDim = 100;   // global map dimension in meters (represented as a square)
 extern const float mapResolution = 0.1; // map resolution
 extern const float mapCubeLength = 0.2; // the length of a sub-map (meters)
 extern const int mapCubeArrayLength = mapCubeLength / mapResolution; // the grid dimension of a sub-map (mapCubeLength / mapResolution)
-extern const int mapArrayLength = 2000 / mapCubeLength; // the sub-map dimension of global map (2000m x 2000m)
+extern const int mapArrayLength = globalMapDim / mapCubeLength; // the sub-map dimension of 
 extern const int rootCubeIndex = mapArrayLength / 2; // by default, robot is at the center of global map at the beginning
 
 // Cost Params
@@ -116,7 +117,7 @@ extern const float large_log_odds = 100;
 extern const float max_log_odds_for_belief = 20;
 
 // 2D Map Publish Params
-extern const int localMapLength = 1000; // length of the local occupancy grid map (meter)
+extern const int localMapLength = 5; // length of the local occupancy grid map (meter). This is equal to globalMapDim when creating the costmap for the entire map.
 extern const int localMapArrayLength = localMapLength / mapResolution;
 
 // Visualization Params
