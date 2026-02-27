@@ -59,6 +59,44 @@ set(dependencies
   nav2_core
 )
 
+################################## PLUGIN LIBRARY #########################
+find_package(nav2_costmap_2d REQUIRED)
+find_package(pluginlib REQUIRED)
+
+add_library(gradient_layer SHARED
+  src/gradient_layer_plugin.cpp
+)
+
+ament_target_dependencies(gradient_layer
+  rclcpp
+  nav2_costmap_2d
+  nav_msgs
+  pluginlib
+)
+
+target_include_directories(gradient_layer PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+install(TARGETS gradient_layer
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/
+  DESTINATION include/
+)
+
+install(FILES gradient_layer_plugin.xml
+  DESTINATION share/${PROJECT_NAME}
+)
+
+pluginlib_export_plugin_description_file(nav2_costmap_2d gradient_layer_plugin.xml)
+
+################################## END PLUGIN LIBRARY #########################
+
 # Executables
 add_executable(traversability_filter src/traversability_filter.cpp)
 ament_target_dependencies(traversability_filter ${dependencies})

@@ -18,8 +18,11 @@
   <depend>pcl_conversions</depend>
   <depend>elevation_msgs</depend>
   <depend>interactive_markers</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>pluginlib</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
+    <nav2_costmap_2d plugin="${prefix}/gradient_layer_plugin.xml"/>
   </export>
 </package>
