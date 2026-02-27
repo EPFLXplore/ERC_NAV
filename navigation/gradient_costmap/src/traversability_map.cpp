@@ -97,7 +97,7 @@ public:
         // Limit the speed of the callback
         if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < cloudHandlerRate)
         {
-            RCLCPP_WARN(this->get_logger(), "TOO EARLY");
+            // RCLCPP_WARN(this->get_logger(), "TOO EARLY");
             return;
         }
         last_time = start;
@@ -131,9 +131,9 @@ public:
         auto publish_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - t4).count();
         auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         
-        RCLCPP_WARN(this->get_logger(), 
-        "Processing: total=%ldms (lock=%ld, tf=%ld, convert=%ld, update=%ld, publish=%ld)",
-            total_time, lock_time, tf_time, convert_time, update_time, publish_time);
+        // RCLCPP_WARN(this->get_logger(), 
+        // "Processing: total=%ldms (lock=%ld, tf=%ld, convert=%ld, update=%ld, publish=%ld)",
+        //     total_time, lock_time, tf_time, convert_time, update_time, publish_time);
     }
 
     void updateElevationMap(){
@@ -274,7 +274,7 @@ public:
             for (auto cell : cellsToProcess) {
                 calculateTraversability(cell);
             }
-            RCLCPP_WARN(this->get_logger(), "Calculating traversability");
+            // RCLCPP_WARN(this->get_logger(), "Calculating traversability");
     }
 
     void calculateTraversability(mapCell_t *cell)
