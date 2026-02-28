@@ -1,4 +1,4 @@
-<library path="gradient_costmap">
+<library path="gradient_layer">
   <class type="gradient_layer::GradientLayer" base_class_type="nav2_costmap_2d::Layer">
     <description>A costmap layer that subscribes to an occupancy grid topic for traversability</description>
   </class>

@@ -72,7 +72,7 @@ extern const int cloudHandlerRate = 250; // time in ms to wait before processing
 
 // VLP-16
 extern const int N_SCAN = 32;   // vertical scan
-extern const int Horizon_SCAN = 440;        // horizontal scan lines
+extern const int Horizon_SCAN = 2048;        // horizontal scan lines
 
 // Map Params
 const int globalMapDim = 100;   // global map dimension in meters (represented as a square)
@@ -98,8 +98,9 @@ static_assert(
 // extern const int scanNumMax = std::max(scanNumCurbFilter, scanNumSlopeFilter);
 
 // Filter Threshold Params
-extern const float sensorMaxRangeLimit = 5; // only keep points with in a radius of x meters   
-extern const float sensorMinRangeLimit = 0.5; // remove points within a radius of 0.5 meters
+extern const float maxObstacleHeight = 2.0;     // maximum obstacle height of 2 meters 
+extern const float sensorMaxRangeLimit = 10; // only keep points with in a radius of x meters   
+extern const float sensorMinRangeLimit = 0.6; // remove points within a radius of 0.6 meters of Lidar
 extern const float filterAngleLimit = 35; // slope angle threshold     
 extern const float filterMaxRoughness = 0.1;      
 extern const int filterHeightMapArrayLength = sensorMaxRangeLimit*2 / mapResolution;    // size of the local height mat grid

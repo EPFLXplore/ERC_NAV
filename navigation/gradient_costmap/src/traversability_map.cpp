@@ -219,7 +219,7 @@ public:
 
         if (cell->observeTimes <= 1){
             cell->updateElevation(z, var);
-        } else {
+        } else {                                    // this update method may be more slow, as it uses a kalman filter to adapt heights, may need to add another statment to evaluate it
             float K = sigma / (sigma + var);
             float mu_new = mu + K * (z - mu);
             float sigma_new = (1 - K) * sigma;
@@ -274,7 +274,7 @@ public:
             for (auto cell : cellsToProcess) {
                 calculateTraversability(cell);
             }
-            // RCLCPP_WARN(this->get_logger(), "Calculating traversability");
+            RCLCPP_WARN(this->get_logger(), "Calculating traversability");
     }
 
     void calculateTraversability(mapCell_t *cell)

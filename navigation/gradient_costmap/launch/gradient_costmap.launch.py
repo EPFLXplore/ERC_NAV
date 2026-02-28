@@ -66,5 +66,5 @@ def generate_launch_description():
         # Add all nodes
         # *static_transforms,
         *traversability_nodes,
-        rviz_node
+        # rviz_node
     ])

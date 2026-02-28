@@ -44,8 +44,11 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+        auto qos = rclcpp::SensorDataQoS();
+
         subCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/ouster_points", 10, std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
+            "/ouster_points", qos, 
+            std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
 
         pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 10);
         // pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
@@ -133,7 +136,7 @@ public:
         // RCLCPP_INFO(this->get_logger(), "✓ Cloud downsampled");
         
         // Step 6: Use Gaussian Process to predict missing areas
-        predictCloudBGK();
+        // predictCloudBGK();           // this can be bad as it can introduce more noise into the costmap
         // RCLCPP_INFO(this->get_logger(), "✓ BGK prediction completed");
         
         // Step 7: Publish final point cloud
@@ -156,11 +159,14 @@ public:
         int valid_points = 0;
         int nan_points = 0;
         int out_of_bounds = 0;
-
+    
         // DEBUG
         int num_printed = 0;
         int num_too_close = 0;
-
+    
+        // Create a temporary cloud to hold filtered points
+        pcl::PointCloud<PointType>::Ptr filteredCloud(new pcl::PointCloud<PointType>());
+    
         // Extract range info
         // RCLCPP_INFO(this->get_logger(), "Starting range extraction loop...");
         for (int i = 0; i < N_SCAN; ++i){
@@ -178,7 +184,7 @@ public:
                 float pointDepth2 = sqrt((laserCloudIn->points[index].x * laserCloudIn->points[index].x) +
                                         (laserCloudIn->points[index].y * laserCloudIn->points[index].y) + 
                                         (laserCloudIn->points[index].z * laserCloudIn->points[index].z));
-
+    
                 // remove point if it's within the threshold range
                 if (pointDepth2 < sensorMinRangeLimit)
                 {
@@ -188,15 +194,27 @@ public:
                 // otherwise, store it into the range matrix and reset obstacle status
                 rangeMatrix.at<float>(i, j) = pointDepth2;
                 obstacleMatrix.at<int>(i, j) = 0;
+                
+                // Add filtered point to temporary cloud
+                filteredCloud->push_back(laserCloudIn->points[index]);
                 valid_points++;
             }
         }
+    
+        // // DEBUG: Publish filtered cloud
+        // sensor_msgs::msg::PointCloud2 debug_cloud;
+        // pcl::toROSMsg(*filteredCloud, debug_cloud);
+        // debug_cloud.header.stamp = this->get_clock()->now();
+        // debug_cloud.header.frame_id = "ST_Lidar_1";
+        // pubCloud->publish(debug_cloud);
+        // RCLCPP_INFO(this->get_logger(), "Published filtered cloud: %zu points (filtered out %d too close)", 
+        //             filteredCloud->size(), num_too_close);
     }
 
     bool transformCloud(){
         try{
             // Get the actual frame_id from the incoming message
-            std::string source_frame = "velodyne";  // or use laserCloudMsg->header.frame_id
+            std::string source_frame = "ST_Lidar_1";  // or use laserCloudMsg->header.frame_id
             
             // Look up transform from sensor frame to map
             auto transform = tf_buffer_->lookupTransform("map", source_frame, tf2::TimePointZero);
@@ -273,13 +291,18 @@ public:
             // if (laserCloudOut->points[i].intensity == 100)
             //     obstFlag[idx][idy] = true;
             // save min and max height of a grid
+            // maybe can add an average filter to smooth out the point readings from ouster as they are noisy
             if (initFlag[idx][idy] == false){
                 minHeight[idx][idy] = laserCloudOut->points[i].z;
-                maxHeight[idx][idy] = laserCloudOut->points[i].z;
+                // Initialize directly, then cap it
+                maxHeight[idx][idy] = std::min(maxObstacleHeight, laserCloudOut->points[i].z);
                 initFlag[idx][idy] = true;
             } else {
                 minHeight[idx][idy] = std::min(minHeight[idx][idy], laserCloudOut->points[i].z);
-                maxHeight[idx][idy] = std::max(maxHeight[idx][idy], laserCloudOut->points[i].z);
+                // Only update if below threshold
+                if (laserCloudOut->points[i].z < maxObstacleHeight) {
+                    maxHeight[idx][idy] = std::max(maxHeight[idx][idy], laserCloudOut->points[i].z);
+                }
             }
         }
         // intermediate cloud
