@@ -1,19 +1,16 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, CompressedImage, CameraInfo
+from sensor_msgs.msg import CompressedImage
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from cv_bridge import CvBridge
 import tf2_ros
 import tf2_geometry_msgs
 import cv2
 import numpy as np
-from ros2_aruco import transformations
 from geometry_msgs.msg import PoseArray, Pose, PoseStamped
-from std_msgs.msg import Float64MultiArray, MultiArrayDimension
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from custom_msg.srv import CameraParams
-from functools import partial
 import math
 
 from scipy.spatial.transform import Rotation as R
@@ -314,7 +311,6 @@ class MultiViewArucoNode(Node):
                 return
 
 
-            all_markers = []  # Store all detected markers (ID, pose, yaw)
             distinct_ids = set()  # Track unique marker IDs
 
             # Step 1: Store all detections per ID

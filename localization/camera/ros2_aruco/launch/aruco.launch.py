@@ -2,16 +2,14 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 
 
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco')
     rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
 
-    multiview = LaunchConfiguration('multiview', default='true')
     rviz = LaunchConfiguration('rviz', default='false')
 
 
@@ -20,16 +18,7 @@ def generate_launch_description():
             package='ros2_aruco',
             executable='multiview_aruco_node',
             name='aruco_node',
-            output='screen',
-            condition=IfCondition(multiview)
-        ),
-
-        Node(
-            package='ros2_aruco',
-            executable='aruco_node',
-            name='aruco_node',
-            output='screen',
-            condition=UnlessCondition(multiview)
+            output='screen'
         ),
 
         Node(

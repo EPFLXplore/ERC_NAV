@@ -6,13 +6,9 @@ from ros2_aruco_interfaces.msg import ArucoMarkers
 from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 import math
-from scipy.optimize import least_squares, fsolve
+from scipy.optimize import least_squares
 
 
-import cv2
-
-
-from ros2_aruco.triangulation import triangulate #custom geometric triangulation code
 from ros2_aruco.triangulation_opti import triangulate_opti #custom optimization triangulation code
 
 #for generating combinations of arucos (pairs for yaw estimation and triplets for triangulation)

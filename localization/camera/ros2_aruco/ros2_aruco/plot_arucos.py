@@ -3,8 +3,6 @@ import rclpy
 from rclpy.node import Node
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Pose
-import std_msgs.msg
 
 class ArucoMarkersViz(Node):
     def __init__(self):
