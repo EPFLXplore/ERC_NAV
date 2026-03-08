@@ -5,6 +5,28 @@ FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+
+# Keys fix
+RUN rm -f /etc/apt/sources.list.d/ros2.list /etc/apt/sources.list.d/ros-latest.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg2 lsb-release software-properties-common
+
+## ros 2
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+       > /etc/apt/sources.list.d/ros2.list
+
+## Isaac
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/isaac-ros-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/isaac-ros-archive-keyring.gpg] https://isaac.download.nvidia.com/isaac-ros/release-3 jammy release-3.0" \
+       > /etc/apt/sources.list.d/isaac-ros.list
+
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
 RUN apt-get update && apt-get upgrade -y
@@ -24,6 +46,7 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-gazebo-ros2-control \
     ros-${ROS_DISTRO}-rqt-tf-tree \
+    ros-${ROS_DISTRO}-isaac-ros-visual-slam \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
