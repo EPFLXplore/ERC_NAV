@@ -15,7 +15,7 @@ class ImuRetimestampNode(Node):
 
         # QoS profile: best-effort, moderate depth
         qos = rclpy.qos.QoSProfile(
-            depth=200,
+            depth=2,
             reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
             durability=rclpy.qos.DurabilityPolicy.VOLATILE)
 

@@ -5,6 +5,13 @@ FROM ghcr.io/epflxplore/docker_commons:humble-jetson
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+#new ros2 humble apt source setup for signing the packages
+RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+RUN apt update && apt install ros2-apt-source  
+RUN rm /etc/apt/sources.list.d/ros2.list
+RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
+
 # installing pyrealsense2 (doesnt work with pip)
 # Install dependencies for building librealsense with Python bindings
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 #####################################
-#Librealsense build form source
+#Librealsense build form source: remove when realsense cameras are no longer used.
 
 # Clone the librealsense repository with submodules
 RUN git clone https://github.com/IntelRealSense/librealsense.git /librealsense \
@@ -173,7 +180,7 @@ RUN pip install opencv-python --no-cache-dir
 #RUN pip install pyrealsense2 -> does not work
 # For Aruco
 RUN pip install opencv-contrib-python==4.6.0.66 --no-cache-dir
-RUN pip install depthai --no-cache-dir
+RUN pip install depthai==2.30 --no-cache-dir
 RUN pip install pygame_gui --no-cache-dir
 RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
