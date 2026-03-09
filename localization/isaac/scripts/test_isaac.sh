@@ -17,3 +17,4 @@ ros2 launch isaac_ros_examples isaac_ros_examples.launch.py \
     interface_specs_file:="$WS/isaac_ros_assets/isaac_ros_visual_slam/zed2_quickstart_interface_specs.json"
 
 # rviz2 -d $(ros2 pkg prefix isaac_ros_visual_slam --share)/rviz/default.cfg.rviz
+# ros2 topic echo /visual_slam/tracking/vo_pose
