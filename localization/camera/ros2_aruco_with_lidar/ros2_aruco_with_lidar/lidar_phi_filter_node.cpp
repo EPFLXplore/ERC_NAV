@@ -10,6 +10,12 @@
 #include <array>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 using namespace std;
 // pas de placeholders: on utilise des lambdas pour les callbacks
@@ -30,7 +36,7 @@ inline double angDeltaDeg(double a_deg, double b_deg) {
 
 class LidarPhiFilterNode : public rclcpp::Node {
 public:
-    LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node") {
+    LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
         tolerance_radius_ = 1.0; 
@@ -40,6 +46,9 @@ public:
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;
+
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
+
         // subscriber de POINTCLOUD2
 
         cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -54,10 +63,11 @@ public:
                 detect_3_best_camera(msg);
             });
 
-    cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 1);
-    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", rclcpp::QoS(10));
-    cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", rclcpp::QoS(10));
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
 
+    cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
+    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", qos);
+    cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", qos);
     }
 
 private:
@@ -116,8 +126,45 @@ private:
             }
             if (msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90) {
                 ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
+                geometry_msgs::msg::Point centre_moyen;
+                centre_moyen = msg->poses[i].position;
+
+                std::string target_frame = "base_link";
+                try {
+                    if (tf_buffer_.canTransform(target_frame, 
+                                               msg->header.frame_id,
+                                               msg->header.stamp,
+                                               tf2::durationFromSec(0.1))) {
+                        auto transform = tf_buffer_.lookupTransform(
+                            target_frame,
+                            msg->header.frame_id,
+                            msg->header.stamp
+                        );
+                        
+                        geometry_msgs::msg::PointStamped point_in, point_out;
+                        point_in.header = msg->header;
+                        point_in.point = centre_moyen;
+                        tf2::doTransform(point_in, point_out, transform);
+                        centre_moyen = point_out.point;
+                    } else {
+                        RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
+                                           "Transform not available from %s to %s",
+                                           msg->header.frame_id.c_str(), target_frame.c_str());
+                        target_frame = msg->header.frame_id;
+                    }
+                } catch (const tf2::TransformException &ex) {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
+                                        "Transform error: %s", ex.what());
+                    target_frame = msg->header.frame_id;
+                }
+                
+                cube_msg.header = msg->header;
+                cube_msg.header.frame_id = target_frame;
                 cube_msg.ar_angles_list.push_back(msg->ar_angles_list[i]);
-                cube_msg.poses.push_back(msg->poses[i]);
+                geometry_msgs::msg::Pose cube_pose;
+                cube_pose.position = centre_moyen;
+                cube_pose.orientation = msg->poses[i].orientation;
+                cube_msg.poses.push_back(cube_pose);
                 cube_msg.marker_ids.push_back(msg->marker_ids[i]);
                 cube_markers_pub_->publish(cube_msg);
 
@@ -125,12 +172,13 @@ private:
                 visualization_msgs::msg::MarkerArray markers;
                 visualization_msgs::msg::Marker marker;
                 marker.header.stamp = this->now();
-                marker.header.frame_id = "map"; // adjust frame as needed
+                marker.header.frame_id = target_frame;
                 marker.ns = "cube_centres";
                 marker.id = static_cast<int>(i);
                 marker.type = visualization_msgs::msg::Marker::SPHERE;
                 marker.action = visualization_msgs::msg::Marker::ADD;
-                marker.pose = msg->poses[i];
+                marker.pose.position = centre_moyen;
+                marker.pose.orientation.w = 1.0;
                 marker.scale.x = 0.1;
                 marker.scale.y = 0.1;
                 marker.scale.z = 0.1;
@@ -250,6 +298,9 @@ private:
     size_t selected_count_;
     double selected_angles_aruco_deg_[3];
     double selected_ranges_[3];
+    // transformation 
+    tf2_ros::Buffer tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
 };
 

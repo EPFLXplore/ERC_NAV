@@ -15,6 +15,12 @@
 #include <cmath>
 #include <string>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 
 // #include <pcl/filters/project_inliers.h>
@@ -36,10 +42,12 @@ inline double angDeltaDeg(double a_deg, double b_deg) {
 class DetectCubeNode : public rclcpp::Node {
 public:
     DetectCubeNode()
-        : rclcpp::Node("detect_cube_node") {
+        : rclcpp::Node("detect_cube_node"), tf_buffer_(this->get_clock()) {
         input_cloud_topic_ = "/ouster_points_aruco";
         output_cloud_topic_ = "/cloud_with_lines";
         aruco_topic_ = "aruco_markers";
+
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
         distance_threshold_inliers = 0.05; 
         max_iterations_ = 300;
@@ -128,7 +136,7 @@ private:
                 
                 // Utiliser angDeltaDeg avec offset +100° (comme dans lidar_phi_filter_node)              
                 double angle_diff = angDeltaDeg(pt_angle_deg, aruco_angle_deg + 100.0);
-                RCLCPP_INFO(this->get_logger(), "angle_diff %.3f", angle_diff);
+                // RCLCPP_INFO(this->get_logger(), "angle_diff %.3f", angle_diff);
 
 
                 // New parameters for line detection depending on distance to get robust lines
@@ -136,8 +144,8 @@ private:
                 // 0.3 is the width of the aruco tag cubes
                 // 0.002967 is the tan(delta_xy) where delta_xy is the minimum horizontal resolution of the lidar
                 // We divide by 2 since we want at least this 
-                RCLCPP_INFO(this->get_logger(), "dist %.3f", dist);
-                RCLCPP_INFO(this->get_logger(), "r_point %.3f", r_point);
+                // RCLCPP_INFO(this->get_logger(), "dist %.3f", dist);
+                // RCLCPP_INFO(this->get_logger(), "r_point %.3f", r_point);
 
                 min_inliers_ = static_cast<int>( 0.3/(dist*0.002967) /3);
 
@@ -149,14 +157,14 @@ private:
                 
                 if ( abs(dist-r_point) < max_distance_from_aruco_ && angle_diff < angular_tolerance_deg_) {
                     pointcloud_minus_lines->push_back(pt);
-                    RCLCPP_INFO(this->get_logger(), "pushback");
+                    // RCLCPP_INFO(this->get_logger(), "pushback");
 
                 }
                 
             }
             if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers_)) {
-                RCLCPP_INFO(this->get_logger(), "min inliners %zu", static_cast<size_t>(min_inliers_));
-                RCLCPP_INFO(this->get_logger(), "pas assez de points");
+                // RCLCPP_INFO(this->get_logger(), "min inliners %zu", static_cast<size_t>(min_inliers_));
+                // RCLCPP_INFO(this->get_logger(), "pas assez de points");
                 continue;
             }
 
@@ -187,14 +195,14 @@ private:
                 pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
                 pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients());
                 seg.segment(*inliers, *coefficients);
-                RCLCPP_INFO(this->get_logger(), "min inliners juste avant %.3f", min_inliers_);
+                // RCLCPP_INFO(this->get_logger(), "min inliners juste avant %.3f", min_inliers_);
 
                 if (inliers->indices.size() < static_cast<size_t>(min_inliers_)) {
-                    RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne");
+                    // RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne");
                     cant_find_line_counter++;
                     break;
                 }
-                RCLCPP_INFO(this->get_logger(), "detecte une ligne avec %zu inliers", inliers->indices.size());
+                // RCLCPP_INFO(this->get_logger(), "detecte une ligne avec %zu inliers", inliers->indices.size());
 
                 const float x0 = coefficients->values[0];
                 const float y0 = coefficients->values[1];
@@ -316,7 +324,7 @@ private:
 
                 // markers.markers.push_back(line_marker);
                 
-                RCLCPP_INFO(this->get_logger(), "avantswap111");
+                // RCLCPP_INFO(this->get_logger(), "avantswap111");
 
 
                 extract.setNegative(true);
@@ -511,11 +519,119 @@ private:
                 centre_moyen.y /= static_cast<float>(cube_centres.size());
                 centre_moyen.z /= static_cast<float>(cube_centres.size());
 
+                RCLCPP_INFO(this->get_logger(), "marker ids: %s", std::to_string(aruco_ids_[aruco_idx]).c_str());
+                RCLCPP_INFO(this->get_logger(), "Centre position in frame %s: (%.3f, %.3f, %.3f)", 
+                           cloud_msg.header.frame_id.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
+
+                // Default: keep data in original lidar frame
+                std::string target_frame = cloud_msg.header.frame_id;
+                
+                // Transform chain: ST_Lidar_1 -> ST_Service_Module_1 -> base_link
+                // TF2 should handle this automatically, but we need to check each step
+                try {
+                    // First try direct transform (TF2 should chain automatically)
+                    if (tf_buffer_.canTransform("base_link", 
+                                               cloud_msg.header.frame_id,
+                                               tf2::TimePointZero,
+                                               tf2::durationFromSec(0.5))) {
+                        auto transform = tf_buffer_.lookupTransform(
+                            "base_link",
+                            cloud_msg.header.frame_id,
+                            tf2::TimePointZero
+                        );
+                        
+                        RCLCPP_INFO(this->get_logger(), "Direct transform available! Translation: (%.3f, %.3f, %.3f)",
+                                   transform.transform.translation.x,
+                                   transform.transform.translation.y,
+                                   transform.transform.translation.z);
+                        
+                        geometry_msgs::msg::PointStamped point_in, point_out;
+                        point_in.header.frame_id = cloud_msg.header.frame_id;
+                        point_in.header.stamp = rclcpp::Time(0);
+                        point_in.point = centre_moyen;
+                        tf2::doTransform(point_in, point_out, transform);
+                        centre_moyen = point_out.point;
+                        target_frame = "base_link";
+                        
+                        RCLCPP_INFO(this->get_logger(), "AFTER transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
+                                   target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
+                    } else {
+                        // If direct transform fails, try manual chain via ST_Service_Module_1
+                        RCLCPP_WARN(this->get_logger(), "Direct transform not available, trying via ST_Service_Module_1");
+                        
+                        geometry_msgs::msg::PointStamped point_lidar, point_service, point_base;
+                        point_lidar.header.frame_id = cloud_msg.header.frame_id;
+                        point_lidar.header.stamp = rclcpp::Time(0);
+                        point_lidar.point = centre_moyen;
+                        
+                        // Step 1: ST_Lidar_1 -> ST_Service_Module_1
+                        if (tf_buffer_.canTransform("ST_Service_Module_1", 
+                                                   cloud_msg.header.frame_id,
+                                                   tf2::TimePointZero,
+                                                   tf2::durationFromSec(0.5))) {
+                            auto transform1 = tf_buffer_.lookupTransform(
+                                "ST_Service_Module_1",
+                                cloud_msg.header.frame_id,
+                                tf2::TimePointZero
+                            );
+                            
+                            RCLCPP_INFO(this->get_logger(), "Transform 1 (%s -> ST_Service_Module_1): (%.3f, %.3f, %.3f)",
+                                       cloud_msg.header.frame_id.c_str(),
+                                       transform1.transform.translation.x,
+                                       transform1.transform.translation.y,
+                                       transform1.transform.translation.z);
+                            
+                            tf2::doTransform(point_lidar, point_service, transform1);
+                            
+                            // Step 2: ST_Service_Module_1 -> base_link
+                            if (tf_buffer_.canTransform("base_link", 
+                                                       "ST_Service_Module_1",
+                                                       tf2::TimePointZero,
+                                                       tf2::durationFromSec(0.5))) {
+                                auto transform2 = tf_buffer_.lookupTransform(
+                                    "base_link",
+                                    "ST_Service_Module_1",
+                                    tf2::TimePointZero
+                                );
+                                
+                                RCLCPP_INFO(this->get_logger(), "Transform 2 (ST_Service_Module_1 -> base_link): (%.3f, %.3f, %.3f)",
+                                           transform2.transform.translation.x,
+                                           transform2.transform.translation.y,
+                                           transform2.transform.translation.z);
+                                
+                                tf2::doTransform(point_service, point_base, transform2);
+                                centre_moyen = point_base.point;
+                                target_frame = "base_link";
+                                
+                                RCLCPP_INFO(this->get_logger(), "AFTER chained transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
+                                           target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
+                            } else {
+                                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
+                                           "Transform ST_Service_Module_1 -> base_link not available. "
+                                           "Check: ros2 run tf2_ros tf2_echo base_link ST_Service_Module_1");
+                                centre_moyen = point_service.point;
+                                target_frame = "ST_Service_Module_1";
+                            }
+                        } else {
+                            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
+                                       "Transform %s -> ST_Service_Module_1 not available. "
+                                       "Check: ros2 run tf2_ros tf2_echo ST_Service_Module_1 %s",
+                                       cloud_msg.header.frame_id.c_str(), cloud_msg.header.frame_id.c_str());
+                        }
+                    }
+                } catch (const tf2::TransformException &ex) {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
+                               "Transform error: %s. Keeping data in %s frame.", 
+                               ex.what(), cloud_msg.header.frame_id.c_str());
+                }
+
+
                 // Marker RViz pour le centre moyen
                 visualization_msgs::msg::Marker centre_marker_moyen;
-                centre_marker_moyen.header = cloud_msg.header;
+                centre_marker_moyen.header.stamp = cloud_msg.header.stamp;
+                centre_marker_moyen.header.frame_id = target_frame;
                 centre_marker_moyen.ns = "cube_center_mean";
-                centre_marker_moyen.id = static_cast<int>(aruco_idx);  // ID fixe pour le centre moyen
+                centre_marker_moyen.id = static_cast<int>(aruco_ids_[aruco_idx]);  // ID fixe pour le centre moyen
 
                 centre_marker_moyen.type = visualization_msgs::msg::Marker::SPHERE;
                 centre_marker_moyen.action = visualization_msgs::msg::Marker::ADD;
@@ -533,26 +649,28 @@ private:
                 centre_marker_moyen.color.a = 1.0f;
                 points.markers.push_back(centre_marker_moyen);
 
-                visualization_msgs::msg::Marker text_marker;
-                text_marker.header = cloud_msg.header;
-                text_marker.ns = "cube_aruco_id";
-                text_marker.id = static_cast<int>(aruco_idx);
-                text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-                text_marker.action = visualization_msgs::msg::Marker::ADD;
-                text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
-                text_marker.pose.position.x = centre_moyen.x;
-                text_marker.pose.position.y = centre_moyen.y;
-                text_marker.pose.position.z = centre_moyen.z + 0.15;
-                text_marker.pose.orientation.w = 1.0;
-                text_marker.scale.z = 0.08;
-                text_marker.color.r = 1.0f;
-                text_marker.color.g = 1.0f;
-                text_marker.color.b = 1.0f;
-                text_marker.color.a = 1.0f;
-                text_marker.text = "ArUco " + std::to_string(aruco_ids_[aruco_idx]);
-                points.markers.push_back(text_marker);
+                // visualization_msgs::msg::Marker text_marker;
+                // text_marker.header = cloud_msg.header;
+                // text_marker.ns = "cube_aruco_id";
+                // text_marker.id = static_cast<int>(aruco_ids_[aruco_idx]);
+                // text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+                // text_marker.action = visualization_msgs::msg::Marker::ADD;
+                // text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+                // text_marker.pose.position.x = centre_moyen.x;
+                // text_marker.pose.position.y = centre_moyen.y;
+                // text_marker.pose.position.z = centre_moyen.z + 0.15;
+                // text_marker.pose.orientation.w = 1.0;
+                // text_marker.scale.z = 0.08;
+                // text_marker.color.r = 1.0f;
+                // text_marker.color.g = 1.0f;
+                // text_marker.color.b = 1.0f;
+                // text_marker.color.a = 1.0f;
+                // text_marker.text = "ArUco " + std::to_string(aruco_ids_[aruco_idx]);
+                // points.markers.push_back(text_marker);
 
-                cube_msg.marker_ids.push_back(aruco_idx);
+                cube_msg.header.stamp = cloud_msg.header.stamp;
+                cube_msg.header.frame_id = target_frame;
+                cube_msg.marker_ids.push_back(aruco_ids_[aruco_idx]);
                 geometry_msgs::msg::Pose pose;
                 pose.position = centre_moyen;
                 pose.orientation.w = 1.0;
@@ -607,6 +725,8 @@ private:
     std::vector<geometry_msgs::msg::Pose> aruco_poses_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
 
+    tf2_ros::Buffer tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
 };
 
