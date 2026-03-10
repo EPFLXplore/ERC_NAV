@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.time import Time
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.executors import SingleThreadedExecutor
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from geometry_msgs.msg import Quaternion, TransformStamped
@@ -117,9 +118,9 @@ class PoseEstimatorNode(Node):
         
         self.odometry_subscription = self.create_subscription(
             Odometry,
-            '/fused_nav_ekf_odom',   
+            '/fused_nav_ekf_odom',
             self.odometry_callback,
-            10)
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
         self.odometry_subscription
 
         self.odom_pos_x = 0.0

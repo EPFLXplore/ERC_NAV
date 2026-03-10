@@ -99,6 +99,8 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-tf2* \
     ros-${ROS_DISTRO}-xacro \
     ros-${ROS_DISTRO}-imu-filter-madgwick \
+    ros-${ROS_DISTRO}-pcl-ros \
+    ros-${ROS_DISTRO}-tf2-ros \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -127,6 +129,15 @@ RUN apt-get update && apt-get install -y \
     ros-humble-pcl-msgs \
     iputils-ping
 
+#very useful tools for debugging the network and the usb devices on the jetson, can be removed without any issues
+RUN apt-get install -y --no-install-recommends \
+    iperf3 \
+    net-tools \
+    nmap \
+    usbutils \
+    v4l-utils \
+    iftop \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Add USB rules for oak-d
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
@@ -158,13 +169,10 @@ COPY . .
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
 
-# Install ROS 2 Nav dependencies
-#CAUTION : the exec depend of gazebo-ros in xplore_description's package.xml will cause the build to crash !!
-# will give the error: can't locate ros-humble-gazebo-ros
-
+# Install ROS 2 dependencies #skip keys otherwise wont build
 RUN rosdep update
-RUN rosdep install -r -y -i --from-path src --rosdistro $ROS_DISTRO --skip-keys="ros-humble-gazebo-ros"
-
+RUN rosdep install -r -y -i --from-path src --rosdistro $ROS_DISTRO \
+  --skip-keys="gazebo_ros gazebo_ros2_control ros2_control ros2_controllers controller_manager joint_state_broadcaster position_controllers velocity_controllers rviz2"
 
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
@@ -181,10 +189,14 @@ RUN pip install opencv-python --no-cache-dir
 # For Aruco
 RUN pip install opencv-contrib-python==4.6.0.66 --no-cache-dir
 RUN pip install depthai==2.30 --no-cache-dir
-RUN pip install pygame_gui --no-cache-dir
-RUN pip install pygame --no-cache-dir
+# RUN pip install pygame_gui --no-cache-dir #no longer used
+# RUN pip install pygame --no-cache-dir     #no longer used
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
+#for the convex optimization solver used in the global aruco range+bearing localization
+RUN pip install --no-cache-dir cvxpy ecos
+
+
 
 
 # Clean up

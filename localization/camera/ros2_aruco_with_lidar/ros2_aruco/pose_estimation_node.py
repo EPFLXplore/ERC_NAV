@@ -7,7 +7,7 @@ from geometry_msgs.msg import Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 import math
 from scipy.optimize import least_squares, fsolve
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 
 
