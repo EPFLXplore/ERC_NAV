@@ -16,3 +16,9 @@
 [submodule "sensors/camera/ERC_CAMERAS"]
 	path = sensors/camera/ERC_CAMERAS
 	url = git@github.com:EPFLXplore/ERC_CAMERAS.git
+[submodule "localization/camera/isaac/src/isaac_ros_common"]
+	path = localization/camera/isaac/src/isaac_ros_common
+	url = https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common.git
+[submodule "localization/camera/isaac/src/zed-ros2-wrapper"]
+	path = localization/camera/isaac/src/zed-ros2-wrapper
+	url = https://github.com/stereolabs/zed-ros2-wrapper
