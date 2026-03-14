@@ -184,7 +184,8 @@ ENV GAZEBO_MODEL_PATH=/usr/share/gazebo-11/models
 ENV GAZEBO_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
 
 # Install additional Python packages
-RUN pip install opencv-python --no-cache-dir
+RUN pip install "numpy<2" --no-cache-dir
+# RUN pip install opencv-python --no-cache-dir
 #RUN pip install pyrealsense2 -> does not work
 # For Aruco
 RUN pip install opencv-contrib-python==4.6.0.66 --no-cache-dir
