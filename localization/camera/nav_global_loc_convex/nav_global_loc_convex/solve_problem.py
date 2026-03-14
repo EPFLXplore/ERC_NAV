@@ -11,7 +11,7 @@ class ConvexRangeBearing(Node):
     def __init__(self):
         super().__init__("convex_rb_localizer")
 
-        self.declare_parameter("lambda_bearing", 9999.0) #99999999
+        self.declare_parameter("lambda_bearing", 999999.0) #99999999
         self.declare_parameter("map_xmin", -60.0)
         self.declare_parameter("map_xmax",  60.0)
         self.declare_parameter("map_ymin", -60.0)
@@ -27,11 +27,18 @@ class ConvexRangeBearing(Node):
         self.relative_position = {}
 
         # 4 anchors for demo (anchors a absolute positions of the aruco tags)
+        # self.anchor = {
+        #     1: np.array([2.09, 0]),
+        #     2: np.array([-1.87, -1.23]),
+        #     7: np.array([-2.22, 1.17]),
+        #     6: np.array([2.55, -1.0]),
+        # }
+
         self.anchor = {
-            1: np.array([2.09, 0]),
-            2: np.array([-1.87, -1.23]),
-            7: np.array([-2.22, 1.17]),
-            6: np.array([2.55, -1.0]),
+            1: np.array([1.60, 0]),
+            2: np.array([1.60, -0.65]),
+            7: np.array([-1.70, 0.90]),
+            6: np.array([-1.70, -0.55]),
         }
 
         qos = rclpy.qos.QoSProfile(
@@ -44,7 +51,7 @@ class ConvexRangeBearing(Node):
         self.pub_pos = self.create_publisher(Pose2D, "aruco_rover_pos", qos)
 
         self.sub_mes_ = self.create_subscription(
-            ArucoMarkers, "cube_markers", self.aruco_callback, qos)
+            ArucoMarkers, "/cube_markers", self.aruco_callback, qos)
         self.sub_mes_
 
 
@@ -96,7 +103,7 @@ class ConvexRangeBearing(Node):
         prob = cp.Problem(cp.Minimize(objective), constraints)
 
         try:
-            prob.solve(solver=cp.ECOS, verbose=False, max_iters=600, reltol=1e-6, feastol=1e-6)
+            prob.solve(solver=cp.ECOS, verbose=True, max_iters=900, reltol=1e-6, feastol=1e-6)
         except Exception as e:
             self.get_logger().error(f"CVX/ECOS failed: {e}")
             return None
@@ -113,7 +120,7 @@ class ConvexRangeBearing(Node):
         # msg contains markers with poses in base_link frame
         # Process all detected markers and accumulate measurements
         pos = None
-        
+
         # Process EACH marker in the message
         for i, marker_id in enumerate(msg.marker_ids):
             # Check if this marker is a known anchor
@@ -134,8 +141,8 @@ class ConvexRangeBearing(Node):
             
             # Calculate bearing unit vector: simple normalization
             # pose is already in base_link frame
-            vx = x_cam / range_measured
-            vy = y_cam / range_measured
+            vx = - x_cam / range_measured
+            vy = - y_cam / range_measured
             
             bearing_angle = np.arctan2(vy, vx) * 180 / np.pi
             self.get_logger().info(

@@ -39,8 +39,8 @@ public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
-        tolerance_radius_ = 1.0; 
-        hauteur_z_min= -0.8;
+        tolerance_radius_ = 0.3; // 0.2 is the limit 
+        hauteur_z_min= -0.7;
         hauteur_z_max= 1;
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
@@ -91,7 +91,7 @@ private:
     void detect_3_best_camera(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
         size_t n = msg->ar_angles_list.size();
         //if (msg->poses.size() < n) n = msg->poses.size();
-        RCLCPP_INFO(this->get_logger(), "n : %f", n);
+        // RCLCPP_INFO(this->get_logger(), "n : %f", n);
 
         const double INF = 1e10;
         double best_ang[3] = {0.0, 0.0, 0.0};
@@ -114,12 +114,12 @@ private:
                 best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
                 best_rng[1] = best_rng[0]; best_ang[1] = best_ang[0]; z_aruco[1] = z_aruco[0];
                 best_rng[0] = r;           best_ang[0] = a; z_aruco[0] = z;
-                RCLCPP_INFO(this->get_logger(), "premierif : %f", i);
+                // RCLCPP_INFO(this->get_logger(), "premierif : %f", i);
 
             } else if (r < best_rng[1] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
                 best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
                 best_rng[1] = r;           best_ang[1] = a; z_aruco[1] = z;
-                RCLCPP_INFO(this->get_logger(), "deuxieme : %f", i);
+                // RCLCPP_INFO(this->get_logger(), "deuxieme : %f", i);
 
             } else if (r < best_rng[2] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
                 best_rng[2] = r;           best_ang[2] = a; z_aruco[2] = z;
@@ -246,7 +246,7 @@ private:
             bool match = false;
             for (size_t i = 0; i < k; ++i) {
                 // RCLCPP_INFO(this->get_logger(), "position z pt cloud lidar: %.3f", p[2])
-                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+100) <= tolerance_deg_ &&
+                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ &&
                     fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z_min && p[2]< hauteur_z_max) 
                     { 
                         match = true;

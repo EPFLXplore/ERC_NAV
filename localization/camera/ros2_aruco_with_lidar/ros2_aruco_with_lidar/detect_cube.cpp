@@ -55,7 +55,7 @@ public:
         min_inliers_ = 10; // at least 20 points to define a line
         max_lines_ = 3; // at least 2 lines to form a corner
 
-        max_distance_from_aruco_ = 1; // rayon autour de l'ArUco
+        max_distance_from_aruco_ = 0.3; // rayon autour de l'ArUco
         angular_tolerance_deg_ = 10; // tolérance angulaire
         
         
@@ -135,7 +135,7 @@ private:
                 double pt_angle_deg = atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) * 180.0 / M_PI;
                 
                 // Utiliser angDeltaDeg avec offset +100° (comme dans lidar_phi_filter_node)              
-                double angle_diff = angDeltaDeg(pt_angle_deg, aruco_angle_deg + 100.0);
+                double angle_diff = angDeltaDeg(pt_angle_deg, wrap180(aruco_angle_deg +90));
                 // RCLCPP_INFO(this->get_logger(), "angle_diff %.3f", angle_diff);
 
 
@@ -525,6 +525,8 @@ private:
 
                 // Default: keep data in original lidar frame
                 std::string target_frame = cloud_msg.header.frame_id;
+                // std::string target_frame = "base_link";
+
                 
                 // Transform chain: ST_Lidar_1 -> ST_Service_Module_1 -> base_link
                 // TF2 should handle this automatically, but we need to check each step
@@ -669,11 +671,11 @@ private:
                 // points.markers.push_back(text_marker);
 
                 cube_msg.header.stamp = cloud_msg.header.stamp;
-                cube_msg.header.frame_id = target_frame;
+                cube_msg.header.frame_id = "base_link";
                 cube_msg.marker_ids.push_back(aruco_ids_[aruco_idx]);
                 geometry_msgs::msg::Pose pose;
                 pose.position = centre_moyen;
-                pose.orientation.w = 1.0;
+                pose.orientation.w = 0.0;
                 cube_msg.poses.push_back(pose);
                 float angle_deg = std::atan2(centre_moyen.y, centre_moyen.x) * 180.0f / static_cast<float>(M_PI);
                 cube_msg.ar_angles_list.push_back(angle_deg);
