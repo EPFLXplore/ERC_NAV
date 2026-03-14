@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+
+from collections import deque
+import copy
+import math
+from typing import Optional
+
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.duration import Duration
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, qos_profile_sensor_data
+from zed_msgs.srv import SetPose
+
+
+class NativeVioWatcher(Node):
+    def __init__(self) -> None:
+        super().__init__('native_vio_watcher')
+
+        self.declare_parameter('pose_topic', '/zed2i/zed_node/pose')
+        self.declare_parameter('offset_pose_topic', '/zed2i/zed_node/offset_pose')
+        self.declare_parameter('reference_odom_topic', '/fused_nav_ekf_odom')
+        self.declare_parameter('set_pose_service', '/zed2i/zed_node/set_pose')
+        self.declare_parameter('jump_threshold_m', 0.2)
+        self.declare_parameter('jump_frequency_window_sec', 5.0)
+        self.declare_parameter('jump_frequency_reset_count', 1)
+        self.declare_parameter('reset_cooldown_sec', 0.0)
+        self.declare_parameter('max_pose_frame_gap_sec', 0.5)
+        self.declare_parameter('set_pose_retry_count', 10)
+        self.declare_parameter('set_pose_retry_delay_sec', 0.1)
+        self.declare_parameter('post_reset_check_delay_sec', 1.0)
+        self.declare_parameter('post_reset_max_distance_m', 1.0)
+
+        self.pose_topic = self.get_parameter('pose_topic').value
+        self.offset_pose_topic = self.get_parameter('offset_pose_topic').value
+        self.reference_odom_topic = self.get_parameter('reference_odom_topic').value
+        self.set_pose_service_name = self.get_parameter('set_pose_service').value
+        self.jump_threshold_m = float(self.get_parameter('jump_threshold_m').value)
+        self.jump_frequency_window_sec = float(self.get_parameter('jump_frequency_window_sec').value)
+        self.jump_frequency_reset_count = max(1, int(self.get_parameter('jump_frequency_reset_count').value))
+        self.reset_cooldown_sec = float(self.get_parameter('reset_cooldown_sec').value)
+        self.max_pose_frame_gap_sec = float(self.get_parameter('max_pose_frame_gap_sec').value)
+        self.set_pose_retry_count = max(1, int(self.get_parameter('set_pose_retry_count').value))
+        self.set_pose_retry_delay_sec = float(self.get_parameter('set_pose_retry_delay_sec').value)
+        self.post_reset_check_delay_sec = float(self.get_parameter('post_reset_check_delay_sec').value)
+        self.post_reset_max_distance_m = float(self.get_parameter('post_reset_max_distance_m').value)
+
+        self.last_pose_msg: Optional[PoseStamped] = None
+        self.latest_pose_msg: Optional[PoseStamped] = None
+        self.latest_reference_odom_msg: Optional[Odometry] = None
+        self.last_reset_time = None
+        self.last_reset_target_position: Optional[tuple[float, float, float]] = None
+        self.recovery_in_progress = False
+        self.jump_event_times = deque()
+        self.set_pose_retry_timer = None
+        self.post_reset_check_timer = None
+        self.set_pose_attempt_count = 0
+        self.set_pose_future = None
+
+        self.pose_sub = self.create_subscription(
+            PoseStamped,
+            self.pose_topic,
+            self._pose_callback,
+            qos_profile_sensor_data,
+        )
+        self.reference_odom_sub = self.create_subscription(
+            Odometry,
+            self.reference_odom_topic,
+            self._reference_odom_callback,
+            qos_profile_sensor_data,
+        )
+        self.offset_pose_pub = self.create_publisher(
+            PoseStamped,
+            self.offset_pose_topic,
+            QoSProfile(depth=10),
+        )
+        self.set_pose_client = self.create_client(SetPose, self.set_pose_service_name)
+
+        self.get_logger().info(
+            'Watching %s, using %s as reset reference, publishing %s, jump threshold %.3f m, full reset via set_pose after %d jumps in %.2f s'
+            % (
+                self.pose_topic,
+                self.reference_odom_topic,
+                self.offset_pose_topic,
+                self.jump_threshold_m,
+                self.jump_frequency_reset_count,
+                self.jump_frequency_window_sec,
+            )
+        )
+
+    def _reference_odom_callback(self, msg: Odometry) -> None:
+        self.latest_reference_odom_msg = msg
+
+    def _pose_callback(self, msg: PoseStamped) -> None:
+        self.offset_pose_pub.publish(copy.deepcopy(msg))
+        self.latest_pose_msg = msg
+
+        previous_msg = self.last_pose_msg
+        self.last_pose_msg = msg
+
+        if self.recovery_in_progress or previous_msg is None:
+            return
+
+        if self._in_cooldown():
+            return
+
+        frame_gap_sec = self._stamp_to_seconds(msg) - self._stamp_to_seconds(previous_msg)
+        if self.max_pose_frame_gap_sec > 0.0 and (
+            frame_gap_sec <= 0.0 or frame_gap_sec > self.max_pose_frame_gap_sec
+        ):
+            return
+
+        jump_distance = self._pose_distance(previous_msg, msg)
+        if jump_distance <= self.jump_threshold_m:
+            return
+
+        should_reset = self._register_jump_event()
+        jump_count = len(self.jump_event_times)
+
+        if not should_reset:
+            self.get_logger().warn(
+                'Detected a native VIO jump of %.3f m. Jump frequency is %d/%d, waiting before full reset.'
+                % (jump_distance, jump_count, self.jump_frequency_reset_count)
+            )
+            return
+
+        if self.latest_reference_odom_msg is None:
+            self.get_logger().warn(
+                'Detected a native VIO jump of %.3f m but %s has not published yet.'
+                % (jump_distance, self.reference_odom_topic)
+            )
+            return
+
+        if not self.set_pose_client.service_is_ready() and not self.set_pose_client.wait_for_service(timeout_sec=0.0):
+            self.get_logger().warn(
+                'Detected a native VIO jump of %.3f m but %s is not available.'
+                % (jump_distance, self.set_pose_service_name)
+            )
+            return
+
+        self._start_set_pose_sequence(
+            'Detected a native VIO jump of %.3f m. Jump frequency is %d/%d, applying full reset via set_pose (%.3f, %.3f, %.3f).'
+            % (
+                jump_distance,
+                jump_count,
+                self.jump_frequency_reset_count,
+                *self._target_position_tuple(self.latest_reference_odom_msg),
+            )
+        )
+
+    def _start_set_pose_sequence(self, reason: str) -> None:
+        self.recovery_in_progress = True
+        self.last_pose_msg = None
+        self.latest_pose_msg = None
+        self.set_pose_attempt_count = 0
+
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+            self.set_pose_retry_timer = None
+
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+            self.post_reset_check_timer = None
+
+        self.get_logger().error(reason)
+        self._schedule_set_pose_retry(initial=True)
+
+    def _attempt_set_pose(self) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+            self.set_pose_retry_timer = None
+
+        if self.set_pose_attempt_count >= self.set_pose_retry_count:
+            self.get_logger().error(
+                'Failed to restore the native VIO pose after %d attempts.'
+                % self.set_pose_retry_count
+            )
+            self._finish_recovery(mark_cooldown=True)
+            return
+
+        if not self.set_pose_client.service_is_ready() and not self.set_pose_client.wait_for_service(timeout_sec=0.0):
+            self._retry_set_pose('service is not available yet')
+            return
+
+        request = self._build_set_pose_request()
+        if request is None:
+            self.get_logger().error(
+                'Cannot build native VIO set_pose request because %s is unavailable.'
+                % self.reference_odom_topic
+            )
+            self._finish_recovery(mark_cooldown=False)
+            return
+
+        self.set_pose_attempt_count += 1
+        self.set_pose_future = self.set_pose_client.call_async(request)
+        self.set_pose_future.add_done_callback(self._on_set_pose_done)
+
+    def _on_set_pose_done(self, future) -> None:
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._retry_set_pose('service call failed: %s' % exc)
+            return
+
+        if not response.success:
+            self._retry_set_pose('service returned success=false: %s' % response.message)
+            return
+
+        self.get_logger().info(
+            'Set native VIO pose to (%.3f, %.3f, %.3f).'
+            % self.last_reset_target_position
+        )
+        self.jump_event_times.clear()
+        self._schedule_post_reset_check()
+        self._finish_recovery(mark_cooldown=True)
+
+    def _retry_set_pose(self, reason: str) -> None:
+        self.set_pose_future = None
+
+        if self.set_pose_attempt_count >= self.set_pose_retry_count:
+            self.get_logger().error('Native VIO set_pose failed: %s.' % reason)
+            self._finish_recovery(mark_cooldown=True)
+            return
+
+        self.get_logger().warn(
+            'Native VIO set_pose not ready yet (%s). Retrying %d/%d in %.2f s.'
+            % (
+                reason,
+                self.set_pose_attempt_count + 1,
+                self.set_pose_retry_count,
+                self.set_pose_retry_delay_sec,
+            )
+        )
+        self._schedule_set_pose_retry(initial=False)
+
+    def _schedule_set_pose_retry(self, initial: bool) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+
+        if initial:
+            self._attempt_set_pose()
+            return
+
+        self.set_pose_retry_timer = self.create_timer(
+            self.set_pose_retry_delay_sec,
+            self._attempt_set_pose,
+        )
+
+    def _schedule_post_reset_check(self) -> None:
+        if self.post_reset_max_distance_m <= 0.0 or self.post_reset_check_delay_sec < 0.0:
+            return
+
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+
+        self.post_reset_check_timer = self.create_timer(
+            self.post_reset_check_delay_sec,
+            self._check_post_reset_distance,
+        )
+
+    def _check_post_reset_distance(self) -> None:
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+            self.post_reset_check_timer = None
+
+        if self.recovery_in_progress or self.latest_pose_msg is None or self.last_reset_target_position is None:
+            return
+
+        target = self._target_position_tuple(self.latest_reference_odom_msg)
+        if target is None:
+            target = self.last_reset_target_position
+
+        if target is None:
+            return
+
+        distance = self._distance_from_target(self.latest_pose_msg, target)
+        if distance <= self.post_reset_max_distance_m:
+            return
+
+        self._start_set_pose_sequence(
+            'Post-reset native VIO drift is %.3f m from the target pose after %.2f s. Reapplying full reset via set_pose.'
+            % (distance, self.post_reset_check_delay_sec)
+        )
+
+    def _finish_recovery(self, mark_cooldown: bool) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+            self.set_pose_retry_timer = None
+
+        self.set_pose_future = None
+        self.recovery_in_progress = False
+        self.last_pose_msg = None
+        self.set_pose_attempt_count = 0
+
+        if mark_cooldown:
+            self.last_reset_time = self.get_clock().now()
+
+    def _in_cooldown(self) -> bool:
+        if self.last_reset_time is None or self.reset_cooldown_sec <= 0.0:
+            return False
+        return (self.get_clock().now() - self.last_reset_time) < Duration(seconds=self.reset_cooldown_sec)
+
+    def _register_jump_event(self) -> bool:
+        now = self.get_clock().now()
+        self.jump_event_times.append(now)
+
+        if self.jump_frequency_window_sec > 0.0:
+            window = Duration(seconds=self.jump_frequency_window_sec)
+            while self.jump_event_times and (now - self.jump_event_times[0]) > window:
+                self.jump_event_times.popleft()
+
+        return len(self.jump_event_times) >= self.jump_frequency_reset_count
+
+    def _build_set_pose_request(self) -> Optional[SetPose.Request]:
+        request = SetPose.Request()
+        target_position = self._target_position_tuple(self.latest_reference_odom_msg)
+        target_rpy = self._target_rpy_tuple(self.latest_reference_odom_msg)
+
+        if target_position is None or target_rpy is None:
+            return None
+
+        self.last_reset_target_position = target_position
+        request.pos = list(target_position)
+        request.orient = list(target_rpy)
+        return request
+
+    @staticmethod
+    def _target_position_tuple(reference_odom: Optional[Odometry]) -> Optional[tuple[float, float, float]]:
+        if reference_odom is None:
+            return None
+
+        pose = reference_odom.pose.pose.position
+        return (pose.x, pose.y, pose.z)
+
+    @staticmethod
+    def _target_rpy_tuple(reference_odom: Optional[Odometry]) -> Optional[tuple[float, float, float]]:
+        if reference_odom is None:
+            return None
+
+        q = reference_odom.pose.pose.orientation
+        sinr_cosp = 2.0 * ((q.w * q.x) + (q.y * q.z))
+        cosr_cosp = 1.0 - (2.0 * ((q.x * q.x) + (q.y * q.y)))
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2.0 * ((q.w * q.y) - (q.z * q.x))
+        if abs(sinp) >= 1.0:
+            pitch = math.copysign(math.pi / 2.0, sinp)
+        else:
+            pitch = math.asin(sinp)
+
+        siny_cosp = 2.0 * ((q.w * q.z) + (q.x * q.y))
+        cosy_cosp = 1.0 - (2.0 * ((q.y * q.y) + (q.z * q.z)))
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        return (roll, pitch, yaw)
+
+    @staticmethod
+    def _pose_distance(previous_msg: PoseStamped, current_msg: PoseStamped) -> float:
+        dx = current_msg.pose.position.x - previous_msg.pose.position.x
+        dy = current_msg.pose.position.y - previous_msg.pose.position.y
+        dz = current_msg.pose.position.z - previous_msg.pose.position.z
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+    @staticmethod
+    def _distance_from_target(msg: PoseStamped, target: tuple[float, float, float]) -> float:
+        dx = msg.pose.position.x - target[0]
+        dy = msg.pose.position.y - target[1]
+        dz = msg.pose.position.z - target[2]
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+    @staticmethod
+    def _stamp_to_seconds(msg: PoseStamped) -> float:
+        return float(msg.header.stamp.sec) + (float(msg.header.stamp.nanosec) * 1e-9)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = NativeVioWatcher()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

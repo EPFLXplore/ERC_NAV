@@ -2,6 +2,14 @@
 
 set -euo pipefail
 
+ROS_DISTRO="${ROS_DISTRO:-humble}"
+
+if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+  set +u
+  source "/opt/ros/${ROS_DISTRO}/setup.bash"
+  set -u
+fi
+
 #CUDA
 sudo apt update && sudo apt-get install -y cuda-cudart-12-6 cuda-libraries-12-6 libcublas-12-2 libnpp-12-2
 sudo apt install -y gnupg software-properties-common
@@ -35,7 +43,7 @@ cd "$WS"
 
 rosdep install --from-paths src/zed-ros2-wrapper src/zed2i_isaac_vslam --ignore-src -r -y
 
-rm -rf build install log
+sudo rm -rf build install log
 export ZED_DIR=/usr/local/zed
 export CMAKE_PREFIX_PATH="/usr/local/zed:${CMAKE_PREFIX_PATH:-}"
 

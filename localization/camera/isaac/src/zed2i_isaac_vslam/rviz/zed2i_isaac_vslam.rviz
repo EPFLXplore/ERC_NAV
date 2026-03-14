@@ -6,6 +6,8 @@ Panels:
       Expanded:
         - /Camera1
         - /Landmarks1
+        - /Native VIO Path1
+        - /Native VIO Pose1
         - /Observations1
         - /SLAM Path1
         - /VSLAM Odometry1
@@ -129,6 +131,34 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /visual_slam/tracking/slam_path
       Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 170; 255
+      Enabled: true
+      Head Diameter: 0.15
+      Head Length: 0.1
+      Length: 0.15
+      Line Style: Lines
+      Line Width: 0.03
+      Name: Native VIO Path
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.05
+      Shaft Length: 0.05
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /zed2i/zed_node/path_map
+      Value: true
     - Class: rviz_default_plugins/Odometry
       Enabled: true
       Keep: 1
@@ -152,6 +182,26 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /visual_slam/tracking/odometry
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.5
+      Axes Radius: 0.05
+      Class: rviz_default_plugins/Pose
+      Color: 0; 170; 255
+      Enabled: true
+      Head Length: 0.2
+      Head Radius: 0.08
+      Name: Native VIO Pose
+      Shaft Length: 0.5
+      Shaft Radius: 0.04
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /zed2i/zed_node/pose
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true

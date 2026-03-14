@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+
+from collections import deque
+import copy
+import math
+from typing import Optional
+
+from geometry_msgs.msg import Pose, PoseStamped
+from isaac_ros_visual_slam_interfaces.srv import Reset, SetSlamPose
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.duration import Duration
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, qos_profile_sensor_data
+
+
+class VioWatcher(Node):
+    def __init__(self) -> None:
+        super().__init__('vio_watcher')
+        ## this will be overwrite by the launch config 
+        self.declare_parameter('vslam_vo_pose_topic', '/visual_slam/tracking/vo_pose')
+        self.declare_parameter('offset_vo_pose_topic', '/visual_slam/tracking/offset_vo_pose')
+        self.declare_parameter('reference_odom_topic', '/fused_nav_ekf_odom')
+        self.declare_parameter('reset_service', '/visual_slam/reset')
+        self.declare_parameter('set_slam_pose_service', '/visual_slam/set_slam_pose')
+        self.declare_parameter('jump_threshold_m', 0.2)
+        self.declare_parameter('jump_frequency_window_sec', 5.0)
+        self.declare_parameter('jump_frequency_reset_count', 1)
+        self.declare_parameter('reset_cooldown_sec', 0.0)
+        self.declare_parameter('max_vslam_frame_gap_sec', 0.5)
+        self.declare_parameter('set_slam_pose_retry_count', 10)
+        self.declare_parameter('set_slam_pose_retry_delay_sec', 0.1)
+        self.declare_parameter('post_reset_check_delay_sec', 1.0)
+        self.declare_parameter('post_reset_max_distance_m', 1.0)
+
+
+        self.vslam_vo_pose_topic = self.get_parameter('vslam_vo_pose_topic').value
+        self.offset_vo_pose_topic = self.get_parameter('offset_vo_pose_topic').value
+        self.reference_odom_topic = self.get_parameter('reference_odom_topic').value
+        self.reset_service_name = self.get_parameter('reset_service').value
+        self.set_slam_pose_service_name = self.get_parameter('set_slam_pose_service').value
+        self.jump_threshold_m = float(self.get_parameter('jump_threshold_m').value)
+        self.jump_frequency_window_sec = float(self.get_parameter('jump_frequency_window_sec').value)
+        self.jump_frequency_reset_count = max(1, int(self.get_parameter('jump_frequency_reset_count').value))
+        self.reset_cooldown_sec = float(self.get_parameter('reset_cooldown_sec').value)
+        self.max_vslam_frame_gap_sec = float(self.get_parameter('max_vslam_frame_gap_sec').value)
+        self.set_slam_pose_retry_count = max(1, int(self.get_parameter('set_slam_pose_retry_count').value))
+        self.set_slam_pose_retry_delay_sec = float(
+            self.get_parameter('set_slam_pose_retry_delay_sec').value
+        )
+        self.post_reset_check_delay_sec = float(self.get_parameter('post_reset_check_delay_sec').value)
+        self.post_reset_max_distance_m = float(self.get_parameter('post_reset_max_distance_m').value)
+
+        self.last_vo_pose_msg: Optional[PoseStamped] = None
+        self.latest_vo_pose_msg: Optional[PoseStamped] = None
+        self.latest_reference_odom_msg: Optional[Odometry] = None
+        self.last_reset_time = None
+        self.pending_reset_pose: Optional[Pose] = None
+        self.last_reset_target_pose: Optional[Pose] = None
+        self.current_pose_offset = Pose()
+        self.current_pose_offset.orientation.w = 1.0
+        self.reset_future = None
+        self.recovery_in_progress = False
+        self.jump_event_times = deque()
+        self.set_pose_retry_timer = None
+        self.post_reset_check_timer = None
+        self.set_slam_pose_attempt_count = 0
+
+        self.vo_pose_sub = self.create_subscription(
+            PoseStamped,
+            self.vslam_vo_pose_topic,
+            self._vo_pose_callback,
+            qos_profile_sensor_data,
+        )
+        self.reference_odom_sub = self.create_subscription(
+            Odometry,
+            self.reference_odom_topic,
+            self._reference_odom_callback,
+            qos_profile_sensor_data,
+        )
+        self.offset_pose_pub = self.create_publisher(
+            PoseStamped,
+            self.offset_vo_pose_topic,
+            QoSProfile(depth=10),
+        )
+        self.reset_client = self.create_client(Reset, self.reset_service_name)
+        self.set_slam_pose_client = self.create_client(SetSlamPose, self.set_slam_pose_service_name)
+
+        self.get_logger().info(
+            'Watching %s, using %s as reset reference, publishing %s, jump threshold %.3f m, reset after %d jumps in %.2f s'
+            % (
+                self.vslam_vo_pose_topic,
+                self.reference_odom_topic,
+                self.offset_vo_pose_topic,
+                self.jump_threshold_m,
+                self.jump_frequency_reset_count,
+                self.jump_frequency_window_sec,
+            )
+        )
+
+    def _reference_odom_callback(self, msg: Odometry) -> None:
+        self.latest_reference_odom_msg = msg
+
+    def _vo_pose_callback(self, msg: PoseStamped) -> None:
+        self._publish_offset_pose(msg)
+        self.latest_vo_pose_msg = msg
+
+        previous_msg = self.last_vo_pose_msg
+        self.last_vo_pose_msg = msg
+
+        if self.recovery_in_progress or previous_msg is None:
+            return
+
+        if self._in_reset_cooldown():
+            return
+
+        frame_gap_sec = self._stamp_to_seconds(msg) - self._stamp_to_seconds(previous_msg)
+        if self.max_vslam_frame_gap_sec > 0.0 and (
+            frame_gap_sec <= 0.0 or frame_gap_sec > self.max_vslam_frame_gap_sec
+        ):
+            return
+
+        jump_distance = self._pose_distance(previous_msg, msg)
+        if jump_distance <= self.jump_threshold_m:
+            return
+
+        should_reset = self._register_jump_event()
+        jump_count = len(self.jump_event_times)
+
+        if not should_reset:
+            self.get_logger().warn(
+                'Detected a VSLAM jump of %.3f m. Jump frequency is %d/%d, waiting before reset.'
+                % (jump_distance, jump_count, self.jump_frequency_reset_count)
+            )
+            return
+
+        if not self.reset_client.service_is_ready() and not self.reset_client.wait_for_service(timeout_sec=0.0):
+            self.get_logger().warn(
+                'Detected a VSLAM jump of %.3f m but %s is not available.'
+                % (jump_distance, self.reset_service_name)
+            )
+            return
+
+        if not self.set_slam_pose_client.service_is_ready() and not self.set_slam_pose_client.wait_for_service(timeout_sec=0.0):
+            self.get_logger().warn(
+                'Detected a VSLAM jump of %.3f m but %s is not available.'
+                % (jump_distance, self.set_slam_pose_service_name)
+            )
+            return
+
+        if self.latest_reference_odom_msg is None:
+            self.get_logger().warn(
+                'Detected a VSLAM jump of %.3f m but %s has not published yet.'
+                % (jump_distance, self.reference_odom_topic)
+            )
+            return
+
+        self._start_reset_sequence(
+            'Detected a VSLAM jump of %.3f m. Jump frequency is %d/%d, applying reset + set pose (%.3f, %.3f, %.3f).'
+            % (
+                jump_distance,
+                jump_count,
+                self.jump_frequency_reset_count,
+                *self._pose_position_tuple(self.latest_reference_odom_msg.pose.pose),
+            )
+        )
+
+    def _start_reset_sequence(self, reason: str) -> None:
+        self.pending_reset_pose = self._build_reset_pose(self.latest_reference_odom_msg)
+        self.recovery_in_progress = True
+        self.last_vo_pose_msg = None
+        self.latest_vo_pose_msg = None
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+            self.post_reset_check_timer = None
+        self.get_logger().error(
+            reason
+        )
+        self.reset_future = self.reset_client.call_async(Reset.Request())
+        self.reset_future.add_done_callback(self._on_reset_done)
+
+    def _publish_offset_pose(self, msg: PoseStamped) -> None:
+        offset_msg = copy.deepcopy(msg)
+        offset_msg.pose.position.x += self.current_pose_offset.position.x
+        offset_msg.pose.position.y += self.current_pose_offset.position.y
+        offset_msg.pose.position.z += self.current_pose_offset.position.z
+        self.offset_pose_pub.publish(offset_msg)
+
+    def _on_reset_done(self, future) -> None:
+        try:
+            response = future.result()
+        except Exception as exc:
+            self.get_logger().error('Visual SLAM reset failed: %s' % exc)
+            self._finish_recovery(mark_reset_cooldown=False)
+            return
+
+        if not response.success:
+            self.get_logger().error('Visual SLAM reset service returned success=false.')
+            self._finish_recovery(mark_reset_cooldown=False)
+            return
+
+        self.jump_event_times.clear()
+        self.set_slam_pose_attempt_count = 0
+
+        if self.pending_reset_pose is None:
+            self.get_logger().error('Visual SLAM reset succeeded but no reset pose was queued.')
+            self._finish_recovery(mark_reset_cooldown=True)
+            return
+
+        self._schedule_set_slam_pose_retry()
+
+    def _attempt_set_slam_pose_after_reset(self) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+            self.set_pose_retry_timer = None
+
+        if self.pending_reset_pose is None:
+            self._finish_recovery(mark_reset_cooldown=True)
+            return
+
+        if self.set_slam_pose_attempt_count >= self.set_slam_pose_retry_count:
+            self.get_logger().error(
+                'Failed to restore the Visual SLAM pose after %d attempts.'
+                % self.set_slam_pose_retry_count
+            )
+            self._finish_recovery(mark_reset_cooldown=True)
+            return
+
+        if not self.set_slam_pose_client.service_is_ready() and not self.set_slam_pose_client.wait_for_service(timeout_sec=0.0):
+            self._retry_set_slam_pose_after_reset(
+                '%s is not available yet' % self.set_slam_pose_service_name
+            )
+            return
+
+        self.set_slam_pose_attempt_count += 1
+        request = SetSlamPose.Request()
+        request.pose = copy.deepcopy(self.pending_reset_pose)
+        self.reset_future = self.set_slam_pose_client.call_async(request)
+        self.reset_future.add_done_callback(self._on_set_slam_pose_done)
+
+    def _on_set_slam_pose_done(self, future) -> None:
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._retry_set_slam_pose_after_reset('service call failed: %s' % exc)
+            return
+
+        if not response.success:
+            self._retry_set_slam_pose_after_reset('service returned success=false')
+            return
+
+        self.current_pose_offset = copy.deepcopy(self.pending_reset_pose)
+        self.last_reset_target_pose = copy.deepcopy(self.pending_reset_pose)
+        self.get_logger().info(
+            'Reset Visual SLAM and updated output pose offset to (%.3f, %.3f, %.3f).'
+            % (
+                self.current_pose_offset.position.x,
+                self.current_pose_offset.position.y,
+                self.current_pose_offset.position.z,
+            )
+        )
+        self._schedule_post_reset_check()
+        self._finish_recovery(mark_reset_cooldown=True)
+
+    def _retry_set_slam_pose_after_reset(self, reason: str) -> None:
+        self.reset_future = None
+
+        if self.set_slam_pose_attempt_count >= self.set_slam_pose_retry_count:
+            self.get_logger().error('Visual SLAM pose restore failed after reset: %s.' % reason)
+            self._finish_recovery(mark_reset_cooldown=True)
+            return
+
+        self.get_logger().warn(
+            'Visual SLAM pose restore not ready yet (%s). Retrying %d/%d in %.2f s.'
+            % (
+                reason,
+                self.set_slam_pose_attempt_count + 1,
+                self.set_slam_pose_retry_count,
+                self.set_slam_pose_retry_delay_sec,
+            )
+        )
+        self._schedule_set_slam_pose_retry()
+
+    def _schedule_set_slam_pose_retry(self) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+
+        self.set_pose_retry_timer = self.create_timer(
+            self.set_slam_pose_retry_delay_sec,
+            self._attempt_set_slam_pose_after_reset,
+        )
+
+    def _schedule_post_reset_check(self) -> None:
+        if self.post_reset_max_distance_m <= 0.0 or self.post_reset_check_delay_sec < 0.0:
+            return
+
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+
+        self.post_reset_check_timer = self.create_timer(
+            self.post_reset_check_delay_sec,
+            self._check_post_reset_distance,
+        )
+
+    def _check_post_reset_distance(self) -> None:
+        if self.post_reset_check_timer is not None:
+            self.post_reset_check_timer.cancel()
+            self.post_reset_check_timer = None
+
+        if self.recovery_in_progress or self.last_reset_target_pose is None or self.latest_vo_pose_msg is None:
+            return
+
+        current_effective_pose = self._build_effective_pose(self.latest_vo_pose_msg)
+        target_pose = self._build_reset_pose(self.latest_reference_odom_msg)
+        if target_pose is None:
+            return
+
+        distance = self._pose_distance_from_pose(current_effective_pose, target_pose)
+        if distance <= self.post_reset_max_distance_m:
+            return
+
+        self._start_reset_sequence(
+            'Post-reset VSLAM drift is %.3f m from the target pose after %.2f s. Reapplying reset + set pose.'
+            % (distance, self.post_reset_check_delay_sec)
+        )
+
+    def _finish_recovery(self, mark_reset_cooldown: bool) -> None:
+        if self.set_pose_retry_timer is not None:
+            self.set_pose_retry_timer.cancel()
+            self.set_pose_retry_timer = None
+
+        self.pending_reset_pose = None
+        self.reset_future = None
+        self.recovery_in_progress = False
+        self.last_vo_pose_msg = None
+        self.set_slam_pose_attempt_count = 0
+
+        if mark_reset_cooldown:
+            self.last_reset_time = self.get_clock().now()
+
+    def _in_reset_cooldown(self) -> bool:
+        if self.last_reset_time is None or self.reset_cooldown_sec <= 0.0:
+            return False
+        return (self.get_clock().now() - self.last_reset_time) < Duration(seconds=self.reset_cooldown_sec)
+
+    def _register_jump_event(self) -> bool:
+        now = self.get_clock().now()
+        self.jump_event_times.append(now)
+
+        if self.jump_frequency_window_sec > 0.0:
+            window = Duration(seconds=self.jump_frequency_window_sec)
+            while self.jump_event_times and (now - self.jump_event_times[0]) > window:
+                self.jump_event_times.popleft()
+
+        return len(self.jump_event_times) >= self.jump_frequency_reset_count
+
+    def _build_reset_pose(self, reference_odom: Optional[Odometry]) -> Optional[Pose]:
+        if reference_odom is not None:
+            return copy.deepcopy(reference_odom.pose.pose)
+
+        return None
+
+    @staticmethod
+    def _pose_position_tuple(pose: Pose) -> tuple[float, float, float]:
+        return (pose.position.x, pose.position.y, pose.position.z)
+
+    def _build_effective_pose(self, msg: PoseStamped) -> Pose:
+        pose = copy.deepcopy(msg.pose)
+        pose.position.x += self.current_pose_offset.position.x
+        pose.position.y += self.current_pose_offset.position.y
+        pose.position.z += self.current_pose_offset.position.z
+        return pose
+
+    @staticmethod
+    def _pose_distance(previous_msg: PoseStamped, current_msg: PoseStamped) -> float:
+        dx = current_msg.pose.position.x - previous_msg.pose.position.x
+        dy = current_msg.pose.position.y - previous_msg.pose.position.y
+        dz = current_msg.pose.position.z - previous_msg.pose.position.z
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+    @staticmethod
+    def _pose_distance_from_pose(current_pose: Pose, target_pose: Pose) -> float:
+        dx = current_pose.position.x - target_pose.position.x
+        dy = current_pose.position.y - target_pose.position.y
+        dz = current_pose.position.z - target_pose.position.z
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+    @staticmethod
+    def _stamp_to_seconds(msg: PoseStamped) -> float:
+        return float(msg.header.stamp.sec) + (float(msg.header.stamp.nanosec) * 1e-9)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = VioWatcher()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

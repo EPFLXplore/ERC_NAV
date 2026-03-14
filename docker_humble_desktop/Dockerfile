@@ -70,7 +70,7 @@ USER $USERNAME
 
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src
-COPY . .
+COPY --chown=xplore:xplore . .
 
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
@@ -78,6 +78,9 @@ WORKDIR /home/$USERNAME/dev_ws
 # Install ROS 2 Nav dependencies
 RUN rosdep update \
     && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
+
+ENV ZED_DIR=/usr/local/zed
+ENV CMAKE_PREFIX_PATH=/usr/local/zed
 
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
@@ -95,6 +98,10 @@ RUN pip install open3d --no-cache-dir
 # Fix numpy version
 RUN pip uninstall numpy -y
 RUN pip install numpy==1.22.4 --no-cache-dir
+
+# Pre-install ZED SDK and build the Isaac ZED workspace in the image
+RUN sudo chmod +x /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh \
+    && /bin/bash /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*

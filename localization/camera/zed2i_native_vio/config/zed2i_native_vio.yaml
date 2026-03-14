@@ -1,0 +1,37 @@
+/**:
+  ros__parameters:
+    general:
+      serial_number: 32835549
+      grab_resolution: HD720
+      grab_frame_rate: 30
+      pub_resolution: NATIVE
+      pub_frame_rate: 30.0
+
+    sensors:
+      sensors_pub_rate: 200.0
+      sensors_image_sync: false
+
+    depth:
+      depth_mode: PERFORMANCE
+      depth_stabilization: 0
+
+    pos_tracking:
+      pos_tracking_enabled: true
+      pos_tracking_mode: GEN_1
+      imu_fusion: true
+      publish_map_tf: false
+      area_memory: false
+      reset_odom_with_loop_closure: false
+      path_pub_rate: 5.0
+      path_max_count: -1
+      set_gravity_as_origin: true
+      two_d_mode: false
+
+    mapping:
+      mapping_enabled: false
+
+    object_detection:
+      od_enabled: false
+
+    body_tracking:
+      bt_enabled: false
