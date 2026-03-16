@@ -53,13 +53,15 @@ public:
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/filtered_pointcloud", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+            "/cloud_pcd", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
         
         // CHANGE ME:
         // 1. If you want to use the gazebo pointcloud use /filtered_pointcloud
         // 2. If you want to use the marsyard pcd file, use /cloud_pcd
 
-        pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/occupancy_map_local", 10);
+        pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            "/occupancy_map_local",
+            rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
         // pubOccupancyMapLocalHeight = this->create_publisher<elevation_msgs::msg::OccupancyElevation>("/occupancy_map_local_height", 10);
         pubElevationCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/elevation_pointcloud", 5);
 
