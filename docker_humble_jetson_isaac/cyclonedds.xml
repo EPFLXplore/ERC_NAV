@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="0">
+    <General>
+      <!-- MUST be this deprecated tag, listing both NICs, comma-separated -->
+      <NetworkInterfaceAddress>enP8p1s0,enx0a76f8b03d57</NetworkInterfaceAddress>
+      <!-- You need multicast for discovery & data -->
+      <AllowMulticast>spdp</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>

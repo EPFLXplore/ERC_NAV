@@ -5,10 +5,27 @@ FROM ghcr.io/epflxplore/docker_commons:humble-desktop-nvidia
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Refresh ROS 2 signing key (handles 2024+ key rotation) and ensure required tools
-RUN apt-get update && apt-get install -y curl gnupg software-properties-common \
-    && rm -f /usr/share/keyrings/ros-archive-keyring.gpg || true
-RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+# Keys fix
+RUN rm -f /etc/apt/sources.list.d/ros2.list /etc/apt/sources.list.d/ros-latest.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg2 lsb-release software-properties-common
+
+## ros 2
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+       > /etc/apt/sources.list.d/ros2.list
+
+## Isaac
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/isaac-ros-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/isaac-ros-archive-keyring.gpg] https://isaac.download.nvidia.com/isaac-ros/release-3 jammy release-3.0" \
+       > /etc/apt/sources.list.d/isaac-ros.list
 
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
@@ -22,13 +39,13 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-joint-state-publisher-gui \
     ros-${ROS_DISTRO}-libg2o \
     ros-${ROS_DISTRO}-depthai-ros \
-    ros-${ROS_DISTRO}-librealsense2*\
-    ros-${ROS_DISTRO}-realsense2-*\
-    ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-librealsense2* \
+    ros-${ROS_DISTRO}-realsense2-* \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-gazebo-ros2-control \
     ros-${ROS_DISTRO}-rqt-tf-tree \
+    ros-${ROS_DISTRO}-isaac-ros-visual-slam \
     python3-zmq \
     libyaml-cpp-dev \
     lcov \
@@ -52,7 +69,7 @@ USER $USERNAME
 
 # Set a diretory to store the project
 WORKDIR /home/$USERNAME/dev_ws/src
-COPY . .
+COPY --chown=xplore:xplore . .
 
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
@@ -60,6 +77,9 @@ WORKDIR /home/$USERNAME/dev_ws
 # Install ROS 2 Nav dependencies
 RUN rosdep update \
     && rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y -r
+
+ENV ZED_DIR=/usr/local/zed
+ENV CMAKE_PREFIX_PATH=/usr/local/zed
 
 # Add the source of the project to the .bashrc
 RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /home/${USERNAME}/dev_ws/install/setup.bash; fi" >> /home/${USERNAME}/.bashrc
@@ -77,6 +97,10 @@ RUN pip install open3d --no-cache-dir
 # Fix numpy version
 RUN pip uninstall numpy -y
 RUN pip install numpy==1.22.4 --no-cache-dir
+
+# Pre-install ZED SDK and build the Isaac ZED workspace in the image
+RUN sudo chmod +x /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh \
+    && /bin/bash /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/install-zed-x86_64.sh
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
