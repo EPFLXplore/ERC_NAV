@@ -52,6 +52,7 @@ public:
   Eigen::Matrix2d           R_accel;// IMU accel covariance (ax, ay)
   Eigen::Matrix2d           R_xy;   // wheel-odom x,y variance
   Eigen::Matrix2d           R_xy_lidar;   // lidar x,y variance
+  Eigen::Matrix2d           R_xy_aruco;   // aruco x,y variance
   Eigen::Matrix3d R_wheel_vel; // wheel velocity measurement noise
 
 
@@ -69,6 +70,7 @@ public:
     R_accel = Eigen::Matrix2d::Identity() * 0.1;  // default, override per IMU msg
     R_xy    = Eigen::Matrix2d::Identity() * 0.08;
     R_xy_lidar    = Eigen::Matrix2d::Identity() * 0.01; // Var of 0.01 => std of 0.1: 10cm 
+    R_xy_aruco    = Eigen::Matrix2d::Identity() * 0.0025; // Var of 0.0025 => std of 0.05: 5cm 
     R_wheel_vel = Eigen::Matrix3d::Identity() * 0.1;  // wheel velocity measurement noise
 
     prev_vx = 0.0;
@@ -366,6 +368,11 @@ public:
     include_lidar_ = this->get_parameter("include_lidar").as_bool();
     RCLCPP_INFO(this->get_logger(), "Lidar included in EKF ? : %s", include_lidar_ ? "True" : "False");
 
+    this->declare_parameter<bool>("include_aruco  ", false);
+    include_aruco_ = this->get_parameter("include_aruco  ").as_bool();
+    RCLCPP_INFO(this->get_logger(), "ArUco included in EKF ? : %s", include_aruco_ ? "True" : "False");
+
+
     // IMU calibration services
     bias_client_      = create_client<std_srvs::srv::Trigger>("/olive/imu/id001/setBias");
     zero_quat_client_ = create_client<std_srvs::srv::Trigger>("/olive/imu/id001/setZeroQuaternion");
@@ -388,6 +395,10 @@ public:
     lidar_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/odom_glim_repub", qos,
       std::bind(&NavEKFNode::lidar_callback, this, std::placeholders::_1));
+
+    aruco_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/aruco_rover_pos", qos,
+      std::bind(&NavEKFNode::aruco_callback, this, std::placeholders::_1));
 
 
     wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
@@ -514,6 +525,44 @@ private:
 
   }
 
+  void aruco_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    if(!this->include_aruco_){
+      return;
+    }
+
+    const rclcpp::Time t_meas = msg->header.stamp;
+    double dt = (t_meas - last_time_).seconds();
+
+    if (std::isfinite(dt) && dt > 0.0 && dt < 1.0) {
+      ekf_->predict(dt, last_gyro_z_,
+                    steer_fr_, steer_br_, steer_fl_, steer_bl_,
+                    vel_fr_,  vel_br_,  vel_fl_,  vel_bl_);
+      last_time_ = t_meas;
+    }
+    double mx = msg->pose.pose.position.x;
+    double my = msg->pose.pose.position.y;
+
+    // Mahalanobis gating (2 DoF, ~95% -> 5.99; ~99% -> 9.21) to avoid shitty measurements from the LiDAR
+    // used to measure how far a measurement is from the current EKF prediction
+    Eigen::Vector2d z(mx, my);
+    Eigen::Vector2d h(ekf_->x(IDX_X), ekf_->x(IDX_Y));
+
+    Eigen::Matrix<double,2,5> H = Eigen::Matrix<double,2,5>::Zero();
+    H(0, IDX_X) = 1.0;  H(1, IDX_Y) = 1.0;
+
+    Eigen::Vector2d innov = z - h;
+  
+    Eigen::Matrix2d S = H * ekf_->P * H.transpose() + ekf_->R_xy_aruco;
+    double maha2 = innov.transpose() * S.inverse() * innov;
+
+    if (std::isfinite(maha2) && maha2 < 7.0) {
+      ekf_->updatePosition(mx, my, ekf_->R_xy_aruco);
+    } else {
+      RCLCPP_WARN(this->get_logger(), "Reject ArUco odom: maha^2=%.2f", maha2);
+    }
+
+  }
+
   void wheel_info_callback(const custom_msg::msg::MotorStatus::SharedPtr msg){
     if (msg->velocity.size() != 4 || msg->position.size() != 4) {
       RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
@@ -626,6 +675,7 @@ private:
   rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr wheel_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr aruco_sub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    ekf_pub_;
@@ -636,6 +686,7 @@ private:
   bool initial_frame_set_ = false;
   double initial_yaw_ = 0.0;
   bool include_lidar_ = true;
+  bool include_aruco_ = true;
   Eigen::Vector2d initial_pos_{0.0, 0.0};
 
   // double last_accel_x = 0.0;

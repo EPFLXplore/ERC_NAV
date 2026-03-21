@@ -39,7 +39,7 @@ public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
         // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
-        tolerance_radius_ = 0.3; // 0.2 is the limit 
+        tolerance_radius_ = 1.5; // 0.2 is the limit 
         hauteur_z_min= -0.7;
         hauteur_z_max= 1;
         input_cloud_topic_ = "/ouster_points";

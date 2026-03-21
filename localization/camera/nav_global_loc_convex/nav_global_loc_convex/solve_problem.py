@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from rclpy.node import Node
 from geometry_msgs.msg import Pose2D, Pose
+from nav_msgs.msg import Odometry
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from visualization_msgs.msg import Marker, MarkerArray
 import rclpy
@@ -34,11 +35,17 @@ class ConvexRangeBearing(Node):
         #     6: np.array([2.55, -1.0]),
         # }
 
+        # self.anchor = {
+        #     1: np.array([1.60, 0]),
+        #     2: np.array([1.60, -0.65]),
+        #     7: np.array([-1.70, 0.90]),
+        #     6: np.array([-1.70, -0.55]),
+        # }
         self.anchor = {
-            1: np.array([1.60, 0]),
-            2: np.array([1.60, -0.65]),
-            7: np.array([-1.70, 0.90]),
-            6: np.array([-1.70, -0.55]),
+            1: np.array([4.11, -0.8]),
+            6: np.array([4.0, 1.03]),
+            2: np.array([-2.70,2.81]),
+            7: np.array([-3.41, -3.0]),
         }
 
         qos = rclpy.qos.QoSProfile(
@@ -48,7 +55,7 @@ class ConvexRangeBearing(Node):
             depth=1)
         
         self.pub = self.create_publisher(Marker, "aruco_rover_pos_rviz", qos)
-        self.pub_pos = self.create_publisher(Pose2D, "aruco_rover_pos", qos)
+        self.pub_pos = self.create_publisher(Odometry, "/aruco_rover_pos", qos)
 
         self.sub_mes_ = self.create_subscription(
             ArucoMarkers, "/cube_markers", self.aruco_callback, qos)
@@ -103,7 +110,7 @@ class ConvexRangeBearing(Node):
         prob = cp.Problem(cp.Minimize(objective), constraints)
 
         try:
-            prob.solve(solver=cp.ECOS, verbose=True, max_iters=900, reltol=1e-6, feastol=1e-6)
+            prob.solve(solver=cp.ECOS, verbose=False, max_iters=900, reltol=1e-6, feastol=1e-6)
         except Exception as e:
             self.get_logger().error(f"CVX/ECOS failed: {e}")
             return None
@@ -174,14 +181,13 @@ class ConvexRangeBearing(Node):
             self.get_logger().error("CVX failed to find a solution.")
             return
 
-        pose = Pose2D()
-        pose.x = xy[0]
-        pose.y = xy[1]
-        pose.theta = 0.0
+        pose = Odometry()
+        pose.pose.pose.position.x = xy[0]
+        pose.pose.pose.position.y = xy[1]
         self.pub_pos.publish(pose)
 
         self.get_logger().info(
-            f"[RB] Robot position: x={pose.x:.3f}  y={pose.y:.3f}",
+            f"[RB] Robot position: x={pose.pose.pose.position.x:.3f}  y={pose.pose.pose.position.y:.3f}",
             throttle_duration_sec=1.0
         )
 

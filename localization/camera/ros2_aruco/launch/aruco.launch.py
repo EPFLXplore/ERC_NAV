@@ -24,29 +24,29 @@ def generate_launch_description():
             condition=IfCondition(multiview)
         ),
 
-        Node(
-            package='ros2_aruco',
-            executable='aruco_node',
-            name='aruco_node',
-            output='screen',
-            condition=UnlessCondition(multiview)
-        ),
+        # Node(
+        #     package='ros2_aruco',
+        #     executable='aruco_node',
+        #     name='aruco_node',
+        #     output='screen',
+        #     condition=UnlessCondition(multiview)
+        # ),
 
-        Node(
-            package='ros2_aruco',
-            executable='pose_estimation_node',
-            name='pose_estimation_node',
-            output='screen',
-        ),
+        # Node(
+        #     package='ros2_aruco',
+        #     executable='pose_estimation_node',
+        #     name='pose_estimation_node',
+        #     output='screen',
+        # ),
 
-        Node(
-            package='rviz2',
-            executable='rviz2',
-            name='rviz2',
-            arguments=['-d', rviz_config_file],
-            output='screen',
-            condition=IfCondition(rviz)
-        ),
+        # Node(
+        #     package='rviz2',
+        #     executable='rviz2',
+        #     name='rviz2',
+        #     arguments=['-d', rviz_config_file],
+        #     output='screen',
+        #     condition=IfCondition(rviz)
+        # ),
 
         # Node(
         #     package='ros2_aruco',
