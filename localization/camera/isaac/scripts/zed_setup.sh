@@ -4,6 +4,11 @@ set -euo pipefail
 
 ROS_DISTRO="${ROS_DISTRO:-humble}"
 
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <install-script>" >&2
+  exit 1
+fi
+
 if [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
   set +u
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
@@ -26,7 +31,7 @@ sudo apt install -y libnvvpi3 vpi3-dev vpi3-samples ros-humble-zed-msgs
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-INSTALL_SCRIPT="$WS/scripts/install-zed-x86_64.sh"
+INSTALL_SCRIPT="$1"
 CALIB_SRC="$WS/src/zed2i_isaac_vslam/config/SN32835549.conf"
 CALIB_DST="/usr/local/zed/settings/SN32835549.conf"
 

@@ -100,7 +100,7 @@ RUN pip install numpy==1.22.4 --no-cache-dir
 
 # Pre-install ZED SDK and build the Isaac ZED workspace in the image
 RUN sudo chmod +x /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh \
-    && /bin/bash /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh
+    && /bin/bash /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/install-zed-x86_64.sh
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*

@@ -5,6 +5,27 @@ FROM ghcr.io/epflxplore/docker_commons:humble-jetson
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Keys fix
+RUN rm -f /etc/apt/sources.list.d/ros2.list /etc/apt/sources.list.d/ros-latest.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg2 lsb-release software-properties-common
+
+## ros 2
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+       > /etc/apt/sources.list.d/ros2.list
+
+## Isaac
+RUN mkdir -p /usr/share/keyrings \
+    && curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+       | gpg --dearmor --batch --yes --no-tty \
+         -o /usr/share/keyrings/isaac-ros-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/isaac-ros-archive-keyring.gpg] https://isaac.download.nvidia.com/isaac-ros/release-3 jammy release-3.0" \
+       > /etc/apt/sources.list.d/isaac-ros.list
+
 # installing pyrealsense2 (doesnt work with pip)
 # Install dependencies for building librealsense with Python bindings
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -101,8 +122,10 @@ RUN apt-get install -y --no-install-recommends \
     dnsmasq \
     libgtsam-dev \
     libgtsam-unstable-dev \
-    libgeographic-dev
-
+    libgeographic-dev \
+    ros-${ROS_DISTRO}-librealsense2* \
+    ros-${ROS_DISTRO}-realsense2-* \
+    ros-${ROS_DISTRO}-isaac-ros-visual-slam \
 
 #for liorf:
     #libgtsam-dev
@@ -146,7 +169,7 @@ RUN sudo pip install -U jetson-stats
 WORKDIR /home/$USERNAME/dev_ws/src
 
 
-COPY . .
+COPY --chown=xplore:xplore . .
 
 # Set a directory to build the project
 WORKDIR /home/$USERNAME/dev_ws
@@ -167,6 +190,8 @@ RUN echo "if [ -f /home/${USERNAME}/dev_ws/install/setup.bash ]; then source /ho
 ENV GAZEBO_RESOURCE_PATH=/usr/share/gazebo-11
 ENV GAZEBO_MODEL_PATH=/usr/share/gazebo-11/models
 ENV GAZEBO_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
+ENV ZED_DIR=/usr/local/zed
+ENV CMAKE_PREFIX_PATH=/usr/local/zed
 
 # Install additional Python packages
 RUN pip install opencv-python --no-cache-dir
@@ -179,6 +204,9 @@ RUN pip install pygame --no-cache-dir
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
 
+# Pre-install ZED SDK and build the Isaac ZED workspace in the image
+RUN sudo chmod +x /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh \
+    && /bin/bash /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/zed_setup.sh /home/$USERNAME/dev_ws/src/localization/camera/isaac/scripts/install-zed-aarch64.sh
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*
