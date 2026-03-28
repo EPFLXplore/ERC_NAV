@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # If not working, first do: sudo rm -rf /tmp/.docker.xauth
 # If still not working, try running the script as root.
 
@@ -27,16 +29,14 @@ echo ""
 echo "Running docker..."
 
 
-# Get the current working directory
-current_dir=$(pwd)
-
-# Use dirname to get the parent directory
-parent_dir=$(dirname "$current_dir")
+# Resolve repository paths from this script location
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+workspace_dir=$(dirname "$script_dir")
 
 USERNAME=xplore
 
 docker run -it \
-    --name nav_humble_jetson \
+    --name nav_humble_jetson_isaac \
     --rm \
     --privileged \
     --net=host \
@@ -47,17 +47,19 @@ docker run -it \
     -e XAUTHORITY=$XAUTH \
     --env GAZEBO_RESOURCE_PATH=/usr/share/gazebo-11 \
     --env GAZEBO_MODEL_PATH=/usr/share/gazebo-11/models \
-    --env GAZEBO_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gazebo-11/plugins \
+    --env GAZEBO_PLUGIN_PATH=/usr/lib/aarch64-linux-gnu/gazebo-11/plugins \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v $XAUTH:$XAUTH \
     -v /run/user/1000/at-spi:/run/user/1000/at-spi \
     -v /dev:/dev \
     -v /run/jtop.sock:/run/jtop.sock \
-    -v $parent_dir:/home/xplore/dev_ws/src \
-    -v nav_humble_jetson_home_volume:/home/xplore \
-    -v ~/Documents/ERC_NAV/docker_humble_jetson/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro \
+    -v $workspace_dir:/home/xplore/dev_ws/src \
+    -v nav_humble_jetson_isaac_home_volume:/home/xplore \
+    -v "$script_dir/cyclonedds.xml:/home/xplore/cyclonedds.xml:ro" \
     -v /home/xplore-nav/Documents/photos_competition:/home/xplore/dev_ws/photos_competition \
+    -v /usr/lib/aarch64-linux-gnu/tegra:/usr/lib/aarch64-linux-gnu/tegra:ro \
+    -v /usr/local/cuda:/usr/local/cuda:ro \
     -e CYCLONEDDS_URI="file:///home/xplore/cyclonedds.xml" \
     --add-host=os-122140001125.local:169.254.55.220 \
-    ghcr.io/epflxplore/nav:humble-jetson \
+    ghcr.io/epflxplore/nav:humble-jetson-isaac \
     /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; export PYTHONPATH=/home/xplore/dev_ws/install/rover_pkg/lib/python3.10/site-packages:/home/xplore/dev_ws/install/custom_msg/local/lib/python3.10/dist-packages:/opt/ros/humble/install/local/lib/python3.10/dist-packages:/opt/ros/humble/install/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages; /bin/bash"

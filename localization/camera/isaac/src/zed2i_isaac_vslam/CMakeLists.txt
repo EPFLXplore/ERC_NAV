@@ -4,7 +4,7 @@ project(zed2i_isaac_vslam)
 find_package(ament_cmake REQUIRED)
 
 install(DIRECTORY
-  config
+  config 3
   launch
   rviz
   DESTINATION share/${PROJECT_NAME}
@@ -13,6 +13,6 @@ install(DIRECTORY
 install(PROGRAMS
   scripts/vio_watcher
   DESTINATION lib/${PROJECT_NAME}
-)
+) 31
 
 ament_package()

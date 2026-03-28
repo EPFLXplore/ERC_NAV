@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # Function to check if a Docker container is running
 is_container_running() {
     if [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]; then
@@ -7,7 +9,7 @@ is_container_running() {
     fi
 }
 
-CONTAINER_NAME=nav_humble_jetson
+CONTAINER_NAME=nav_humble_jetson_isaac
 
 container_status=$(is_container_running "$CONTAINER_NAME")
 

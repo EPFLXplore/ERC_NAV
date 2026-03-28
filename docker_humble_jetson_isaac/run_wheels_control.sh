@@ -2,9 +2,9 @@
 
 XAUTH=/tmp/.docker.xauth
 USERNAME=xplore
-CONTAINER_NAME=nav_humble_jetson
-IMAGE_NAME=ghcr.io/epflxplore/nav:humble-jetson
-DOCKER_COMMAND="sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; source src/docker_humble_jetson/attach.sh; ros2 launch wheels_control manual_stack.launch.py pub_urdf:=True"
+CONTAINER_NAME=nav_humble_jetson_isaac
+IMAGE_NAME=ghcr.io/epflxplore/nav:humble-jetson-isaac
+DOCKER_COMMAND="sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; source src/docker_humble_jetson_isaac/attach.sh; ros2 launch wheels_control manual_stack.launch.py pub_urdf:=True"
 
 # Function to check if a Docker container is running
 is_container_running() {
@@ -37,9 +37,9 @@ echo "Permissions:"
 ls -FAlh $XAUTH
 echo ""
 
-# Get the current working directory and parent directory
-current_dir=$(pwd)
-parent_dir=$(dirname "$current_dir")
+# Resolve repository paths from this script location
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+workspace_dir=$(dirname "$script_dir")
 
 # Check if the container is running
 container_status=$(is_container_running "$CONTAINER_NAME")
@@ -59,12 +59,12 @@ if [ "$container_status" == "false" ]; then
         -v /run/user/1000/at-spi:/run/user/1000/at-spi \
         -v /dev:/dev \
         -v /run/jtop.sock:/run/jtop.sock \
-        -v $parent_dir:/home/$USERNAME/dev_ws/src \
-        -v nav_humble_jetson_home_volume:/home/$USERNAME \
+        -v $workspace_dir:/home/$USERNAME/dev_ws/src \
+        -v nav_humble_jetson_isaac_home_volume:/home/$USERNAME \
         --add-host=os-122140001125.local:169.254.55.220 \
         $IMAGE_NAME \
         /bin/bash -c "$DOCKER_COMMAND"
 else
     echo "Container $CONTAINER_NAME is already running. Attaching to it..."
-    docker exec -it $CONTAINER_NAME $DOCKER_COMMAND
+    docker exec -it $CONTAINER_NAME /bin/bash -c "$DOCKER_COMMAND"
 fi
