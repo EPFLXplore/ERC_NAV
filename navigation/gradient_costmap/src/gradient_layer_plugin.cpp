@@ -11,7 +11,7 @@ void GradientLayer::onInitialize()
   }
 
   declareParameter("enabled", rclcpp::ParameterValue(true));
-  declareParameter("topic", rclcpp::ParameterValue("/occupancy_map_local"));
+  declareParameter("topic", rclcpp::ParameterValue("/occupancy_map_local_inflated"));
   
   std::string topic;
   node->get_parameter(name_ + ".topic", topic);

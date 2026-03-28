@@ -224,33 +224,34 @@ local_costmap:
       height: 6
       resolution: 0.05
       robot_radius: 0.72
-      plugins: ["gradient_layer", "obstacle_layer", "inflation_layer"]
+      # plugins: ["gradient_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["gradient_layer"]
       
       gradient_layer:
         plugin: "gradient_layer::GradientLayer"
         enabled: true
-        topic: "/occupancy_map_local"
+        topic: "/occupancy_map_local_inflated"
 
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
-        observation_sources: ouster_pcl
-        ouster_pcl:
-          topic: /ouster_points
-          data_type: "PointCloud2"
-          clearing: true
-          marking: true
-          min_obstacle_height: -0.08
-          max_obstacle_height: 2.0
-          obstacle_min_range: 0.75
-          obstacle_max_range: 8.0
-          raytrace_min_range: 0.75
-          raytrace_max_range: 10.0
+      # obstacle_layer:
+      #   plugin: "nav2_costmap_2d::ObstacleLayer"
+      #   enabled: true
+      #   observation_sources: ouster_pcl
+      #   ouster_pcl:
+      #     topic: /ouster_points
+      #     data_type: "PointCloud2"
+      #     clearing: true
+      #     marking: true
+      #     min_obstacle_height: -0.08
+      #     max_obstacle_height: 2.0
+      #     obstacle_min_range: 0.75
+      #     obstacle_max_range: 8.0
+      #     raytrace_min_range: 0.75
+      #     raytrace_max_range: 10.0
 
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 0.75
+      # inflation_layer:
+      #   plugin: "nav2_costmap_2d::InflationLayer"
+      #   cost_scaling_factor: 1.5
+      #   inflation_radius: 0.75
       
       always_send_full_costmap: true
 
@@ -328,7 +329,7 @@ global_costmap:
       gradient_layer:
         plugin: "gradient_layer::GradientLayer"
         enabled: true
-        topic: "/occupancy_map_local"
+        topic: "/occupancy_map_local_inflated"
       always_send_full_costmap: true
 
   global_costmap_client:
@@ -389,7 +390,18 @@ planner_server:
       downsample_obstacle_heuristic: true
       allow_primitive_interpolation: false
       smooth_path: true                   # If true, does a simple and quick smoothing post-processing to the path
+      
+      # plugin: "nav2_navfn_planner/NavfnPlanner"
+      # use_astar: True
+      # allow_unknown: True
+      # tolerance: 1.0
+      # use_final_approach_orientation: True
 
+      #not working
+      # plugin: "nav2_theta_star_planner/ThetaStarPlanner" # In Iron and older versions, "/" was used instead of "::"
+      # how_many_corners: 8
+      # w_euc_cost: 1.0
+      # w_traversal_cost: 2.0
 
       smoother:
         max_iterations: 500

@@ -13,6 +13,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subFilteredGroundCloud;
     // Publisher
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pubOccupancyMapLocal;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pubOccupancyMapLocalInflated;
     // rclcpp::Publisher<elevation_msgs::msg::OccupancyElevation>::SharedPtr pubOccupancyMapLocalHeight;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubElevationCloud;
     // Point Cloud Pointer
@@ -20,6 +21,7 @@ private:
     pcl::PointCloud<PointType>::Ptr laserCloudElevation; // a cloud for publishing elevation map
     // Occupancy Grid Map
     nav_msgs::msg::OccupancyGrid occupancyMap2D; // local occupancy grid map
+    nav_msgs::msg::OccupancyGrid occupancyMap2DInflated; // local occupancy grid map
     // elevation_msgs::msg::OccupancyElevation occupancyMap2DHeight; // customized message that includes occupancy map and elevation info
 
     std::chrono::time_point<std::chrono::high_resolution_clock> last_time;
@@ -44,6 +46,31 @@ private:
     vector<mapCell_t*> observingList1; // thread 1: save new observed cells
     vector<mapCell_t*> observingList2; // thread 2: calculate traversability of new observed cells
 
+    // Inflation Parameters
+    int cost;
+    int cost_inflated;
+    float cost_kernel;
+    int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
+    float alpha_inflation = this->declare_parameter<float>("inflation_factor", 1.0f); // inflation factor, can be tuned based on how much we want to inflate
+    float sigmoid_k = this->declare_parameter<float>("sigmoid_k", 0.5f); // weight for slope in occupancy calculation
+    float sigmoid_x0 = this->declare_parameter<float>("sigmoid_x0", 0.5f); // threshold for slope in occupancy calculation
+    
+    
+    float applySigmoidToOccupancy(float p) const {
+        p = std::clamp(p, 0.0f, 1.0f);
+
+        // Logistic remap around threshold x0
+        const float s = 1.0f / (1.0f + std::exp(-sigmoid_k * (p - sigmoid_x0)));
+
+        // Normalize so p=0 maps to 0 and p=1 maps to 1 (important for stable scaling)
+        const float s0 = 1.0f / (1.0f + std::exp(-sigmoid_k * (0.0f - sigmoid_x0)));
+        const float s1 = 1.0f / (1.0f + std::exp(-sigmoid_k * (1.0f - sigmoid_x0)));
+        const float denom = std::max(1e-6f, s1 - s0);
+
+        return std::clamp((s - s0) / denom, 0.0f, 1.0f);
+    }
+
+
 public:
     TraversabilityMapping() : Node("traversability_mapping"),
         pubCount(1),
@@ -61,6 +88,9 @@ public:
 
         pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
             "/occupancy_map_local",
+            rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+        pubOccupancyMapLocalInflated = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            "/occupancy_map_local_inflated",
             rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
         // pubOccupancyMapLocalHeight = this->create_publisher<elevation_msgs::msg::OccupancyElevation>("/occupancy_map_local_height", 10);
         pubElevationCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/elevation_pointcloud", 5);
@@ -122,6 +152,9 @@ public:
         updateElevationMap();
 
         auto t4 = std::chrono::high_resolution_clock::now();
+        updateOccupancyGrid();
+
+        auto t5 = std::chrono::high_resolution_clock::now();
         publishMap();
         auto end = std::chrono::high_resolution_clock::now();
         
@@ -130,9 +163,9 @@ public:
         auto tf_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
         auto convert_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
         auto update_time = std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count();
-        auto publish_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - t4).count();
+        auto inflation_time = std::chrono::duration_cast<std::chrono::milliseconds>(t5 - t4).count();
+        auto publish_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - t5).count();
         auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        
         // RCLCPP_WARN(this->get_logger(), 
         // "Processing: total=%ldms (lock=%ld, tf=%ld, convert=%ld, update=%ld, publish=%ld)",
         //     total_time, lock_time, tf_time, convert_time, update_time, publish_time);
@@ -226,6 +259,71 @@ public:
             float mu_new = mu + K * (z - mu);
             float sigma_new = (1 - K) * sigma;
             cell->updateElevation(mu_new, sigma_new);
+        }
+    }
+
+    void updateOccupancyGrid(){
+        // This function can be used to implement additional occupancy grid updates if needed
+        // Here we perform inflation here based on the traversability of cells and a kernel
+        // We do it here, since inflation layer in plugin works with obstacle not traversability, and we want to have the flexibility to inflate based on traversability if needed.
+
+        // Publish standard 2D occupancy grid
+        occupancyMap2DInflated.header.frame_id = "map";
+        occupancyMap2DInflated.header.stamp = this->get_clock()->now();
+        
+        // Set map parameters
+        occupancyMap2DInflated.info.resolution = mapResolution;
+        occupancyMap2DInflated.info.width = localMapArrayLength;
+        occupancyMap2DInflated.info.height = localMapArrayLength;
+        
+        // Set origin
+        occupancyMap2DInflated.info.origin.position.x = robotPoint.x - localMapLength/2.0;
+        occupancyMap2DInflated.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+        occupancyMap2DInflated.info.origin.position.z = 0.0;
+        // Fill data
+        occupancyMap2DInflated.data.clear();
+        occupancyMap2DInflated.data.resize(localMapArrayLength * localMapArrayLength, -1);
+
+
+        for (int i = 0; i < localMapArrayLength; ++i) {
+            for (int j = 0; j < localMapArrayLength; ++j) {
+                PointType point;
+                point.x = occupancyMap2D.info.origin.position.x + i * mapResolution + mapResolution/2.0;
+                point.y = occupancyMap2D.info.origin.position.y + j * mapResolution + mapResolution/2.0;
+                
+                mapCell_t *cell = getCellFromPoint(&point);
+                for (int m = -radius_inflation; m <= radius_inflation; ++m) {
+                    for (int n = -radius_inflation; n <= radius_inflation; ++n) {
+                        int x = i + m;
+                        int y = j + n;
+                        if (x < 0 || x >= localMapArrayLength || y < 0 || y >= localMapArrayLength)
+                            continue;
+                        if (cell != NULL && cell->observeTimes > 0) {
+                            int cell_idx = i + j * localMapArrayLength;
+                            int kernel_idx = x + y * localMapArrayLength;
+                            // Value contained between 0 and 100, represent probability. 
+
+                            // Update through sigmoid function to make the gradient sharper, can be tuned by changing sigmoid_k and sigmoid_x0
+                            cost = int(applySigmoidToOccupancy(cell->occupancy) * 100);
+                            // Kernel is the influence of the cell on its neighbors
+
+                            // Kernel with distances
+                            // cost_kernel = 1.0f - sqrt(m*m + n*n) / (radius_inflation+1); // simple linear kernel, can be changed to more complex ones
+                            // cost_kernel = std::max(cost_kernel, 0.0f); // limit kernel value to -1, cost kernel between 0 and -1, where 0 means no inflation and -1 means full inflation
+                            // cost_inflated = int(cost * (1 + alpha_inflation*cost_kernel));
+
+                            // Kernel with exponential decay on distances
+                            cost_kernel = std::exp(- alpha_inflation * sqrt(m*m + n*n) / (radius_inflation+1)); // exponential decay kernel, can be changed to more complex ones
+                            cost_inflated = int(cost * (1 + cost_kernel));
+                            // Keep and map the cost inflated between 0 and 100
+                            cost_inflated = std::min(cost_inflated, 100);
+                            if (occupancyMap2DInflated.data[kernel_idx] < cost_inflated) {
+                                occupancyMap2DInflated.data[kernel_idx] = cost_inflated;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -378,7 +476,6 @@ public:
         cell->updateOccupancy(occupancy);  
     }
 
-
     void getNeighborCells(mapCell_t *cell, vector<PointType> &neighborPoints){
         // Get neighboring cells within a radius for analysis
         float searchRadius = 0.6; // meters
@@ -423,6 +520,8 @@ public:
         }
     }
 
+
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////// Publish Map //////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -432,6 +531,7 @@ public:
             return;
 
         publishLocalOccupancyGrid();
+        publishLocalOccupancyGridInflated();
         // publishLocalOccupancyGridWithHeight();
         publishTraversabilityMap();
     }
@@ -472,6 +572,11 @@ public:
         pubOccupancyMapLocal->publish(occupancyMap2D);
     }
 
+    void publishLocalOccupancyGridInflated(){
+        
+
+        pubOccupancyMapLocalInflated->publish(occupancyMap2DInflated);
+    }
 
     mapCell_t* getCellFromPoint(PointType *point){
         int cubeX, cubeY;
@@ -553,8 +658,11 @@ int main(int argc, char** argv){
 
     rclcpp::spin(tMapping);
 
-
     rclcpp::shutdown();
+
+    if (predictionThread.joinable()) {
+    predictionThread.join();
+    }
 
     return 0;
 }

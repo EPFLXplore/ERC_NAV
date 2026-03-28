@@ -27,7 +27,13 @@ def generate_launch_description():
             executable='traversability_map',
             name='traversability_map',
             output='screen',
-            parameters=[{'use_sim_time': True}],
+            parameters=[{'use_sim_time': True, 
+                         'inflation_radius': 2, #int representing the radius of the kernel in cells, make the gradient wider with bigger radius 
+                         'inflation_factor': 0.01,
+                         'sigmoid_k': 13.0, # between 8.0 and 20.0 for sharper gradient, between 0.5 and 1.0 for softer gradient
+                         'sigmoid_x0': 0.7}], # between 0.45 to 0.60 shift the sigmoid curve to the left or right, can be used to make the gradient sharper or softer around the threshold (0.5 in this case)
+        # inflation factor makes the gradient sharpes (get blacker faster with high factor)
+        # inflation radius makes the gradient wider (get blacker in a wider area with bigger kernel)
             emulate_tty=True
         ),
         # Node(
