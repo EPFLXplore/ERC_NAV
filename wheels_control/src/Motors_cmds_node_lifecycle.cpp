@@ -42,11 +42,10 @@ using namespace std::chrono_literals;
 
 //const _Float64 dt(0);
 
-std::string mode_deplacement = ""; // to be removed if not using check on mode
-bool fault_state = false; // ??
+std::string mode_deplacement = "";
 
 _Float64 motors_cmds[8];
-bool safemode = true; // needed?
+bool safemode = true;
 
 int encoder_resolution; // NEEDED?
 std::vector<NAV_Motor> motors;
@@ -146,10 +145,11 @@ public:
             
         // Get the size of the vector
         std::size_t size = motors.size();
-        RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%d'", size);
+        RCLCPP_INFO(get_logger(), "The size of the motors vector is:'%zu'", size);
         RCLCPP_INFO(get_logger(), "----> NAV MOTORS CONFIGURED <----");
 
         current_faulty_motors.resize(motors.size(), false);
+        fault_retry_counts.resize(motors.size(), 0);
 
         return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
     }
@@ -212,14 +212,16 @@ public:
 
             for (auto motor = motors.begin(); motor != motors.end(); motor++){
                 int id = motor->get_id();
-                unsigned int error_code = 0;
+                int idx = id - 1;
 
-                if(current_faulty_motors[id-1] == true){
-                    bool cleared_fault = motor->clear_fault();
-                    if (error_code != 0){
-                        RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id-1);
+                if(current_faulty_motors[idx]){
+                    bool cleared = motor->clear_fault();
+                    if (!cleared || motor->is_faulty(false) || !motor->set_output_state(true)){
+                        RCLCPP_ERROR(get_logger(), "ERR : could not reset fault for motor %d", id);
                     }else{
-                        current_faulty_motors[id-1] = false;
+                        current_faulty_motors[idx] = false;
+                        fault_retry_counts[idx] = 0;
+                        RCLCPP_INFO(get_logger(), "Motor %d: fault cleared via service", id);
                     }
                 }
             }
@@ -252,8 +254,6 @@ public:
 
         if(request->data){
             for (auto motor = motors.begin(); motor != motors.end(); motor++){
-                int id = motor->get_id();
-                unsigned int error_code = 0;
                 bool successfully_homed = motor->homing();
                 if(successfully_homed){
                     response->success = true;
@@ -284,7 +284,6 @@ public:
         for (auto motor = motors.begin(); motor != motors.end(); motor++){
             
             int id = motor->get_id();
-            unsigned int error_code = 0;
             bool debug_verbose = false;
 
             if (motor->connected()){
@@ -350,68 +349,103 @@ public:
         //RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
 
 
-        do
+        // --- Per-motor fault detection and recovery ---
+        for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
-            for (auto motor = motors.begin(); motor != motors.end(); motor++)
+            int id = motor->get_id();
+            int idx = id - 1;
+
+            if (current_faulty_motors[idx])
             {
-                unsigned int error_code = 0;
-                bool is_fault = motor->fault_state(&error_code);
-
-                if (error_code != 0)
+                if (fault_retry_counts[idx] < MAX_FAULT_RETRIES)
                 {
-                    RCLCPP_ERROR(get_logger(), "Error Navigation Motors Detected");
-                    this->cleanup();
-                    return;
-                }
-
-                if (is_fault)
-                {
-                    RCLCPP_ERROR(get_logger(), "FAULT STATE Navigation Motors Detected, %d", motor);
-                    this->cleanup();
-                    return;
-                }
-            }
-            // Send commands to Maxon controllers
-            for (auto motor = motors.begin(); motor != motors.end(); motor++)
-            {
-
-                int id = motor->get_id();
-
-                if (motor->connected())
-                {
-                    if (STEERING_MOTORS.count(id) > 0)
+                    bool cleared = motor->clear_fault();
+                    if (cleared && !motor->is_faulty(false) && motor->set_output_state(true))
                     {
-
-                        if ((id == FRONT_LEFT_STEER) || (id == FRONT_RIGHT_STEER) || (id == BACK_LEFT_STEER) || (id == BACK_RIGHT_STEER))
-                        {
-                            // RCLCPP_INFO(get_logger(), "STEER MOTOR : '%f'",motors_cmds[id-1]);
-
-                            motor->set_position_ref(motors_cmds[id - 1]);
-                        }
+                        current_faulty_motors[idx] = false;
+                        fault_retry_counts[idx] = 0;
+                        RCLCPP_WARN(get_logger(), "Motor %d: fault cleared, resuming", id);
                     }
-
-                    else if (DRIVING_MOTORS.count(id) > 0)
-                    // if ((id == FRONT_LEFT_DRIVE) ||  (id == BACK_LEFT_DRIVE)||(id == FRONT_RIGHT_DRIVE) || (id == BACK_RIGHT_DRIVE))
-                    {
-
-                        if ((id == FRONT_LEFT_DRIVE) || (id == BACK_LEFT_DRIVE) || (id == FRONT_RIGHT_DRIVE) || (id == BACK_RIGHT_DRIVE))
-                        {
-                            //RCLCPP_INFO(get_logger(), "PRINT DRIVE MOTOR : '%f'",motors_cmds[id-1]);
-
-                            motor->set_velocity_ref(motors_cmds[id - 1]);
-                        }
-                    }
-
                     else
                     {
-                        motor->set_velocity_ref(0);
+                        fault_retry_counts[idx]++;
+                        RCLCPP_WARN(get_logger(), "Motor %d: fault clear attempt %d/%d failed",
+                                    id, fault_retry_counts[idx], MAX_FAULT_RETRIES);
                     }
                 }
+                continue;
             }
-        } while (fault_state);
+
+            unsigned int error_code = 0;
+            bool is_fault = motor->fault_state(&error_code);
+
+            if (error_code != 0)
+            {
+                RCLCPP_WARN(get_logger(), "Motor %d: CAN read error (0x%X), skipping this cycle", id, error_code);
+                continue;
+            }
+
+            if (is_fault)
+            {
+                RCLCPP_ERROR(get_logger(), "Motor %d: FAULT detected, attempting recovery", id);
+                current_faulty_motors[idx] = true;
+                fault_retry_counts[idx] = 0;
+
+                bool cleared = motor->clear_fault();
+                if (cleared && !motor->is_faulty(false) && motor->set_output_state(true))
+                {
+                    current_faulty_motors[idx] = false;
+                    RCLCPP_WARN(get_logger(), "Motor %d: fault cleared immediately", id);
+                }
+                else
+                {
+                    fault_retry_counts[idx]++;
+                }
+            }
+        }
+
+        // Escalate: if too many motors are permanently faulted, shut down
+        int unrecoverable_count = 0;
+        for (size_t i = 0; i < motors.size(); i++)
+        {
+            if (current_faulty_motors[i] && fault_retry_counts[i] >= MAX_FAULT_RETRIES)
+                unrecoverable_count++;
+        }
+        if (unrecoverable_count > 2)
+        {
+            RCLCPP_FATAL(get_logger(), "%d motors unrecoverable, shutting down", unrecoverable_count);
+            this->cleanup();
+            return;
+        }
+
+        // --- Send commands, skipping faulty motors and their wheel pair ---
+        for (auto motor = motors.begin(); motor != motors.end(); motor++)
+        {
+            int id = motor->get_id();
+            int idx = id - 1;
+
+            if (!motor->connected() || current_faulty_motors[idx])
+                continue;
+
+            // If this motor's wheel-pair partner is faulty, don't command it either
+            int pair_idx = paired_motor_idx(id);
+            if (pair_idx >= 0 && current_faulty_motors[pair_idx])
+            {
+                if (DRIVING_MOTORS.count(id) > 0)
+                    motor->set_velocity_ref(0);
+                continue;
+            }
+
+            if (STEERING_MOTORS.count(id) > 0)
+                motor->set_position_ref(motors_cmds[idx]);
+            else if (DRIVING_MOTORS.count(id) > 0)
+                motor->set_velocity_ref(motors_cmds[idx]);
+            else
+                motor->set_velocity_ref(0);
+        }
     }
 
-    static void interrupt_handler(int s)
+    static void interrupt_handler(int /*s*/)
     {
         exit(1);
     }
@@ -436,7 +470,7 @@ public:
             gateway = open_gateway();
             if (!gateway)
             {
-                RCLCPP_WARN_THROTTLE(logger, *clock, 1000, "CAN network gateway opening has failed !", 4);
+                RCLCPP_WARN_THROTTLE(logger, *clock, 1000, "CAN network gateway opening has failed !");
             }
         }
 
@@ -447,7 +481,7 @@ public:
         }
 
         int i = 0;
-        RCLCPP_INFO(get_logger(), "START MOTOR DETECTION", 4);
+        RCLCPP_INFO(get_logger(), "START MOTOR DETECTION");
         for (auto id = motor_ids.begin(); id != motor_ids.end(); id++, i++)
         {
             switch (*id)
@@ -456,7 +490,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_DRIVE connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_DRIVE connected");
                 }
                 break;
 
@@ -464,7 +498,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_DRIVE connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_DRIVE connected");
                 }
                 break;
 
@@ -472,7 +506,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_DRIVE connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_DRIVE connected");
                 }
                 break;
 
@@ -480,7 +514,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_DRIVE connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_DRIVE connected");
                 }
                 break;
 
@@ -488,7 +522,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_STEER connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_STEER connected");
                 }
                 break;
 
@@ -496,7 +530,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_STEER connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_STEER connected");
                 }
                 break;
 
@@ -504,7 +538,7 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_STEER connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_STEER connected");
                 }
                 break;
 
@@ -512,15 +546,15 @@ public:
                 motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
                 if (motors.data()->connected())
                 {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_STEER connected", 4);
+                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_STEER connected");
                 }
                 break;
 
             default:
-                RCLCPP_INFO_ONCE(get_logger(), "WARNING DEFAULT: NO MOTOR ", 4);
+                RCLCPP_INFO_ONCE(get_logger(), "WARNING DEFAULT: NO MOTOR ");
             }
         }
-        RCLCPP_INFO(get_logger(), "END MOTOR DETECTION", 4);
+        RCLCPP_INFO(get_logger(), "END MOTOR DETECTION");
 
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
@@ -575,9 +609,21 @@ private:
         motors.clear();
     }
 
+    static constexpr int MAX_FAULT_RETRIES = 3;
     std::vector<bool> current_faulty_motors;
+    std::vector<int> fault_retry_counts;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_nav_motors_service_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_home_nav_motors_service_;
+
+    // Drive ID d is paired with steer ID d+4. Returns -1 if no pair.
+    int paired_motor_idx(int id) const
+    {
+        if (DRIVING_MOTORS.count(id) > 0)
+            return (id + 4) - 1;
+        if (STEERING_MOTORS.count(id) > 0)
+            return (id - 4) - 1;
+        return -1;
+    }
 };
 
 int main(int argc, char *argv[])
@@ -595,7 +641,7 @@ int main(int argc, char *argv[])
     }
     catch (const std::exception &e)
     {
-        RCLCPP_INFO(rclcpp::get_logger("NAV_motor_cmds"), "WARNING: node MotorCmds ended", 4);
+        RCLCPP_INFO(rclcpp::get_logger("NAV_motor_cmds"), "WARNING: node MotorCmds ended");
     }
 
     rclcpp::shutdown();

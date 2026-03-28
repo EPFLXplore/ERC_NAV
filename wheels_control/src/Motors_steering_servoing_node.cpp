@@ -66,7 +66,7 @@ private:
     void check_and_send_motor_commands()
     {
         if (!(received_target_ && received_current_)) {
-            RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
+            // RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
             return; // Wait until both messages have arrived
         }
 
@@ -74,8 +74,8 @@ private:
         for (size_t i = 0; i < 4; ++i) {
             if (std::fabs(target_steering_angles_[i] - current_steering_angles_[i]) >= ANGLE_TOLERANCE_INCR) {
                 all_within_tolerance = false;
-                RCLCPP_INFO(this->get_logger(), "Motor %zu not within tolerance: target=%.2f, current=%.2f", 
-                            i, target_steering_angles_[i], current_steering_angles_[i]);
+                // RCLCPP_INFO(this->get_logger(), "Motor %zu not within tolerance: target=%.2f, current=%.2f", 
+                //             i, target_steering_angles_[i], current_steering_angles_[i]);
                 break;
             }
         }
@@ -91,9 +91,9 @@ private:
             pub_motor_cmds_->publish(zero_cmds);
         }
 
-        RCLCPP_INFO(this->get_logger(), "Target steering angles: [%.2f, %.2f, %.2f, %.2f]",
-                    target_steering_angles_[0], target_steering_angles_[1],
-                    target_steering_angles_[2], target_steering_angles_[3]);
+        // RCLCPP_INFO(this->get_logger(), "Target steering angles: [%.2f, %.2f, %.2f, %.2f]",
+        //             target_steering_angles_[0], target_steering_angles_[1],
+        //             target_steering_angles_[2], target_steering_angles_[3]);
     }
 
     // Subscriptions et Publishers
