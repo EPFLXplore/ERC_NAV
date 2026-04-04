@@ -50,6 +50,15 @@ private:
     int cost;
     int cost_inflated;
     float cost_kernel;
+    std::string pointcloud_topic_;
+    std::string output_local_topic_;
+    std::string output_local_inflated_topic_;
+    std::string output_elevation_topic_;
+    std::string map_frame_;
+    std::string base_frame_;
+    bool use_robot_centered_origin_;
+    double fixed_origin_x_;
+    double fixed_origin_y_;
     int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
     float alpha_inflation = this->declare_parameter<float>("inflation_factor", 1.0f); // inflation factor, can be tuned based on how much we want to inflate
     float sigmoid_k = this->declare_parameter<float>("sigmoid_k", 0.5f); // weight for slope in occupancy calculation
@@ -79,21 +88,31 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+        pointcloud_topic_ = this->declare_parameter<std::string>("pointcloud_topic", "/cloud_pcd");
+        output_local_topic_ = this->declare_parameter<std::string>("output_local_topic", "/occupancy_map_local");
+        output_local_inflated_topic_ = this->declare_parameter<std::string>("output_local_inflated_topic", "/occupancy_map_local_inflated");
+        output_elevation_topic_ = this->declare_parameter<std::string>("output_elevation_topic", "/elevation_pointcloud");
+        map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
+        base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
+        use_robot_centered_origin_ = this->declare_parameter<bool>("use_robot_centered_origin", true);
+        fixed_origin_x_ = this->declare_parameter<double>("fixed_origin_x", -localMapLength / 2.0);
+        fixed_origin_y_ = this->declare_parameter<double>("fixed_origin_y", -localMapLength / 2.0);
+
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/cloud_pcd", 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
+            pointcloud_topic_, 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
         
         // CHANGE ME:
         // 1. If you want to use the gazebo pointcloud use /filtered_pointcloud
         // 2. If you want to use the marsyard pcd file, use /cloud_pcd
 
         pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
-            "/occupancy_map_local",
+            output_local_topic_,
             rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
         pubOccupancyMapLocalInflated = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
-            "/occupancy_map_local_inflated",
+            output_local_inflated_topic_,
             rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
         // pubOccupancyMapLocalHeight = this->create_publisher<elevation_msgs::msg::OccupancyElevation>("/occupancy_map_local_height", 10);
-        pubElevationCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/elevation_pointcloud", 5);
+        pubElevationCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_elevation_topic_, 5);
 
         allocateMemory();
     }
@@ -138,11 +157,13 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
         
         auto t1 = std::chrono::high_resolution_clock::now();
-        if (getRobotPosition() == false) 
-        {
-            RCLCPP_WARN(this->get_logger(), 
-            "Location not found");
-            return;
+        if (use_robot_centered_origin_) {
+            if (getRobotPosition() == false) {
+                RCLCPP_WARN(this->get_logger(), "Location not found");
+                return;
+            }
+        } else {
+            (void)getRobotPosition();
         }
         
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -268,7 +289,7 @@ public:
         // We do it here, since inflation layer in plugin works with obstacle not traversability, and we want to have the flexibility to inflate based on traversability if needed.
 
         // Publish standard 2D occupancy grid
-        occupancyMap2DInflated.header.frame_id = "map";
+        occupancyMap2DInflated.header.frame_id = map_frame_;
         occupancyMap2DInflated.header.stamp = this->get_clock()->now();
         
         // Set map parameters
@@ -277,8 +298,13 @@ public:
         occupancyMap2DInflated.info.height = localMapArrayLength;
         
         // Set origin
-        occupancyMap2DInflated.info.origin.position.x = robotPoint.x - localMapLength/2.0;
-        occupancyMap2DInflated.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+        if (use_robot_centered_origin_) {
+            occupancyMap2DInflated.info.origin.position.x = robotPoint.x - localMapLength/2.0;
+            occupancyMap2DInflated.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+        } else {
+            occupancyMap2DInflated.info.origin.position.x = fixed_origin_x_;
+            occupancyMap2DInflated.info.origin.position.y = fixed_origin_y_;
+        }
         occupancyMap2DInflated.info.origin.position.z = 0.0;
         // Fill data
         occupancyMap2DInflated.data.clear();
@@ -288,8 +314,8 @@ public:
         for (int i = 0; i < localMapArrayLength; ++i) {
             for (int j = 0; j < localMapArrayLength; ++j) {
                 PointType point;
-                point.x = occupancyMap2D.info.origin.position.x + i * mapResolution + mapResolution/2.0;
-                point.y = occupancyMap2D.info.origin.position.y + j * mapResolution + mapResolution/2.0;
+                point.x = occupancyMap2DInflated.info.origin.position.x + i * mapResolution + mapResolution/2.0;
+                point.y = occupancyMap2DInflated.info.origin.position.y + j * mapResolution + mapResolution/2.0;
                 
                 mapCell_t *cell = getCellFromPoint(&point);
                 for (int m = -radius_inflation; m <= radius_inflation; ++m) {
@@ -506,7 +532,7 @@ public:
 
     bool getRobotPosition(){
         try{
-            auto transform = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+            auto transform = tf_buffer_->lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
             
             robotPoint.x = transform.transform.translation.x;
             robotPoint.y = transform.transform.translation.y;
@@ -526,19 +552,24 @@ public:
     ////////////////////////////////////////// Publish Map //////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     void publishMap(){
-        if (pubOccupancyMapLocal->get_subscription_count() == 0)
-            // pubOccupancyMapLocalHeight->get_subscription_count() == 0)
+        if (pubOccupancyMapLocal->get_subscription_count() == 0 &&
+            pubOccupancyMapLocalInflated->get_subscription_count() == 0 &&
+            pubElevationCloud->get_subscription_count() == 0)
             return;
 
-        publishLocalOccupancyGrid();
-        publishLocalOccupancyGridInflated();
+        if (pubOccupancyMapLocal->get_subscription_count() > 0) {
+            publishLocalOccupancyGrid();
+        }
+        if (pubOccupancyMapLocalInflated->get_subscription_count() > 0) {
+            publishLocalOccupancyGridInflated();
+        }
         // publishLocalOccupancyGridWithHeight();
         publishTraversabilityMap();
     }
 
     void publishLocalOccupancyGrid(){
         // Publish standard 2D occupancy grid
-        occupancyMap2D.header.frame_id = "map";
+        occupancyMap2D.header.frame_id = map_frame_;
         occupancyMap2D.header.stamp = this->get_clock()->now();
         
         // Set map parameters
@@ -547,8 +578,13 @@ public:
         occupancyMap2D.info.height = localMapArrayLength;
         
         // Set origin
-        occupancyMap2D.info.origin.position.x = robotPoint.x - localMapLength/2.0;
-        occupancyMap2D.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+        if (use_robot_centered_origin_) {
+            occupancyMap2D.info.origin.position.x = robotPoint.x - localMapLength/2.0;
+            occupancyMap2D.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+        } else {
+            occupancyMap2D.info.origin.position.x = fixed_origin_x_;
+            occupancyMap2D.info.origin.position.y = fixed_origin_y_;
+        }
         occupancyMap2D.info.origin.position.z = 0.0;
         
         // Fill data
@@ -640,7 +676,7 @@ public:
         // Publish elevation cloud
         sensor_msgs::msg::PointCloud2 laserCloudTemp;
         pcl::toROSMsg(*laserCloudElevation, laserCloudTemp);
-        laserCloudTemp.header.frame_id = "map";
+        laserCloudTemp.header.frame_id = map_frame_;
         laserCloudTemp.header.stamp = this->get_clock()->now();
         pubElevationCloud->publish(laserCloudTemp);
     }

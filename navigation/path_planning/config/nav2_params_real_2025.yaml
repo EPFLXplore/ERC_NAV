@@ -2,6 +2,7 @@ bt_navigator:
   ros__parameters:
     use_sim_time: false
     global_frame: map
+    # global_frame: odom
     robot_base_frame: base_link
     odom_topic: fused_nav_ekf_odom 
     enable_groot_monitoring: true
@@ -217,6 +218,7 @@ local_costmap:
       update_frequency: 6.0
       publish_frequency: 6.0
       global_frame: map
+      # global_frame: odom
       robot_base_frame: base_link
       use_sim_time: false
       rolling_window: true
@@ -224,14 +226,22 @@ local_costmap:
       height: 6
       resolution: 0.05
       robot_radius: 0.72
-      # plugins: ["gradient_layer", "obstacle_layer", "inflation_layer"]
       plugins: ["gradient_layer"]
       
       gradient_layer:
         plugin: "gradient_layer::GradientLayer"
         enabled: true
         topic: "/occupancy_map_local_inflated"
+        # topic: "/occupancy_map_local"
+      always_send_full_costmap: true
 
+
+      # inflation_layer:
+      #   plugin: "nav2_costmap_2d::InflationLayer"
+      #   cost_scaling_factor: 1.5
+      #   inflation_radius: 0.4
+
+      # Keep the obstacle and inflation layer, the planner needs it even though we don't use it....
       # obstacle_layer:
       #   plugin: "nav2_costmap_2d::ObstacleLayer"
       #   enabled: true
@@ -247,13 +257,7 @@ local_costmap:
       #     obstacle_max_range: 8.0
       #     raytrace_min_range: 0.75
       #     raytrace_max_range: 10.0
-
-      # inflation_layer:
-      #   plugin: "nav2_costmap_2d::InflationLayer"
-      #   cost_scaling_factor: 1.5
-      #   inflation_radius: 0.75
       
-      always_send_full_costmap: true
 
   local_costmap_client:
     ros__parameters:
@@ -270,12 +274,15 @@ global_costmap:
       update_frequency: 3.0
       publish_frequency: 3.0
       global_frame: map
+      # global_frame: odom
       robot_base_frame: base_link
       use_sim_time: false
-      robot_radius: 0.7
+      # robot_radius: 0.7
+      robot_radius: 0.4
       resolution: 0.1
       track_unknown_space: true
-      static_map: false
+      static_map: true
+      # static_map = false
       # Input occupancy grid is static/global, so keep a fixed global costmap window.
       rolling_window: false
       width: 80
@@ -284,11 +291,21 @@ global_costmap:
       origin_y: -40.0   # center the costmap: -80/2
       # plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
       # plugins: ["static_layer", "voxel_layer", "denoise_layer", "inflation_layer", "gradient_layer"]
-      plugins: ["gradient_layer"]
-      # static_layer:
-      #   plugin: "nav2_costmap_2d::StaticLayer"    #
-      #   map_subscribe_transient_local: false
-      #   trinary_costmap: false
+      # plugins: ["static_layer", "gradient_layer"]
+      # Current setup: global costmap is loaded from saved RAW map file through custom gradient layer,
+      # not from StaticLayer and not from a live topic.
+      plugins: ["gradient_layer", "inflation_layer"]
+      gradient_layer:
+        plugin: "gradient_layer::GradientLayer"
+        enabled: true
+        use_map_file: true
+        map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
+        map_flip_x: false
+        map_flip_y: true
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 15.0
+        inflation_radius: 2.0
       # voxel_layer:
       #   plugin: "nav2_costmap_2d::VoxelLayer"
       #   transform_tolerance: 1.5
@@ -321,16 +338,17 @@ global_costmap:
       #   minimal_group_size: 4
       #   group_connectivity_type: 8
 
+      # gradient_layer:
+      #   plugin: "gradient_layer::GradientLayer"
+      #   enabled: true
+      #   topic: "/occupancy_map_local_inflated"
+      #   # topic: "/occupancy_map_local"
+      always_send_full_costmap: true
+
       # inflation_layer:
       #   plugin: "nav2_costmap_2d::InflationLayer"
       #   cost_scaling_factor: 1.5
-      #   inflation_radius: 0.75
-
-      gradient_layer:
-        plugin: "gradient_layer::GradientLayer"
-        enabled: true
-        topic: "/occupancy_map_local_inflated"
-      always_send_full_costmap: true
+      #   inflation_radius: 0.4
 
   global_costmap_client:
     ros__parameters:
@@ -340,13 +358,11 @@ global_costmap:
       use_sim_time: false
 
 
-# map_server:
-#   ros__parameters:
-#     use_sim_time: false
-#     # Overridden in launch by the "map" launch configuration or provided default value.
-#     # To use in yaml, remove the default "map" value in the tb3_simulation_launch.py file & provide full path to map below.
-#     yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2024_saved_map/my_saved_map.yaml"
-
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    # yaml_filename: "/home/paul/Documents/EPFL/ERC_NAV/navigation/path_planning/saved_maps/2026/inflated_map_1.yaml"
+    yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
 
 map_saver:
   ros__parameters:
@@ -362,54 +378,73 @@ planner_server:
     expected_planner_frequency: 5.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
+    # Switched to SmacPlanner2D because global costmap has no inflation/obstacle layers.
+    # This avoids the Hybrid-A* SE2 warning path that expects inflation for optimization.
     GridBased:
-      plugin: "nav2_smac_planner/SmacPlannerHybrid"
-      downsample_costmap: false           # whether or not to downsample the map
-      downsampling_factor: 1              # multiplier for the resolution of the costmap layer (e.g. 2 on a 5cm costmap would be 10cm)
-      tolerance: 0.1                     # dist-to-goal heuristic cost (distance) for valid tolerance endpoints if exact goal cannot be found.
-      allow_unknown: true                 # allow traveling in unknown space
-      max_iterations: 1000000             # maximum total iterations to search for before failing (in case unreachable), set to -1 to disable
-      max_on_approach_iterations: 800    # Maximum number of iterations after within tolerances to continue to try to find exact solution
-      max_planning_time: 15.0              # max time in s for planner to plan, smooth
-      motion_model_for_search: "REEDS_SHEPP"    # Hybrid-A* Dubin, Redds-Shepp
-      angle_quantization_bins: 72         # Number of angle bins for search
-      analytic_expansion_ratio: 1.2       # The ratio to attempt analytic expansions during search for final approach.
-      analytic_expansion_max_length: 3.0  # For Hybrid/Lattice nodes: The maximum length of the analytic expansion to be considered valid to prevent unsafe shortcutting
-      analytic_expansion_max_cost: 80.0  # The maximum single cost for any part of an analytic expansion to contain and be valid, except when necessary on approach to goal
-      analytic_expansion_max_cost_override: false  #  Whether or not to override the maximum cost setting if within critical distance to goal (ie probably required)
-      minimum_turning_radius: 0.15        # minimum turning radius in m of path / vehicle
-      reverse_penalty: 1.0               # Penalty to apply if motion is reversing, must be => 1
-      change_penalty: 0.0                 # Penalty to apply if motion is changing directions (L to R), must be >= 0
-      non_straight_penalty: 1.0           # Penalty to apply if motion is non-straight, must be => 1
-      cost_penalty: 20.0                  # Penalty to apply to higher cost areas when adding into the obstacle map dynamic programming distance expansion heuristic. This drives the robot more towards the center of passages. A value between 1.3 - 3.5 is reasonable.
-      retrospective_penalty: 0.015
-      lookup_table_size: 20.0             # Size of the dubin/reeds-sheep distance window to cache, in meters.
-      cache_obstacle_heuristic: false     # Cache the obstacle map dynamic programming distance expansion heuristic between subsequent replannings of the same goal location. Dramatically speeds up replanning performance (40x) if costmap is largely static.
-      debug_visualizations: false         # For Hybrid nodes: Whether to publish expansions on the /expansions topic as an array of poses (the orientation has no meaning) and the path's footprints on the /planned_footprints topic. WARNING: heavy to compute and to display, for debug only as it degrades the performance.
-      use_quadratic_cost_penalty: true
-      downsample_obstacle_heuristic: true
-      allow_primitive_interpolation: false
-      smooth_path: true                   # If true, does a simple and quick smoothing post-processing to the path
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      downsample_costmap: false
+      downsampling_factor: 1
+      tolerance: 0.10
+      allow_unknown: false
+      max_iterations: 100000
+      max_on_approach_iterations: 800
+      max_planning_time: 5.0
+      cost_travel_multiplier: 5.0 # 2.0 is great, 0.0 is classic A* without cost
+      use_final_approach_orientation: true
+      smoother:
+          # max_iterations: bounds maximum computation time by limiting smoothing passes
+          max_iterations: 1000
+          # w_smooth: higher values smooth the path more aggressively (creates rounder curves)
+          w_smooth: 0.5
+          # w_data: higher values keep the path closer to the original A* output (less smoothing)
+          w_data: 0.1
+          # tolerance: convergence threshold; lower values allow more smoothing iterations before stopping
+          tolerance: 1.0e-10
+          # do_refinement: applies extra refinement smoothing passes for macro-trend smoothing
+          do_refinement: true
+          # refinement_num: number of recursive smoothing cycles (higher = smoother but slower)
+          refinement_num: 2
+
+      # Previous Hybrid-A* settings kept for reference:
+      # plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      # motion_model_for_search: "REEDS_SHEPP"
+      # angle_quantization_bins: 18
+      # analytic_expansion_ratio: 1.2
+      # analytic_expansion_max_length: 3.0
+      # analytic_expansion_max_cost: 200.0
+      # analytic_expansion_max_cost_override: true
+      # minimum_turning_radius: 0.15
+      # reverse_penalty: 1.0
+      # change_penalty: 0.0
+      # non_straight_penalty: 1.0
+      # retrospective_penalty: 0.015
+      # lookup_table_size: 5.0
+      # cache_obstacle_heuristic: true
+      # debug_visualizations: false
+      # use_quadratic_cost_penalty: false
+      # downsample_obstacle_heuristic: true
+      # allow_primitive_interpolation: false
+      # smooth_path: true
       
       # plugin: "nav2_navfn_planner/NavfnPlanner"
       # use_astar: True
-      # allow_unknown: True
-      # tolerance: 1.0
+      # allow_unknown: False
+      # tolerance: 0.05
       # use_final_approach_orientation: True
 
       #not working
       # plugin: "nav2_theta_star_planner/ThetaStarPlanner" # In Iron and older versions, "/" was used instead of "::"
       # how_many_corners: 8
-      # w_euc_cost: 1.0
-      # w_traversal_cost: 2.0
+      # w_euc_cost: 0.0000001
+      # w_traversal_cost: 1000000.0
 
-      smoother:
-        max_iterations: 500
-        w_smooth: 0.3
-        w_data: 0.2
-        tolerance: 1.0e-10
-        do_refinement: true
-        refinement_num: 2
+      # smoother:
+      #   max_iterations: 500
+      #   w_smooth: 0.3
+      #   w_data: 0.2
+      #   tolerance: 1.0e-10
+      #   do_refinement: true
+      #   refinement_num: 2
 
 planner_server_rclpcpp_node:
   ros__parameters:
@@ -482,6 +517,7 @@ waypoint_follower:
     use_sim_time: false
     loop_rate: 8
     global_frame_id: 'map'
+    # global_frame_id: 'odom'
     stop_on_failure: false
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:

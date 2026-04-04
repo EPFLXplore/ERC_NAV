@@ -12,11 +12,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     pkg_name = "path_planning"
 
     pkg_share_dir = get_package_share_directory(pkg_name)
+    xplore_description_share_dir = get_package_share_directory("xplore_description")
     wheels_control_share_dir = get_package_share_directory("wheels_control")
     nav2_ros_share_dir = get_package_share_directory("nav2_bringup")
 
     map_server_params_config_path = os.path.join(
-        pkg_share_dir, "config", "map_server_params.yaml"
+        xplore_description_share_dir, "worlds", "my_map.yaml"
+    # pkg_share_dir, "config", "map_server_params.yaml"
     )
     nav2_params_config_path = os.path.join(
         pkg_share_dir, "config", "nav2_params_real.yaml"

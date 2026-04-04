@@ -36,6 +36,12 @@ private:
     bool **initFlag;
     int cloudWidth = 0;
     int cloudHeight = 0;
+    std::string input_cloud_topic_;
+    std::string output_cloud_topic_;
+    std::string map_frame_;
+    std::string base_frame_;
+    std::string source_frame_;
+    bool use_msg_frame_id_;
 
 
 public:
@@ -44,13 +50,20 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+        input_cloud_topic_ = this->declare_parameter<std::string>("input_cloud_topic", "/ouster_points");
+        output_cloud_topic_ = this->declare_parameter<std::string>("output_cloud_topic", "/filtered_pointcloud");
+        map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
+        base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
+        source_frame_ = this->declare_parameter<std::string>("source_frame", "ST_Lidar_1");
+        use_msg_frame_id_ = this->declare_parameter<bool>("use_msg_frame_id", true);
+
         auto qos = rclcpp::SensorDataQoS();
 
         subCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/ouster_points", qos, 
+            input_cloud_topic_, qos,
             std::bind(&TraversabilityFilter::cloudHandler, this, std::placeholders::_1));
 
-        pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud", 10);
+        pubCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 10);
         // pubCloudVisualHiRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_high_res", 5);
         // pubCloudVisualLowRes = this->create_publisher<sensor_msgs::msg::PointCloud2>("/filtered_pointcloud_visual_low_res", 5);
         // pubLaserScan = this->create_publisher<sensor_msgs::msg::LaserScan>("/pointcloud_2_laserscan", 5);
@@ -117,7 +130,7 @@ public:
         // RCLCPP_INFO(this->get_logger(), "✓ Raw cloud extracted");
         
         // Step 2: Transform point cloud from sensor frame to map frame
-        if (transformCloud() == false) {
+        if (transformCloud(laserCloudMsg->header.frame_id) == false) {
             RCLCPP_ERROR(this->get_logger(), "✗ Transform failed, skipping frame");
             return;
         }
@@ -211,16 +224,18 @@ public:
         //             filteredCloud->size(), num_too_close);
     }
 
-    bool transformCloud(){
+    bool transformCloud(const std::string & msg_frame){
         try{
-            // Get the actual frame_id from the incoming message
-            std::string source_frame = "ST_Lidar_1";  // or use laserCloudMsg->header.frame_id
+            std::string source_frame = source_frame_;
+            if (use_msg_frame_id_ && !msg_frame.empty()) {
+                source_frame = msg_frame;
+            }
             
             // Look up transform from sensor frame to map
-            auto transform = tf_buffer_->lookupTransform("map", source_frame, tf2::TimePointZero);
+            auto transform = tf_buffer_->lookupTransform(map_frame_, source_frame, tf2::TimePointZero);
             
             // Update robot position (you'll need base_link to map for this)
-            auto robot_transform = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+            auto robot_transform = tf_buffer_->lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
             robotPoint.x = robot_transform.transform.translation.x;
             robotPoint.y = robot_transform.transform.translation.y;
             robotPoint.z = robot_transform.transform.translation.z;
@@ -432,14 +447,14 @@ public:
         sensor_msgs::msg::PointCloud2 laserCloudTemp;
         pcl::toROSMsg(*laserCloudOut, laserCloudTemp);
         laserCloudTemp.header.stamp = this->get_clock()->now();
-        laserCloudTemp.header.frame_id = "map";
+        laserCloudTemp.header.frame_id = map_frame_;
         pubCloud->publish(laserCloudTemp);
     }
 
 
     void pointcloud2laserscanInitialization(){
 
-        laserScan.header.frame_id = "base_link"; // assume laser has the same frame as the robot
+        laserScan.header.frame_id = base_frame_;
 
         laserScan.angle_min = -M_PI;
         laserScan.angle_max =  M_PI;

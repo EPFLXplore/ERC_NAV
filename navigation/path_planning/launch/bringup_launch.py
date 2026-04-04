@@ -33,10 +33,16 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('path_planning')
     launch_dir = os.path.join(bringup_dir, 'launch')
 
+    
+
+    # Running in container
+    default_map_yaml = "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
+
     # Create the launch configuration variables
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
     slam = LaunchConfiguration('slam')
+    map_yaml_file = LaunchConfiguration('map')
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
     autostart = LaunchConfiguration('autostart')
@@ -92,10 +98,10 @@ def generate_launch_description():
         default_value='False',
         description='Whether run a SLAM')
 
-    # declare_map_yaml_cmd = DeclareLaunchArgument(
-    #     'map',
-    #     default_value='/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/blank_map.yaml',
-    #     description='Full path to map yaml file to load')
+    declare_map_yaml_cmd = DeclareLaunchArgument(
+        'map',
+        default_value=default_map_yaml,
+        description='Full path to map yaml file to load')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time',
@@ -151,6 +157,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
             launch_arguments={'namespace': namespace,
+                              'map': map_yaml_file,
                               'use_sim_time': use_sim_time,
                               'autostart': autostart,
                               'params_file': params_file,
@@ -158,6 +165,12 @@ def generate_launch_description():
                               'use_respawn': use_respawn,
                               'container_name': 'nav2_container'}.items()),
     ])
+
+    static_transform_publisher = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'map'],
+    )
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -169,7 +182,7 @@ def generate_launch_description():
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_use_namespace_cmd)
     ld.add_action(declare_slam_cmd)
-    # ld.add_action(declare_map_yaml_cmd)
+    ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_autostart_cmd)
@@ -179,5 +192,7 @@ def generate_launch_description():
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_cmd_group)
+
+    ld.add_action(static_transform_publisher)
 
     return ld
