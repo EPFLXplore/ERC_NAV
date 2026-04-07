@@ -9,6 +9,7 @@ def generate_launch_description():
     gradient_mode = LaunchConfiguration('gradient_mode')
     lidar_points_topic = LaunchConfiguration('lidar_points_topic')
     filtered_cloud_topic = LaunchConfiguration('filtered_cloud_topic')
+
     map_input_topic = PythonExpression([
         '"/cloud_pcd" if "', gradient_mode, '" == "global" else "', filtered_cloud_topic, '"'
     ])
@@ -32,10 +33,27 @@ def generate_launch_description():
     fixed_origin_x = LaunchConfiguration('fixed_origin_x')
     fixed_origin_y = LaunchConfiguration('fixed_origin_y')
     use_msg_frame_id = LaunchConfiguration('use_msg_frame_id')
+    inflation_radius = PythonExpression([
+        '"', LaunchConfiguration('global_inflation_radius'), '" if "', gradient_mode,
+        '" == "global" else "', LaunchConfiguration('local_inflation_radius'), '"'
+    ])
+    inflation_factor = PythonExpression([
+        '"', LaunchConfiguration('global_inflation_factor'), '" if "', gradient_mode,
+        '" == "global" else "', LaunchConfiguration('local_inflation_factor'), '"'
+    ])
+    sigmoid_k = PythonExpression([
+        '"', LaunchConfiguration('global_sigmoid_k'), '" if "', gradient_mode,
+        '" == "global" else "', LaunchConfiguration('local_sigmoid_k'), '"'
+    ])
+    sigmoid_x0 = PythonExpression([
+        '"', LaunchConfiguration('global_sigmoid_x0'), '" if "', gradient_mode,
+        '" == "global" else "', LaunchConfiguration('local_sigmoid_x0'), '"'
+    ])
 
     declare_use_sim_time = DeclareLaunchArgument('use_sim_time', default_value='false')
     declare_gradient_mode = DeclareLaunchArgument(
         'gradient_mode',
+        ### CHANGE LOCAL TO GLOBAL HEEEEEEEEEERE GRADIENT MODE ###
         default_value='local',
         description='Gradient map mode: local (base_link local map) or global (map-frame fixed origin)')
     declare_lidar_points_topic = DeclareLaunchArgument(
@@ -66,6 +84,40 @@ def generate_launch_description():
         'use_msg_frame_id',
         default_value='true',
         description='Use incoming pointcloud frame_id as source frame in filter transform')
+    
+    declare_local_inflation_radius = DeclareLaunchArgument(
+        'local_inflation_radius',
+        default_value='1',
+        description='Inflation radius (cells) used when gradient_mode=local')
+    declare_local_inflation_factor = DeclareLaunchArgument(
+        'local_inflation_factor',
+        default_value='10.0',
+        description='Inflation decay factor used when gradient_mode=local')
+    declare_local_sigmoid_k = DeclareLaunchArgument(
+        'local_sigmoid_k',
+        default_value='15.0',
+        description='Sigmoid slope parameter used when gradient_mode=local')
+    declare_local_sigmoid_x0 = DeclareLaunchArgument(
+        'local_sigmoid_x0',
+        default_value='0.70',
+        description='Sigmoid midpoint parameter used when gradient_mode=local')
+
+    declare_global_inflation_radius = DeclareLaunchArgument(
+        'global_inflation_radius',
+        default_value='3',
+        description='Inflation radius (cells) used when gradient_mode=global')
+    declare_global_inflation_factor = DeclareLaunchArgument(
+        'global_inflation_factor',
+        default_value='5.0',
+        description='Inflation decay factor used when gradient_mode=global')
+    declare_global_sigmoid_k = DeclareLaunchArgument(
+        'global_sigmoid_k',
+        default_value='15.0',
+        description='Sigmoid slope parameter used when gradient_mode=global')
+    declare_global_sigmoid_x0 = DeclareLaunchArgument(
+        'global_sigmoid_x0',
+        default_value='0.70',
+        description='Sigmoid midpoint parameter used when gradient_mode=global')
 
     traversability_filter = Node(
         package='gradient_costmap',
@@ -83,14 +135,14 @@ def generate_launch_description():
         }],
     )
 
-    # static_transform_publisher = Node(
-    #     package='tf2_ros',
-    #     executable='static_transform_publisher',
-    #     arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'map'],
-    #     condition=IfCondition(PythonExpression([
-    #         '"', gradient_mode, '" == "global"'
-    #     ])),
-    # )
+    static_transform_publisher = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'map'],
+        condition=IfCondition(PythonExpression([
+            '"', gradient_mode, '" == "global"'
+        ])),
+    )
 
     traversability_map = Node(
         package='gradient_costmap',
@@ -108,10 +160,10 @@ def generate_launch_description():
             'use_robot_centered_origin': use_robot_centered_origin,
             'fixed_origin_x': fixed_origin_x,
             'fixed_origin_y': fixed_origin_y,
-            'inflation_radius': 3,
-            'inflation_factor': 5.0,
-            'sigmoid_k': 15.0,
-            'sigmoid_x0': 0.70,
+            'inflation_radius': inflation_radius,
+            'inflation_factor': inflation_factor,
+            'sigmoid_k': sigmoid_k,
+            'sigmoid_x0': sigmoid_x0,
         }],
     )
 
@@ -125,7 +177,15 @@ def generate_launch_description():
         declare_fixed_origin_x,
         declare_fixed_origin_y,
         declare_use_msg_frame_id,
+        declare_local_inflation_radius,
+        declare_global_inflation_radius,
+        declare_local_inflation_factor,
+        declare_global_inflation_factor,
+        declare_local_sigmoid_k,
+        declare_global_sigmoid_k,
+        declare_local_sigmoid_x0,
+        declare_global_sigmoid_x0,
         traversability_filter,
-        # static_transform_publisher,
+        static_transform_publisher,
         traversability_map,
     ])

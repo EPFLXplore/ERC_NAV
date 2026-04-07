@@ -1,4 +1,5 @@
 #include "utility.h"
+#include <unordered_map>
 
 class TraversabilityMapping : public rclcpp::Node {
 
@@ -59,6 +60,8 @@ private:
     bool use_robot_centered_origin_;
     double fixed_origin_x_;
     double fixed_origin_y_;
+    uint64_t current_scan_id_;
+    std::unordered_map<mapCell_t*, uint64_t> last_observed_scan_;
     int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
     float alpha_inflation = this->declare_parameter<float>("inflation_factor", 1.0f); // inflation factor, can be tuned based on how much we want to inflate
     float sigmoid_k = this->declare_parameter<float>("sigmoid_k", 0.5f); // weight for slope in occupancy calculation
@@ -83,7 +86,8 @@ private:
 public:
     TraversabilityMapping() : Node("traversability_mapping"),
         pubCount(1),
-        mapArrayCount(0) {
+        mapArrayCount(0),
+        current_scan_id_(0) {
 
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -119,6 +123,25 @@ public:
 
     ~TraversabilityMapping(){}
 
+    bool isCellFreshForOutput(const mapCell_t *cell) const {
+        if (cell == nullptr || cell->observeTimes <= 0) {
+            return false;
+        }
+
+        // In global mode, keep long-term map memory.
+        if (!use_robot_centered_origin_) {
+            return true;
+        }
+
+        auto it = last_observed_scan_.find(const_cast<mapCell_t*>(cell));
+        if (it == last_observed_scan_.end()) {
+            return false;
+        }
+
+        // In local mode we only publish values from the current measurement cycle.
+        return it->second == current_scan_id_;
+    }
+
     void allocateMemory(){
         laserCloud.reset(new pcl::PointCloud<PointType>());
         laserCloudElevation.reset(new pcl::PointCloud<PointType>());
@@ -144,6 +167,7 @@ public:
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         auto start = std::chrono::high_resolution_clock::now();
+        ++current_scan_id_;
 
         // Limit the speed of the callback
         if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < cloudHandlerRate)
@@ -238,6 +262,7 @@ public:
         // updateOccupancyBel(cell, false);
         
         cell->observeTimes++;
+        last_observed_scan_[cell] = current_scan_id_;
         
         updateElevationBGK(cell, point);    // fuses elevation from all points within a cell
         
@@ -263,24 +288,8 @@ public:
     // }
 
     void updateElevationBGK(mapCell_t *cell, PointType *point){
-        // Skip updating elevation if we have observed this cell enough times
-        // if (cell->observeTimes > traversabilityObserveTimeTh)
-        //     return;
-
-        float z = point->z;
-        float var = 0.01; // measurement noise
-
-        float mu = cell->elevation;
-        float sigma = cell->elevationVar;
-
-        if (cell->observeTimes <= 1){
-            cell->updateElevation(z, var);
-        } else {                                    // this update method may be more slow, as it uses a kalman filter to adapt heights, may need to add another statment to evaluate it
-            float K = sigma / (sigma + var);
-            float mu_new = mu + K * (z - mu);
-            float sigma_new = (1 - K) * sigma;
-            cell->updateElevation(mu_new, sigma_new);
-        }
+        // Use raw measurement directly: no temporal smoothing / decay memory.
+        cell->updateElevation(point->z, 1e-3f);
     }
 
     void updateOccupancyGrid(){
@@ -324,7 +333,7 @@ public:
                         int y = j + n;
                         if (x < 0 || x >= localMapArrayLength || y < 0 || y >= localMapArrayLength)
                             continue;
-                        if (cell != NULL && cell->observeTimes > 0) {
+                        if (isCellFreshForOutput(cell)) {
                             int cell_idx = i + j * localMapArrayLength;
                             int kernel_idx = x + y * localMapArrayLength;
                             // Value contained between 0 and 100, represent probability. 
@@ -598,7 +607,7 @@ public:
                 point.y = occupancyMap2D.info.origin.position.y + j * mapResolution + mapResolution/2.0;
                 
                 mapCell_t *cell = getCellFromPoint(&point);
-                if (cell != NULL && cell->observeTimes > 0) {
+                if (isCellFreshForOutput(cell)) {
                     int index = i + j * localMapArrayLength;
                     occupancyMap2D.data[index] = int(cell->occupancy * 100);
                 }

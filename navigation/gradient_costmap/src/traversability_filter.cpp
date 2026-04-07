@@ -149,7 +149,7 @@ public:
         // RCLCPP_INFO(this->get_logger(), "✓ Cloud downsampled");
         
         // Step 6: Use Gaussian Process to predict missing areas
-        // predictCloudBGK();           // this can be bad as it can introduce more noise into the costmap
+        predictCloudBGK();           // this can be bad as it can introduce more noise into the costmap
         // RCLCPP_INFO(this->get_logger(), "✓ BGK prediction completed");
         
         // Step 7: Publish final point cloud
