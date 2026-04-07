@@ -166,13 +166,13 @@ private:
   void callback_speed_rover(const std_msgs::msg::Float32::SharedPtr msg)
   {
     speed_rover = msg->data;
-    // Clamp the rover speed received from the CS between 0.8 and 1.5 m/s
-    if(speed_rover >= 1.5 ){
-      speed_rover = 1.5;
-    }else if(speed_rover <= 0.8){
-      speed_rover = 0.8;
+    // Clamp the rover speed received from the CS between 0.6 and 2.45 m/s
+    if(speed_rover >= 2.45 ){
+      speed_rover = 2.45;
+    }else if(speed_rover <= 0.6){
+      speed_rover = 0.6;
     }
-    //log_info("reeived CS Speed" + std::to_string(speed_rover));
+    log_info("New max speed from CS: " + std::to_string(speed_rover)+ "m/s");
 
   }
 
