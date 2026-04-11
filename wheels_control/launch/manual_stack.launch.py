@@ -13,7 +13,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     #-------------- File Paths ------------------
     local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
     global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
-    #config_dir_madgwick = os.path.join(get_package_share_directory('imu_madgwick'), 'config')
     
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
@@ -82,12 +81,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_odometry_node",
     )
 
-    # odom_preprocessor = launch_ros.actions.Node(
-    #     package="odom_preprocessor",
-    #     executable="odom_preprocessor",
-    #     name="odom_preprocessor",
-    #     output='screen',
-    # )
 
     # ------------- Ouster Launch File -------------
     ouster_launch = IncludeLaunchDescription(
@@ -106,21 +99,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         launch_arguments={}.items(),
     )
 
-    # -........... liorf Launch File ---------------
-    # liorf_launch = IncludeLaunchDescription(
-    #     launch.launch_description_sources.PythonLaunchDescriptionSource(
-    #         os.path.join(FindPackageShare("liorf").find("liorf"), "launch", "run_lio_sam_ouster.launch.py")
-    #     ),
-    #     launch_arguments={"params_file": os.path.join(
-    #         get_package_share_directory("liorf"), "config", "lio_sam_ouster.yaml"
-    #     )}.items(),
-    # )
 
-    #----------- ArUco Launch File ---------
+    #----------- ArUco Launch Files ---------
 
     aruco_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare("ros2_aruco").find("ros2_aruco"), "launch", "aruco.launch.py")
+            os.path.join(FindPackageShare("ros2_aruco_cpp").find("ros2_aruco_cpp"), "launch", "aruco.launch.py")
+        )
+    )
+    aruco_lidar_detection_launch = IncludeLaunchDescription(
+        launch.launch_description_sources.PythonLaunchDescriptionSource(
+            os.path.join(FindPackageShare("ros2_aruco_with_lidar").find("ros2_aruco_with_lidar"), "launch", "aruco_lidar.launch.py")
         )
     )
     # -........... description (URDF) Launch File ---------------
@@ -131,58 +120,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(publish_urdf)
     )
 
-    # ------------- Nodes to Start AFTER Ouster is Ready -------------
-    # local_ekf_node = launch_ros.actions.Node(
-    #     package='robot_localization',
-    #     executable='ekf_node',
-    #     name='local_ekf_filter_node',
-    #     output='screen',
-    #     parameters=[local_ekf_file_path]
-    # )
-
-    # global_ekf_node = launch_ros.actions.Node(
-    #     package='robot_localization',
-    #     executable='ekf_node',
-    #     name='global_ekf_filter_node',
-    #     output='screen',
-    #     parameters=[global_ekf_file_path]
-    # )
-
-    # imu_filter_node = launch_ros.actions.Node(
-    #     package='ouster_imu_tester',
-    #     executable='ouster_imu_tester',
-    #     name='imu_filter',
-    #     output='screen'
-    # )
-    
-    # imu_madgwick_filter = launch_ros.actions.Node(
-    #     package='imu_filter_madgwick',
-    #     executable='imu_filter_madgwick_node',
-    #     name='ouster_madgwick_filter',
-    #     output='screen',
-    #     parameters=[os.path.join(config_dir_madgwick, 'imu_madgwick_filter.yaml')],
-    # )
-
-    # imu_waveshare_repub = launch_ros.actions.Node(
-    #     package='imu_madgwick',
-    #     executable='waveshare_reader',
-    #     name='waveshare_reader',
-    #     output='screen',
-    # )
-
-    # imu_covariance_modif_node = launch_ros.actions.Node(
-    #     package='imu_madgwick',
-    #     executable='imu_covariance_modifier',
-    #     name='imu_covariance_modifier_node',
-    #     output='screen',
-    # )
-
-    # arduino_imu_pub = launch_ros.actions.Node(
-    #     package='imu_madgwick',
-    #     executable='arduino_imu_node',
-    #     name='arduino_imu_node',
-    #     output='screen',
-    # )
 
     custom_local_ekf_node = launch_ros.actions.Node(
         package='local_nav_ekf',
@@ -199,26 +136,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output='screen',
     )
 
-    delayed_launch = TimerAction(
-        period=24.0,  # Wait 24 sec. before launching other nodes because the ouster driver is slow
-        actions=[
-            LogInfo(msg="Ouster Driver started! Launching dependent nodes..."),
-            #liorf_launch,
-            #imu_filter_node,
-            #imu_madgwick_filter,
-            #imu_waveshare_repub,
-            #imu_covariance_modif_node,
-            #arduino_imu_pub,
-            #local_ekf_node,
-            #global_ekf_node,
-        ]
-    )
 
     delayed_aruco_launch = TimerAction(
         period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
             LogInfo(msg="Cameras started! Launching aruco nodes..."),
-            aruco_launch
+            aruco_launch,
+            aruco_lidar_detection_launch
         ]
     )
     
@@ -263,8 +187,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         wheel_odom_node,
         custom_local_ekf_node,
         ouster_launch,
-        # delayed_launch,
-        #odom_preprocessor,
         nav_cameras_launch,
         delayed_aruco_launch,
         jetson_stats,

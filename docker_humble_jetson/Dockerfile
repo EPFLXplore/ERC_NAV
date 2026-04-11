@@ -94,7 +94,6 @@ RUN apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-depthai-ros \
     ros-${ROS_DISTRO}-librealsense2*\
     ros-${ROS_DISTRO}-realsense2-*\
-    ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-tf-transformations \
     ros-${ROS_DISTRO}-tf2* \
     ros-${ROS_DISTRO}-xacro \
@@ -154,6 +153,17 @@ RUN /etc/init.d/udev restart
 # ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
 #     CYCLONEDDS_URI="file:///home/${USERNAME}/cyclonedds.xml"
 #^ this is done at runtime in the run.sh
+
+# ECOS SOCP solver (C library) for ros2_aruco_cpp pose estimator
+RUN git clone --depth 1 https://github.com/embotech/ecos.git /tmp/ecos && \
+    cd /tmp/ecos && \
+    make && \
+    cp libecos.a /usr/local/lib/ && \
+    cp include/*.h /usr/local/include/ && \
+    cp external/SuiteSparse_config/SuiteSparse_config.h /usr/local/include/ && \
+    cp external/amd/include/amd.h /usr/local/include/ && \
+    cp external/ldl/include/ldl.h /usr/local/include/ && \
+    rm -rf /tmp/ecos
 
 USER $USERNAME
 

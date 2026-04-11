@@ -7,6 +7,8 @@ from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
 
 
+# this launch file is launched in the manual_stack.launch.py file
+
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco')
     rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
@@ -22,6 +24,12 @@ def generate_launch_description():
             name='aruco_node',
             output='screen',
             condition=IfCondition(multiview)
+        ),
+        Node(
+            package='ros2_aruco',
+            executable='pose_estimation_node_with_lidar',
+            name='pose_estimation_node_with_lidar',
+            output='screen',
         ),
 
         # Node(

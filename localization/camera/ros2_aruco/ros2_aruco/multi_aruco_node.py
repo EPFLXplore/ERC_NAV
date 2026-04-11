@@ -35,22 +35,39 @@ class MultiViewArucoNode(Node):
         
         self.declare_parameter("aruco_dictionary_id", "DICT_5X5_250")
 
+        # self.landmark_poses = [
+        #         (-0.585, 0.0),
+        #         (2.62, 0.505),
+        #         (1.46, 8.45),
+        #         (-2.28, 15.81),
+        #         (3.74, 19.07),
+        #         (7.04, 14.67),
+        #         (11.46, 19.78),
+        #         (15.51, 19.33),
+        #         (16.3, 14.87),
+        #         (999999, 999999),
+        #         (999999, 999999),
+        #         (999999, 999999),
+        #         (999999, 999999),
+        #         (999999, 999999),
+        #         (999999, 999999),
+        # ]
         self.landmark_poses = [
-                (-0.585, 0.0),
-                (2.62, 0.505),
-                (1.46, 8.45),
-                (-2.28, 15.81),
-                (3.74, 19.07),
-                (7.04, 14.67),
-                (11.46, 19.78),
-                (15.51, 19.33),
-                (16.3, 14.87),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
-                (999999, 999999),
+            (0.96, 3.57), # aruco id 51
+            (-1.68, 3.7), # aruco id 52
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
+            (999999, 999999),
         ]
 
             
@@ -425,19 +442,19 @@ class MultiViewArucoNode(Node):
                     if yaw_deg_temp is not None:
                         yaw_deg = yaw_deg_temp
 
-                    self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame: {yaw_deg:.2f}°")
+                    self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame: {yaw_deg:.2f}°", throttle_duration_sec=0.5)
                     
                     if str(camera_frame) == "Logitech_Brio_100_top_left_1":
-                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top left): {yaw_deg:.2f}°")
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top left): {yaw_deg:.2f}°", throttle_duration_sec=0.5)
                     
                     if str(camera_frame) == "Logitech_Brio_100_top_right_1":
-                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top right): {yaw_deg:.2f}°")
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS top right): {yaw_deg:.2f}°", throttle_duration_sec=0.5)
                     
                     if str(camera_frame) == "Logitech_Brio_100_front_left_v1_1":
-                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front left): {yaw_deg:.2f}°")
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front left): {yaw_deg:.2f}°", throttle_duration_sec=0.5)
                     
                     if str(camera_frame) == "Logitech_Brio_100_front_right_v1_1":
-                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front right): {yaw_deg:.2f}°")    
+                        self.get_logger().info(f"tag {aruco_index + 51} bearing rv frame (CS front right): {yaw_deg:.2f}°", throttle_duration_sec=0.5)    
 
 
                     ############### end of manual bearing calc

@@ -44,12 +44,12 @@ def generate_launch_description():
     log_level = LaunchConfiguration('log_level')
 
     lifecycle_nodes = [
+        'map_server',
         'controller_server',
         'smoother_server',
         'planner_server',
         'behavior_server',
         'velocity_smoother',
-        'collision_monitor',
         'bt_navigator',
         'waypoint_follower',
     ]
@@ -62,18 +62,8 @@ def generate_launch_description():
     #              https://github.com/ros2/launch_ros/issues/56
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
-    # Create our own temporary YAML files that include substitutions
-    param_substitutions = {'autostart': autostart}
-
-    configured_params = ParameterFile(
-        RewrittenYaml(
-            source_file=params_file,
-            root_key=namespace,
-            param_rewrites=param_substitutions,
-            convert_types=True,
-        ),
-        allow_substs=True,
-    )
+    # Pass the params file directly (bypass RewrittenYaml to avoid silent failures)
+    configured_params = '/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_no_global_map.yaml'
 
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_LOGGING_BUFFERED_STREAM', '1'
@@ -91,7 +81,7 @@ def generate_launch_description():
 
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
-        default_value=os.path.join(bringup_dir, 'config', 'nav2_params_real_2025.yaml'),
+        default_value='/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_no_global_map.yaml',
         description='Full path to the ROS2 parameters file to use for all launched nodes',
     )
 
@@ -213,23 +203,12 @@ def generate_launch_description():
                 + [('cmd_vel', 'cmd_vel_nav')],
             ),
             Node(
-                package='nav2_collision_monitor',
-                executable='collision_monitor',
-                name='collision_monitor',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings,
-            ),
-            Node(
                 package='nav2_lifecycle_manager',
                 executable='lifecycle_manager',
                 name='lifecycle_manager_navigation',
                 output='screen',
                 arguments=['--ros-args', '--log-level', log_level],
-                parameters=[{'autostart': autostart}, {'node_names': lifecycle_nodes}],
+                parameters=[{'autostart': autostart}, {'node_names': lifecycle_nodes}, {'bond_timeout': 10.0}],
             ),
         ],
     )
@@ -292,19 +271,11 @@ def generate_launch_description():
                         + [('cmd_vel', 'cmd_vel_nav')],
                     ),
                     ComposableNode(
-                        package='nav2_collision_monitor',
-                        plugin='nav2_collision_monitor::CollisionMonitor',
-                        name='collision_monitor',
-                        parameters=[configured_params],
-                        remappings=remappings,
-                    ),
-
-                    ComposableNode(
                         package='nav2_lifecycle_manager',
                         plugin='nav2_lifecycle_manager::LifecycleManager',
                         name='lifecycle_manager_navigation',
                         parameters=[
-                            {'autostart': autostart, 'node_names': lifecycle_nodes}
+                            {'autostart': autostart, 'node_names': lifecycle_nodes, 'bond_timeout': 10.0}
                         ],
                     ),
                 ],
@@ -328,7 +299,7 @@ def generate_launch_description():
     )
 
     gradient_costmap_delay = TimerAction(
-        period=25.0,  # Start after Ouster is ready (~24s), before Nav2 (35s)
+        period=30.0,  # Start after Ouster TF is fully published (~28-30s), before Nav2 (35s)
         actions=[gradient_costmap_launch]
     )
 
@@ -342,7 +313,7 @@ def generate_launch_description():
 
     # Create the launch description and populate
     ld = LaunchDescription()
-    #Launch the manual stack before nav2
+    # Launch the manual stack before nav2
     ld.add_action(manual_stack_launch)
 
     # Set environment variables
@@ -360,6 +331,5 @@ def generate_launch_description():
     # Add the actions to launch all of the navigation nodes
     ld.add_action(gradient_costmap_delay)
     ld.add_action(nav2_launch_delay)
-
 
     return ld

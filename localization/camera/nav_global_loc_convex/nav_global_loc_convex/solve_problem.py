@@ -65,7 +65,7 @@ class ConvexRangeBearing(Node):
         self.get_logger().info("Convex Range+Bearing Node started.")
 
     # ------------------------------------------------------------
-    # Core convex solver (matches paper eq. (9)) :contentReference[oaicite:1]{index=1}
+    # convex solver
     # ------------------------------------------------------------
     def solve_cvx(self, measurements):
         M = len(measurements)

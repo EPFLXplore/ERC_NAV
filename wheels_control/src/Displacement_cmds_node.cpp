@@ -114,7 +114,7 @@ public:
       "/ROVER/NAV_gamepad", qos_best_effort, std::bind(&DisplacementCmds::callback_gamepad, this, std::placeholders::_1));
 
     sub_speed_rover = this->create_subscription<std_msgs::msg::Float32>(
-        "/ROVER/change_NAV_speed", 1, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
+        "/ROVER/change_NAV_speed", qos_best_effort, std::bind(&DisplacementCmds::callback_speed_rover, this, std::placeholders::_1));
     
     wheels_angle_for_rotation = get_wheels_angle_inc_for_rotation(); // unit: increment - value around 8 300
     wheels_angle_for_rotation_with_translation = (20 * (pow(2, STEERING_RESOLUTION_BITS))) / (360);

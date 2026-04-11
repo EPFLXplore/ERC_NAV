@@ -50,13 +50,16 @@ public:
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
         distance_threshold_inliers = 0.05; 
-        max_iterations_ = 300;
-        t=0.25; //longeur des normes des coté du cube 
-        min_inliers_ = 10; // at least 20 points to define a line
-        max_lines_ = 3; // at least 2 lines to form a corner
+        max_iterations_ = 100;
+        t=0.25;
+        min_inliers_ = 10;
+        max_lines_ = 3;
 
-        max_distance_from_aruco_ = 0.3; // rayon autour de l'ArUco
-        angular_tolerance_deg_ = 10; // tolérance angulaire
+        max_distance_from_aruco_ = 0.3;
+        angular_tolerance_deg_ = 10;
+        min_process_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
+        last_process_time_ns_ = 0;
+        full_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
         
         
         auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
@@ -102,14 +105,19 @@ private:
         }
     }
     void detect_lignes(const sensor_msgs::msg::PointCloud2 &cloud_msg) {
-         pcl::PointCloud<pcl::PointXYZ>::Ptr full_cloud(new pcl::PointCloud<pcl::PointXYZ>());
-        pcl::fromROSMsg(cloud_msg, *full_cloud);
-
         if (aruco_ids_.empty()) {
             return;
         }
 
-        sensor_msgs::msg::PointCloud2 cloud_without_lines;
+        const int64_t now_ns = this->now().nanoseconds();
+        if (now_ns - last_process_time_ns_ < min_process_period_ns_) {
+            return;
+        }
+        last_process_time_ns_ = now_ns;
+
+        full_cloud_->clear();
+        pcl::fromROSMsg(cloud_msg, *full_cloud_);
+
         visualization_msgs::msg::MarkerArray markers;
         visualization_msgs::msg::MarkerArray points;
         ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
@@ -124,43 +132,20 @@ private:
             float aruco_z = static_cast<float>(aruco_pose.position.z);
             double aruco_angle_deg = atan2(aruco_y, aruco_x) * 180.0f / M_PI;
 
-            // FILTRAGE SPATIAL : créer sous-nuage pour cet ArUco
+            double dist = static_cast<double>(sqrt(aruco_x*aruco_x + aruco_y*aruco_y));
+            min_inliers_ = static_cast<int>(0.3 / (dist * 0.002967) / 3);
+            max_distance_from_aruco_ = static_cast<float>(dist / 5);
+            double ref_angle = wrap180(aruco_angle_deg + 90);
+
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
-            for (const auto& pt : full_cloud->points) {
-                float dx = aruco_x;
-                float dy = aruco_y;
-                float dz = aruco_z;
-                double dist = static_cast<double>(sqrt(dx*dx + dy*dy));
+            for (const auto& pt : full_cloud_->points) {
                 double r_point = sqrt(static_cast<double>(pt.x)*static_cast<double>(pt.x) + static_cast<double>(pt.y)*static_cast<double>(pt.y));
+                if (fabs(dist - r_point) >= max_distance_from_aruco_) continue;
+
                 double pt_angle_deg = atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) * 180.0 / M_PI;
-                
-                // Utiliser angDeltaDeg avec offset +100° (comme dans lidar_phi_filter_node)              
-                double angle_diff = angDeltaDeg(pt_angle_deg, wrap180(aruco_angle_deg +90));
-                // RCLCPP_INFO(this->get_logger(), "angle_diff %.3f", angle_diff);
-
-
-                // New parameters for line detection depending on distance to get robust lines
-                // Parameters got from minimum number of points got from the lidar horizontally at a given distance
-                // 0.3 is the width of the aruco tag cubes
-                // 0.002967 is the tan(delta_xy) where delta_xy is the minimum horizontal resolution of the lidar
-                // We divide by 2 since we want at least this 
-                // RCLCPP_INFO(this->get_logger(), "dist %.3f", dist);
-                // RCLCPP_INFO(this->get_logger(), "r_point %.3f", r_point);
-
-                min_inliers_ = static_cast<int>( 0.3/(dist*0.002967) /3);
-
-
-                // Works well with max_dsitance_from_aruco = 1 at 5 meter and 0.5 at 2.5 meter, hence the relationship
-                max_distance_from_aruco_ = static_cast<float>(dist/5);
-
-                // RCLCPP_INFO(this->get_logger(), "min inliners %d", min_inliers_);
-                
-                if ( abs(dist-r_point) < max_distance_from_aruco_ && angle_diff < angular_tolerance_deg_) {
+                if (angDeltaDeg(pt_angle_deg, ref_angle) < angular_tolerance_deg_) {
                     pointcloud_minus_lines->push_back(pt);
-                    // RCLCPP_INFO(this->get_logger(), "pushback");
-
                 }
-                
             }
             if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers_)) {
                 // RCLCPP_INFO(this->get_logger(), "min inliners %zu", static_cast<size_t>(min_inliers_));
@@ -369,7 +354,7 @@ private:
                 // RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
                 
                 if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers_)) {
-                    RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne 2d AAAAAA");
+                    RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "detect pas suffisamment de points pour une ligne 2d AAAAAA");
                     break;
                 }
 
@@ -519,8 +504,8 @@ private:
                 centre_moyen.y /= static_cast<float>(cube_centres.size());
                 centre_moyen.z /= static_cast<float>(cube_centres.size());
 
-                RCLCPP_INFO(this->get_logger(), "marker ids: %s", std::to_string(aruco_ids_[aruco_idx]).c_str());
-                RCLCPP_INFO(this->get_logger(), "Centre position in frame %s: (%.3f, %.3f, %.3f)", 
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "marker ids: %s", std::to_string(aruco_ids_[aruco_idx]).c_str());
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Centre position in frame %s: (%.3f, %.3f, %.3f)", 
                            cloud_msg.header.frame_id.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
 
                 // Default: keep data in original lidar frame
@@ -535,14 +520,14 @@ private:
                     if (tf_buffer_.canTransform("base_link", 
                                                cloud_msg.header.frame_id,
                                                tf2::TimePointZero,
-                                               tf2::durationFromSec(0.5))) {
+                                               tf2::durationFromSec(0.05))) {
                         auto transform = tf_buffer_.lookupTransform(
                             "base_link",
                             cloud_msg.header.frame_id,
                             tf2::TimePointZero
                         );
                         
-                        RCLCPP_INFO(this->get_logger(), "Direct transform available! Translation: (%.3f, %.3f, %.3f)",
+                        RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Direct transform available! Translation: (%.3f, %.3f, %.3f)",
                                    transform.transform.translation.x,
                                    transform.transform.translation.y,
                                    transform.transform.translation.z);
@@ -555,7 +540,7 @@ private:
                         centre_moyen = point_out.point;
                         target_frame = "base_link";
                         
-                        RCLCPP_INFO(this->get_logger(), "AFTER transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
+                        RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "AFTER transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
                                    target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
                     } else {
                         // If direct transform fails, try manual chain via ST_Service_Module_1
@@ -570,14 +555,14 @@ private:
                         if (tf_buffer_.canTransform("ST_Service_Module_1", 
                                                    cloud_msg.header.frame_id,
                                                    tf2::TimePointZero,
-                                                   tf2::durationFromSec(0.5))) {
+                                                   tf2::durationFromSec(0.05))) {
                             auto transform1 = tf_buffer_.lookupTransform(
                                 "ST_Service_Module_1",
                                 cloud_msg.header.frame_id,
                                 tf2::TimePointZero
                             );
                             
-                            RCLCPP_INFO(this->get_logger(), "Transform 1 (%s -> ST_Service_Module_1): (%.3f, %.3f, %.3f)",
+                            RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 1 (%s -> ST_Service_Module_1): (%.3f, %.3f, %.3f)",
                                        cloud_msg.header.frame_id.c_str(),
                                        transform1.transform.translation.x,
                                        transform1.transform.translation.y,
@@ -589,14 +574,14 @@ private:
                             if (tf_buffer_.canTransform("base_link", 
                                                        "ST_Service_Module_1",
                                                        tf2::TimePointZero,
-                                                       tf2::durationFromSec(0.5))) {
+                                                       tf2::durationFromSec(0.05))) {
                                 auto transform2 = tf_buffer_.lookupTransform(
                                     "base_link",
                                     "ST_Service_Module_1",
                                     tf2::TimePointZero
                                 );
                                 
-                                RCLCPP_INFO(this->get_logger(), "Transform 2 (ST_Service_Module_1 -> base_link): (%.3f, %.3f, %.3f)",
+                                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 2 (ST_Service_Module_1 -> base_link): (%.3f, %.3f, %.3f)",
                                            transform2.transform.translation.x,
                                            transform2.transform.translation.y,
                                            transform2.transform.translation.z);
@@ -605,7 +590,7 @@ private:
                                 centre_moyen = point_base.point;
                                 target_frame = "base_link";
                                 
-                                RCLCPP_INFO(this->get_logger(), "AFTER chained transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
+                                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "AFTER chained transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
                                            target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
                             } else {
                                 RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
@@ -699,7 +684,7 @@ private:
                     );
                 }
             } else {
-                RCLCPP_INFO(this->get_logger(), "problemeeeetechnique");
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "problemeeeetechnique");
 
             }
 
@@ -726,6 +711,10 @@ private:
     std::vector<int64_t> aruco_ids_;
     std::vector<geometry_msgs::msg::Pose> aruco_poses_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
+
+    int64_t min_process_period_ns_;
+    int64_t last_process_time_ns_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr full_cloud_;
 
     tf2_ros::Buffer tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

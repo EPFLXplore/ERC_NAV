@@ -103,7 +103,7 @@ controller_server:
     simple_goal_checker:
       stateful: false
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.06
       yaw_goal_tolerance: 0.8
 
 
@@ -235,31 +235,7 @@ local_costmap:
         enabled: true
         topic: "/occupancy_map_local_inflated"
         # topic: "/occupancy_map_local"
-      always_send_full_costmap: false
-
-
-      # inflation_layer:
-      #   plugin: "nav2_costmap_2d::InflationLayer"
-      #   cost_scaling_factor: 1.5
-      #   inflation_radius: 0.4
-
-      # Keep the obstacle and inflation layer, the planner needs it even though we don't use it....
-      # obstacle_layer:
-      #   plugin: "nav2_costmap_2d::ObstacleLayer"
-      #   enabled: true
-      #   observation_sources: ouster_pcl
-      #   ouster_pcl:
-      #     topic: /ouster_points
-      #     data_type: "PointCloud2"
-      #     clearing: true
-      #     marking: true
-      #     min_obstacle_height: -0.08
-      #     max_obstacle_height: 2.0
-      #     obstacle_min_range: 0.75
-      #     obstacle_max_range: 8.0
-      #     raytrace_min_range: 0.75
-      #     raytrace_max_range: 10.0
-      
+      always_send_full_costmap: true
 
   local_costmap_client:
     ros__parameters:
@@ -273,8 +249,8 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      update_frequency: 0.5
+      publish_frequency: 0.5
       global_frame: map
       # global_frame: odom
       robot_base_frame: base_link
@@ -284,26 +260,31 @@ global_costmap:
       resolution: 0.1
       track_unknown_space: true
       static_map: true
-      # static_map = false
-      # Input occupancy grid is static/global, so keep a fixed global costmap window.
       rolling_window: false
       width: 80
       height: 80
-      origin_x: -40.0   # center the costmap: -80/2
-      origin_y: -40.0   # center the costmap: -80/2
+      origin_x: -40.0
+      origin_y: -40.0
       # plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
       # plugins: ["static_layer", "voxel_layer", "denoise_layer", "inflation_layer", "gradient_layer"]
       # plugins: ["static_layer", "gradient_layer"]
       # Current setup: global costmap is loaded from saved RAW map file through custom gradient layer,
       # not from StaticLayer and not from a live topic.
-      plugins: ["gradient_layer", "inflation_layer"]
+      plugins: ["gradient_layer", "live_gradient_layer", "inflation_layer"]
       gradient_layer:
         plugin: "gradient_layer::GradientLayer"
         enabled: true
         use_map_file: true
-        map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
+        map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml"
         map_flip_x: false
         map_flip_y: true
+      live_gradient_layer:
+        plugin: "gradient_layer::GradientLayer"
+        enabled: true
+        topic: "/occupancy_map_local_inflated"
+        map_subscribe_transient_local: true
+        map_subscribe_reliable: true
+        expand_update_bounds: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 15.0
@@ -345,12 +326,7 @@ global_costmap:
       #   enabled: true
       #   topic: "/occupancy_map_local_inflated"
       #   # topic: "/occupancy_map_local"
-      always_send_full_costmap: false
-
-      # inflation_layer:
-      #   plugin: "nav2_costmap_2d::InflationLayer"
-      #   cost_scaling_factor: 1.5
-      #   inflation_radius: 0.4
+      always_send_full_costmap: true
 
   global_costmap_client:
     ros__parameters:
@@ -364,7 +340,7 @@ map_server:
   ros__parameters:
     use_sim_time: false
     # yaml_filename: "/home/paul/Documents/EPFL/ERC_NAV/navigation/path_planning/saved_maps/2026/inflated_map_1.yaml"
-    yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
+    yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml"
 
 map_saver:
   ros__parameters:

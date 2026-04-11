@@ -37,15 +37,16 @@ inline double angDeltaDeg(double a_deg, double b_deg) {
 class LidarPhiFilterNode : public rclcpp::Node {
 public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
-        // Valeurs par défaut (sans déclaration de paramètres)
         tolerance_deg_ = 15;
-        tolerance_radius_ = 1.5; // 0.2 is the limit 
+        tolerance_radius_ = 1.5;
         hauteur_z_min= -0.7;
         hauteur_z_max= 1;
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;
+        min_cloud_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
+        last_cloud_time_ns_ = 0;
 
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
@@ -207,40 +208,44 @@ private:
     }
 
     void onCloud(const sensor_msgs::msg::PointCloud2::SharedPtr in) {
-        // copie locale des angles sélectionnés (max 3)
-        double angles_local[3];
-        double ranges_local[3];
-        size_t k = selected_count_;
-        for (size_t i = 0; i < k && i < 3; ++i) {
-            angles_local[i] = selected_angles_aruco_deg_[i];
-            ranges_local[i] = selected_ranges_[i];
-        }        // if (k == 0) {
-        //     return; // pas d'angles -> pas de filtrage
-        // }
+        const int64_t now_ns = this->now().nanoseconds();
+        if (now_ns - last_cloud_time_ns_ < min_cloud_period_ns_) {
+            return;
+        }
+        last_cloud_time_ns_ = now_ns;
 
-        // Extraire XYZ dans un tableau simple
-        std::vector<std::array<float, 3>> points;
-        extract_ouster_coordinates(*in, points);
-        if (points.empty()) {
+        size_t k = selected_count_;
+        if (k == 0) {
             return;
         }
 
-        // Préparer sortie (taille max = nb points d'entrée, on réduira après)
+        double angles_local[3];
+        double ranges_local[3];
+        for (size_t i = 0; i < k && i < 3; ++i) {
+            angles_local[i] = selected_angles_aruco_deg_[i];
+            ranges_local[i] = selected_ranges_[i];
+        }
+
+        extract_ouster_coordinates(*in, points_buf_);
+        if (points_buf_.empty()) {
+            return;
+        }
+
         sensor_msgs::msg::PointCloud2 out;
         out.header = in->header;
         out.height = 1;
-        out.width = static_cast<uint32_t>(points.size());
+        out.width = static_cast<uint32_t>(points_buf_.size());
         out.is_bigendian = false;
         out.is_dense = false;
         sensor_msgs::PointCloud2Modifier mod(out);
         mod.setPointCloud2FieldsByString(1, "xyz");
-        mod.resize(points.size());
+        mod.resize(points_buf_.size());
         sensor_msgs::PointCloud2Iterator<float> ox(out, "x");
         sensor_msgs::PointCloud2Iterator<float> oy(out, "y");
         sensor_msgs::PointCloud2Iterator<float> oz(out, "z");
 
         size_t kept = 0;
-        for (const auto &p : points) {
+        for (const auto &p : points_buf_) {
             const double angle_pointcloud_deg = wrap180(atan2(static_cast<double>(p[1]), static_cast<double>(p[0])) * 180.0 / M_PI);
             const double r_point = hypot(static_cast<double>(p[0]), static_cast<double>(p[1]));
             bool match = false;
@@ -277,11 +282,13 @@ private:
     }
 
 private:
-    // paramètres
     double tolerance_deg_;
     double tolerance_radius_;
     double hauteur_z_min;
     double hauteur_z_max;
+    int64_t min_cloud_period_ns_;
+    int64_t last_cloud_time_ns_;
+    std::vector<std::array<float, 3>> points_buf_;
 
     string input_cloud_topic_;
     string output_cloud_topic_;

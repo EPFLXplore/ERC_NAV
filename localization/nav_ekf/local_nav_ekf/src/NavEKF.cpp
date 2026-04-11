@@ -385,35 +385,31 @@ public:
     call_trigger(zero_pose_client_, "setZeroPose");
 
 
-    auto qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
+    auto sensor_qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
+    auto pub_qos = rclcpp::QoS{rclcpp::KeepLast{1}}.reliable();
 
     imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-      "/olive/imu/id001/ahrs", qos,
+      "/olive/imu/id001/ahrs", sensor_qos,
       std::bind(&NavEKFNode::imu_callback, this, std::placeholders::_1));
 
-    
     lidar_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/odom_glim_repub", qos,
+      "/odom_glim_repub", sensor_qos,
       std::bind(&NavEKFNode::lidar_callback, this, std::placeholders::_1));
 
     aruco_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/aruco_rover_pos", qos,
+      "/aruco_rover_pos", sensor_qos,
       std::bind(&NavEKFNode::aruco_callback, this, std::placeholders::_1));
 
-
     wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
-      "/NAV/motor_nav_status", qos,
+      "/NAV/motor_nav_status", sensor_qos,
       std::bind(&NavEKFNode::wheel_info_callback, this, std::placeholders::_1));
-    
 
     wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/wheel_odom", qos,
+      "/wheel_odom", sensor_qos,
       std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
 
-      //publsher
-
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
-      "/fused_nav_ekf_odom", qos);
+      "/fused_nav_ekf_odom", pub_qos);
 
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 

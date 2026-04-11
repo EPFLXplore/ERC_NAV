@@ -33,6 +33,11 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('path_planning')
     launch_dir = os.path.join(bringup_dir, 'launch')
 
+    
+
+    # Running in container
+    default_map_yaml = "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml"
+
     # Create the launch configuration variables
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
@@ -56,8 +61,7 @@ def generate_launch_description():
 
     # Create our own temporary YAML files that include substitutions
     param_substitutions = {
-        'use_sim_time': use_sim_time,
-        'yaml_filename': map_yaml_file}
+        'use_sim_time': use_sim_time}
 
     # Only it applys when `use_namespace` is True.
     # '<robot_namespace>' keyword shall be replaced by 'namespace' launch argument
@@ -96,7 +100,7 @@ def generate_launch_description():
 
     declare_map_yaml_cmd = DeclareLaunchArgument(
         'map',
-        default_value='/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/blank_map.yaml',
+        default_value=default_map_yaml,
         description='Full path to map yaml file to load')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
@@ -151,9 +155,7 @@ def generate_launch_description():
                               'params_file': params_file}.items()),
 
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir,
-                                                       'localization_launch.py')),
-            condition=IfCondition(PythonExpression(['not ', slam])),
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
             launch_arguments={'namespace': namespace,
                               'map': map_yaml_file,
                               'use_sim_time': use_sim_time,
@@ -162,17 +164,13 @@ def generate_launch_description():
                               'use_composition': use_composition,
                               'use_respawn': use_respawn,
                               'container_name': 'nav2_container'}.items()),
-
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
-            launch_arguments={'namespace': namespace,
-                              'use_sim_time': use_sim_time,
-                              'autostart': autostart,
-                              'params_file': params_file,
-                              'use_composition': use_composition,
-                              'use_respawn': use_respawn,
-                              'container_name': 'nav2_container'}.items()),
     ])
+
+    # static_transform_publisher = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'map'],
+    # )
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -194,5 +192,7 @@ def generate_launch_description():
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_cmd_group)
+
+    ld.add_action(static_transform_publisher)
 
     return ld

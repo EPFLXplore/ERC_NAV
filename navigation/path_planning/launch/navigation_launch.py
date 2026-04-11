@@ -33,6 +33,7 @@ def generate_launch_description():
     bringup_dir = get_package_share_directory('path_planning')
 
     namespace = LaunchConfiguration('namespace')
+    map_yaml_file = LaunchConfiguration('map')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
@@ -45,6 +46,7 @@ def generate_launch_description():
     lifecycle_nodes = ['controller_server',
                        'smoother_server',
                        'planner_server',
+                       'map_server',
                        'behavior_server',
                        'bt_navigator',
                        'waypoint_follower',
@@ -62,7 +64,8 @@ def generate_launch_description():
     # Create our own temporary YAML files that include substitutions
     param_substitutions = {
         'use_sim_time': use_sim_time,
-        'autostart': autostart}
+        'autostart': autostart,
+        'yaml_filename': map_yaml_file}
 
     configured_params = ParameterFile(
         RewrittenYaml(
@@ -102,6 +105,11 @@ def generate_launch_description():
         'container_name', default_value='nav2_container',
         description='the name of conatiner that nodes will load in if use composition')
 
+    declare_map_yaml_cmd = DeclareLaunchArgument(
+        'map',
+        default_value='/home/paul/Documents/EPFL/ERC_NAV/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml',
+        description='Full path to map yaml file to load')
+
     declare_use_respawn_cmd = DeclareLaunchArgument(
         'use_respawn', default_value='False',
         description='Whether to respawn if a node crashes. Applied when composition is disabled.')
@@ -136,6 +144,16 @@ def generate_launch_description():
                 package='nav2_planner',
                 executable='planner_server',
                 name='planner_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings),
+            Node(
+                package='nav2_map_server',
+                executable='map_server',
+                name='map_server',
                 output='screen',
                 respawn=use_respawn,
                 respawn_delay=2.0,
@@ -215,6 +233,12 @@ def generate_launch_description():
                 package='nav2_planner',
                 plugin='nav2_planner::PlannerServer',
                 name='planner_server',
+                parameters=[configured_params],
+                remappings=remappings),
+            ComposableNode(
+                package='nav2_map_server',
+                plugin='nav2_map_server::MapServer',
+                name='map_server',
                 parameters=[configured_params],
                 remappings=remappings),
             ComposableNode(
