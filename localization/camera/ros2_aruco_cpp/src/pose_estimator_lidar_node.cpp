@@ -22,6 +22,8 @@ extern "C" {
 }
 #endif
 
+// CHANGE LANDMARK AND ERC_START_POS
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
@@ -159,17 +161,17 @@ private:
     static constexpr double MAP_YMIN = -60.0;
     static constexpr double MAP_YMAX =  60.0;
 
-    const std::array<double, 2> erc_start_pos_{0.0, 0.0};
+    const std::array<double, 2> erc_start_pos_{11.0, -1.0};
 
     const std::vector<std::pair<double, double>> landmark_poses_ = {
-        {0.96, 3.57},       // id 51
-        {-1.68, 3.7},       // id 52
-        {-4.0, -2.0}, 
-        {0.0, 0.0}, 
+        {7.4, -1.0},       // id 51
+        {4.5, 3.0},       // id 52
+        {9.4, 3.0},       // id 53
+        {999999, 999999}, 
         {999999, 999999},
         {999999, 999999}, 
         {999999, 999999}, 
-        {999999, 999999},
+        {6.5, 5.6},         // id 58
         {999999, 999999}, 
         {999999, 999999}, 
         {999999, 999999},

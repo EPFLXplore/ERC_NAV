@@ -1,6 +1,6 @@
 import launch
 import launch_ros
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, EmitEvent, IncludeLaunchDescription, LogInfo, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, EmitEvent, IncludeLaunchDescription, LogInfo, TimerAction, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
@@ -126,7 +126,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='nav_ekf_node',
         name='nav_custom_ekf',
         output='screen',
-        parameters=[{'include_lidar': True}]
+        parameters=[{'include_lidar': True, 'include_aruco': False, 'include_vio': False}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
@@ -141,7 +141,18 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
             LogInfo(msg="Cameras started! Launching aruco nodes..."),
+            # ExecuteProcess(
+            #     cmd=[
+            #         "bash",
+            #         "-lc",
+            #         "ros2 service call /NAV/req_camera_nav_0 std_srvs/srv/SetBool \"{data: true}\" && "
+            #         "ros2 service call /NAV/req_camera_nav_1 std_srvs/srv/SetBool \"{data: true}\" && "
+            #         "ros2 service call /NAV/req_camera_nav_2 std_srvs/srv/SetBool \"{data: true}\""
+            #     ],
+            #     output="screen"
+            # ),
             aruco_launch,
+            LogInfo(msg="Aruco node cpp launch waiting for lidar aruco"),
             aruco_lidar_detection_launch
         ]
     )

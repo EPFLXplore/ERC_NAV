@@ -11,6 +11,7 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/filter.h>
+#include <algorithm>
 #include <vector>
 #include <cmath>
 #include <string>
@@ -43,20 +44,27 @@ class DetectCubeNode : public rclcpp::Node {
 public:
     DetectCubeNode()
         : rclcpp::Node("detect_cube_node"), tf_buffer_(this->get_clock()) {
+        this->declare_parameter<double>("distance_threshold_inliers", 0.05);
+        this->declare_parameter<int>("max_iterations", 100);
+        this->declare_parameter<double>("t", 0.25);
+        this->declare_parameter<int>("min_inliers", 10);
+        this->declare_parameter<int>("max_lines", 3);
+        this->declare_parameter<double>("max_distance_from_aruco", 0.3);
+        this->declare_parameter<double>("angular_tolerance_deg", 10.0);
+
         input_cloud_topic_ = "/ouster_points_aruco";
         output_cloud_topic_ = "/cloud_with_lines";
         aruco_topic_ = "aruco_markers";
 
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
-        distance_threshold_inliers = 0.05; 
-        max_iterations_ = 100;
-        t=0.25;
-        min_inliers_ = 10;
-        max_lines_ = 3;
-
-        max_distance_from_aruco_ = 0.3;
-        angular_tolerance_deg_ = 10;
+        this->get_parameter("distance_threshold_inliers", distance_threshold_inliers);
+        this->get_parameter("max_iterations", max_iterations_);
+        this->get_parameter("t", t);
+        this->get_parameter("min_inliers", min_inliers_);
+        this->get_parameter("max_lines", max_lines_);
+        this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
+        this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
         min_process_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
         last_process_time_ns_ = 0;
         full_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
@@ -133,21 +141,24 @@ private:
             double aruco_angle_deg = atan2(aruco_y, aruco_x) * 180.0f / M_PI;
 
             double dist = static_cast<double>(sqrt(aruco_x*aruco_x + aruco_y*aruco_y));
-            min_inliers_ = static_cast<int>(0.3 / (dist * 0.002967) / 3);
-            max_distance_from_aruco_ = static_cast<float>(dist / 5);
+            const int dynamic_min_inliers = static_cast<int>(0.3 / (dist * 0.002967) / 3);
+            const double dynamic_max_distance_from_aruco = dist / 5.0;
+            const int min_inliers = std::max(min_inliers_, dynamic_min_inliers);
+            const double max_distance_from_aruco = std::min(
+                max_distance_from_aruco_, dynamic_max_distance_from_aruco);
             double ref_angle = wrap180(aruco_angle_deg + 90);
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
             for (const auto& pt : full_cloud_->points) {
                 double r_point = sqrt(static_cast<double>(pt.x)*static_cast<double>(pt.x) + static_cast<double>(pt.y)*static_cast<double>(pt.y));
-                if (fabs(dist - r_point) >= max_distance_from_aruco_) continue;
+                if (fabs(dist - r_point) >= max_distance_from_aruco) continue;
 
                 double pt_angle_deg = atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) * 180.0 / M_PI;
                 if (angDeltaDeg(pt_angle_deg, ref_angle) < angular_tolerance_deg_) {
                     pointcloud_minus_lines->push_back(pt);
                 }
             }
-            if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers_)) {
+            if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers)) {
                 // RCLCPP_INFO(this->get_logger(), "min inliners %zu", static_cast<size_t>(min_inliers_));
                 // RCLCPP_INFO(this->get_logger(), "pas assez de points");
                 continue;
@@ -182,7 +193,7 @@ private:
                 seg.segment(*inliers, *coefficients);
                 // RCLCPP_INFO(this->get_logger(), "min inliners juste avant %.3f", min_inliers_);
 
-                if (inliers->indices.size() < static_cast<size_t>(min_inliers_)) {
+                if (inliers->indices.size() < static_cast<size_t>(min_inliers)) {
                     // RCLCPP_INFO(this->get_logger(), "detect pas suffisamment de points pour une ligne");
                     cant_find_line_counter++;
                     break;
@@ -353,7 +364,7 @@ private:
             for (int line_idx_2d = 0; line_idx_2d < 2; ++line_idx_2d) {
                 // RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
                 
-                if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers_)) {
+                if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers)) {
                     RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "detect pas suffisamment de points pour une ligne 2d AAAAAA");
                     break;
                 }
@@ -699,8 +710,8 @@ private:
     int max_iterations_;
     int min_inliers_;
     int max_lines_;
-    float t ;
-    float max_distance_from_aruco_;
+    double t;
+    double max_distance_from_aruco_;
     double angular_tolerance_deg_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscriber_;

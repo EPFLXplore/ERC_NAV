@@ -66,7 +66,6 @@ struct MarkerCandidate {
     cv::Vec3d tvec;
     Eigen::Matrix3d rot_3x3;
     double abs_face_yaw;  // box face yaw: 0 = facing camera, π/2 = edge-on
-    cv::Vec3d rvec;
     std::vector<cv::Point2f> corners;
 };
 
@@ -109,6 +108,10 @@ public:
         marker_size_ =
             get_parameter("marker_size").as_double();
 
+        camera_frames_[0] = get_parameter("camera_frame_1").as_string();
+        camera_frames_[1] = get_parameter("camera_frame_2").as_string();
+        camera_frames_[2] = get_parameter("camera_frame_3").as_string();
+
         /* ---- ArUco dictionary & detector parameters ---- */
         dictionary_ = cv::aruco::getPredefinedDictionary(
             cv::aruco::DICT_5X5_250);
@@ -145,22 +148,22 @@ public:
 
 
         landmark_poses_ = {
-            {0.96, 3.57},       // id 51
-            {-1.68, 3.7},       // id 52
-            {-4.0, -2.0}, 
-            {0.0, 0.0}, 
-            {999999, 999999},
-            {999999, 999999}, 
+            {7.4, 0.0},       // id 51
+            {4.5, 3.0},       // id 52
+            {9.4, 3.0},       // id 53
             {999999, 999999}, 
             {999999, 999999},
             {999999, 999999}, 
             {999999, 999999}, 
+            {6.5, 5.6},         // id 58
+            {999999, 999999}, 
+            {999999, 999999}, 
             {999999, 999999},
             {999999, 999999}, 
             {999999, 999999}, 
             {999999, 999999},
             {999999, 999999},
-        };
+        }; 
 
         /* ---- TF ---- */
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -200,6 +203,7 @@ private:
 
     /* ---- camera data ---- */
     CameraIntrinsics cam_[NUM_CAMERAS];
+    std::string camera_frames_[NUM_CAMERAS];
 
     /* ---- ArUco ---- */
     cv::Ptr<cv::aruco::Dictionary>       dictionary_;
@@ -224,7 +228,7 @@ private:
 
     /* ---- rate limiter ---- */
     int64_t last_cb_ns_{0};
-    static constexpr int64_t CB_MIN_PERIOD_NS = 200000000LL; // 5 Hz
+    static constexpr int64_t CB_MIN_PERIOD_NS = 100000000LL; // 10 Hz
 
     /* ============================================================== */
     /*  Synchronised callback                                         */
@@ -251,13 +255,10 @@ private:
         pose_array.header.stamp = msg1->header.stamp;
 
         const CompImg::ConstSharedPtr msgs[NUM_CAMERAS] = {msg1, msg2, msg3};
-        const std::string frame_params[NUM_CAMERAS] = {
-            "camera_frame_1", "camera_frame_2", "camera_frame_3"};
 
         for (int c = 0; c < NUM_CAMERAS; ++c)
             process_image(msgs[c], cam_[c].intrinsic, cam_[c].distortion,
-                          get_parameter(frame_params[c]).as_string(),
-                          markers, pose_array);
+                          camera_frames_[c], markers, pose_array);
 
         poses_pub_->publish(pose_array);
         markers_pub_->publish(markers);
@@ -327,7 +328,7 @@ private:
                 std::abs(extract_box_face_yaw(R_corrected));
 
             candidates[marker_id].push_back(
-                {tvecs[i], R_tag2cam, abs_face_yaw, rvecs[i], corners[i]});
+                {tvecs[i], R_tag2cam, abs_face_yaw, corners[i]});
         }
 
         /* ---- best-face selection: keep face most parallel to image plane ---- */
@@ -379,7 +380,7 @@ private:
 
             /* ---- bearing computation ---- */
             auto [bearing_deg, T_cam_box] =
-                calculate_aruco_box_bearing(tvec_eigen, mc.rvec);
+                calculate_aruco_box_bearing(tvec_eigen, mc.rot_3x3);
             (void)bearing_deg;   // used only for debug
 
             Eigen::Matrix4d T_base_box = T_base_cam * T_cam_box;
@@ -427,12 +428,8 @@ private:
     /*  Bearing from ArUco rvec (box-center method)                   */
     /* ============================================================== */
     std::pair<double, Eigen::Matrix4d> calculate_aruco_box_bearing(
-        const Eigen::Vector3d &tvec, const cv::Vec3d &rvec) const
+        const Eigen::Vector3d &tvec, const Eigen::Matrix3d &R_tag) const
     {
-        cv::Mat R_cv;
-        cv::Rodrigues(rvec, R_cv);
-        Eigen::Matrix3d R_tag = cv_mat_to_eigen3(R_cv);
-
         Eigen::Vector3d offset(0.0, 0.0, -ARUCO_BOX_OFFSET);
         Eigen::Vector3d box_center = tvec + R_tag * offset;
 

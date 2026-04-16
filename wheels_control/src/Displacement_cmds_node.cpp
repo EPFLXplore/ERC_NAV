@@ -95,19 +95,19 @@ public:
 
     normalKinematicModel.motor_cmds = motor_cmds;
 
-    pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", 10);
+    pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", qos_best_effort);
     
-    auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{10}).best_effort();
+    auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{1}).best_effort();
 
     sub_topic_absolute_encoders = this->create_subscription<custom_msg::msg::MotorStatus>(
         "/NAV/motor_nav_status", sub_qos, std::bind(&DisplacementCmds::callback_absolute_encoders, this, std::placeholders::_1));
 
     // Listens on the NAVCSInterface for the actual mode of the rover
     sub_state_system = this->create_subscription<std_msgs::msg::String>(
-        "/NAV/NAV_mode", 1, std::bind(&DisplacementCmds::callback_state_mode, this, std::placeholders::_1));
+        "/NAV/NAV_mode", sub_qos, std::bind(&DisplacementCmds::callback_state_mode, this, std::placeholders::_1));
 
     sub_cmd_vel = this->create_subscription<geometry_msgs::msg::Twist>(
-        "/NAV/cmd_vel_final", 1, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
+        "/NAV/cmd_vel_final", sub_qos, std::bind(&DisplacementCmds::callback_cmd_vel, this, std::placeholders::_1));
       
     // Listens to the gamepad topic of the CS to see if we are going crab mode to avoid the wheels going in crabe mode when homing
     sub_cs_gamepad = this->create_subscription<sensor_msgs::msg::Joy>(

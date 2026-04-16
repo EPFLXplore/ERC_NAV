@@ -2,6 +2,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <mutex>
@@ -37,10 +38,15 @@ inline double angDeltaDeg(double a_deg, double b_deg) {
 class LidarPhiFilterNode : public rclcpp::Node {
 public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
-        tolerance_deg_ = 15;
-        tolerance_radius_ = 1.5;
-        hauteur_z_min= -0.7;
-        hauteur_z_max= 1;
+        this->declare_parameter<double>("tolerance_deg", 15.0);
+        this->declare_parameter<double>("tolerance_radius", 1.5);
+        this->declare_parameter<double>("hauteur_z_min", -0.7);
+        this->declare_parameter<double>("hauteur_z_max", 1.0);
+
+        this->get_parameter("tolerance_deg", tolerance_deg_);
+        this->get_parameter("tolerance_radius", tolerance_radius_);
+        this->get_parameter("hauteur_z_min", hauteur_z_min);
+        this->get_parameter("hauteur_z_max", hauteur_z_max);
         input_cloud_topic_ = "/ouster_points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
