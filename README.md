@@ -16,6 +16,9 @@ cameras), fuses them into a single `odom → base_link` transform, builds a
 local traversability costmap, and lets Nav2 plan and follow a path that the
 wheel controller turns into individual motor commands.
 
+<img width="2262" height="918" alt="image" src="https://github.com/user-attachments/assets/83ef26a2-d4d9-4083-a06d-8de8ac647580" />
+
+
 ---
 
 ## Repository layout
