@@ -33,7 +33,7 @@ include_directories(
     ${EIGEN3_INCLUDE_DIRS}
 )
 
-# Executable
+# Executables
 add_executable(nav_ekf_node src/NavEKF.cpp)
 ament_target_dependencies(nav_ekf_node
     rclcpp
@@ -47,8 +47,21 @@ ament_target_dependencies(nav_ekf_node
 )
 target_link_libraries(nav_ekf_node Eigen3::Eigen)
 
+add_executable(nav_ekf_3d_node src/NavEKF3D.cpp)
+ament_target_dependencies(nav_ekf_3d_node
+    rclcpp
+    sensor_msgs
+    nav_msgs
+    tf2
+    tf2_geometry_msgs
+    tf2_ros
+    std_srvs
+    custom_msg
+)
+target_link_libraries(nav_ekf_3d_node Eigen3::Eigen)
+
 # Install
-install(TARGETS nav_ekf_node
+install(TARGETS nav_ekf_node nav_ekf_3d_node
     DESTINATION lib/${PROJECT_NAME}
 )
 

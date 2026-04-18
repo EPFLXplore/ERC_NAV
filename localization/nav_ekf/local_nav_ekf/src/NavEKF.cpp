@@ -598,7 +598,7 @@ private:
     if (std::isfinite(maha2) && maha2 < 7.0) {
       ekf_->updatePosition(mx, my, ekf_->R_xy_vio);
     } else {
-      RCLCPP_WARN(this->get_logger(), "Reject ArUco odom: maha^2=%.2f", maha2);
+      RCLCPP_WARN(this->get_logger(), "Reject VIO odom: maha^2=%.2f", maha2);
     }
 
   }

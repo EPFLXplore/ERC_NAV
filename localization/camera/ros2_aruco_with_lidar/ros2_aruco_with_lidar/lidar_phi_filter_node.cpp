@@ -35,6 +35,8 @@ inline double angDeltaDeg(double a_deg, double b_deg) {
 
 } // namespace
 
+
+
 class LidarPhiFilterNode : public rclcpp::Node {
 public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
@@ -51,7 +53,7 @@ public:
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;
-        min_cloud_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
+        min_cloud_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max 
         last_cloud_time_ns_ = 0;
 
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
@@ -61,13 +63,13 @@ public:
         cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
             input_cloud_topic_, rclcpp::SensorDataQoS(),
             [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-                onCloud(msg);
+                filter_pcl_with_known_aruco_poses(msg);
             });
             // subscriber de ArucoMarkers
         markers_sub_ = create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
             aruco_topic_, rclcpp::SensorDataQoS(),
             [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
-                detect_3_best_camera(msg);
+                select_camera_detections_for_filter(msg);
             });
 
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
@@ -78,6 +80,73 @@ public:
     }
 
 private:
+    const vector<std::pair<double, double>> landmark_poses_ = {
+        {7.4, 0.0},       // id 51
+        {4.5, 3.0},       // id 52
+        {9.4, 3.0},       // id 53
+        {999999, 999999}, 
+        {999999, 999999},
+        {999999, 999999}, 
+        {999999, 999999}, 
+        {6.5, 5.6},         // id 58
+        {999999, 999999}, 
+        {999999, 999999}, 
+        {999999, 999999},
+        {999999, 999999}, 
+        {999999, 999999}, 
+        {999999, 999999},
+        {999999, 999999},
+    };
+
+
+    vector<std::pair<double, double>> get_aruco_poses_in_base_link(const vector<std::pair<double, double>> &aruco_map_positions) {
+        // in: list of (x, y) map positions of the center of aruco boxes. Given by the ERC.
+        // out: list of (x, y) positions of the center of aruco boxes in base_link. Those will be used to select points in the pointcloud
+        // around those positions to make the detection more efficient and robust.
+
+        // check if the transform map->base_link is available
+        string target_frame = "base_link";
+        geometry_msgs::msg::TransformStamped transform;
+        try {
+            if (tf_buffer_.canTransform(target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.1))) {
+                // gets the transform from map to base_link at the latest available time (TimePointZero) with a timeout of 0.1s
+                transform = tf_buffer_.lookupTransform(target_frame, "map", tf2::TimePointZero);
+            } else {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform not available from map to base_link");
+                return {};
+            }        
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform error: %s", ex.what());
+            return {};
+        }
+
+        static constexpr double MAX_VALID_COORD = 80.0;
+        static constexpr double MIN_VALID_COORD = -20.0;
+        static constexpr double OUT_OF_BOUNDS_COORD = 999999.0;
+
+        auto out_of_bounds = [](double v) {
+            return v >= MAX_VALID_COORD || v <= MIN_VALID_COORD;
+        };
+        std::vector<std::pair<double, double>> out;
+        out.reserve(aruco_map_positions.size());
+
+        geometry_msgs::msg::PointStamped in, tmp;
+        in.header.frame_id = "map";
+        in.point.z = 0.0;
+        
+        for (const auto &pos : aruco_map_positions) {
+            if (out_of_bounds(pos.first) || out_of_bounds(pos.second)) {
+                out.emplace_back(OUT_OF_BOUNDS_COORD, OUT_OF_BOUNDS_COORD);
+                continue;
+            }
+            in.point.x = pos.first;
+            in.point.y = pos.second;
+            tf2::doTransform(in, tmp, transform);
+            out.emplace_back(tmp.point.x, tmp.point.y);
+        }
+        return out;
+    }
+
     // Extraction des coordonnées XYZ
     void extract_ouster_coordinates(const sensor_msgs::msg::PointCloud2 &msg,
                                     std::vector<std::array<float, 3>> &points) {
@@ -95,43 +164,37 @@ private:
             points.push_back({x, y, z});
         }
     }
-    void detect_3_best_camera(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+    /**
+     * Collects every camera detection that is allowed for LiDAR association (exluding the one blocked by the drill structure),
+     * Detections are sorted by increasing range so downstream greedy landmark association still prefers closer tags first.
+     */
+    void select_camera_detections_for_filter(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
         size_t n = msg->ar_angles_list.size();
-        //if (msg->poses.size() < n) n = msg->poses.size();
-        // RCLCPP_INFO(this->get_logger(), "n : %f", n);
+        if (msg->poses.size() < n) {
+            n = msg->poses.size();
+        }
 
-        const double INF = 1e10;
-        double best_ang[3] = {0.0, 0.0, 0.0};
-        double z_aruco[3] = {0.0, 0.0, 0.0};
-
-        double best_rng[3] = {INF, INF, INF};
+        struct RangeAngle {
+            double range;
+            double ang_deg;
+        };
+        vector<RangeAngle> for_filter;
+        for_filter.reserve(n);
 
         for (size_t i = 0; i < n; ++i) {
             const double x = msg->poses[i].position.x;
             const double y = msg->poses[i].position.y;
-            const double z = msg->poses[i].position.z;
-
-            //RCLCPP_INFO(this->get_logger(), "x : %f", x);
-            //RCLCPP_INFO(this->get_logger(), "y : %f", y);
 
             const double r = sqrt(x * x + y * y);
             const double a = wrap180(msg->ar_angles_list[i]);
 
-            if (r < best_rng[0] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
-                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
-                best_rng[1] = best_rng[0]; best_ang[1] = best_ang[0]; z_aruco[1] = z_aruco[0];
-                best_rng[0] = r;           best_ang[0] = a; z_aruco[0] = z;
-                // RCLCPP_INFO(this->get_logger(), "premierif : %f", i);
+            const bool in_forbidden_sector =
+                (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
 
-            } else if (r < best_rng[1] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
-                best_rng[2] = best_rng[1]; best_ang[2] = best_ang[1]; z_aruco[2] = z_aruco[1];
-                best_rng[1] = r;           best_ang[1] = a; z_aruco[1] = z;
-                // RCLCPP_INFO(this->get_logger(), "deuxieme : %f", i);
-
-            } else if (r < best_rng[2] && !(msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90)) {
-                best_rng[2] = r;           best_ang[2] = a; z_aruco[2] = z;
+            if (!in_forbidden_sector) {
+                for_filter.push_back({r, a});
             }
-            if (msg->ar_angles_list[i] <180 && msg->ar_angles_list[i] >90) {
+            if (in_forbidden_sector) {
                 ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
                 geometry_msgs::msg::Point centre_moyen;
                 centre_moyen = msg->poses[i].position;
@@ -198,94 +261,162 @@ private:
             }
         }
 
-        size_t count = 0;
-        if (best_rng[0] < INF) ++count;
-        if (best_rng[1] < INF) ++count;
-        if (best_rng[2] < INF) ++count;
-        //RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", count);
+        sort(for_filter.begin(), for_filter.end(),
+             [](const RangeAngle &u, const RangeAngle &v) { return u.range < v.range; });
 
-        selected_count_ = count;
-        for (size_t i = 0; i < count && i < 3; ++i) {
-            selected_angles_aruco_deg_[i] = best_ang[i];
-
-            selected_ranges_[i] = best_rng[i];
-            // RCLCPP_INFO(this->get_logger(), "nbr aruco: %f", i);
+        {
+            lock_guard<mutex> lk(angles_mutex_);
+            selected_ranges_.clear();
+            selected_angles_aruco_deg_.clear();
+            selected_ranges_.reserve(for_filter.size());
+            selected_angles_aruco_deg_.reserve(for_filter.size());
+            for (const auto &e : for_filter) {
+                selected_ranges_.push_back(e.range);
+                selected_angles_aruco_deg_.push_back(e.ang_deg);
+            }
+            selected_count_ = selected_ranges_.size();
         }
     }
 
-    void onCloud(const sensor_msgs::msg::PointCloud2::SharedPtr in) {
+    void filter_pcl_with_known_aruco_poses(const sensor_msgs::msg::PointCloud2::SharedPtr in) {
+        // This functions uses the known ArUco poses in the base_link frame to filter the point cloud
+        // keeping only points that are within tolerace_radius_ meters of the supposed ArUco poses.
+        // It filters by map poses among landmarks that pass the camera association gate.
+        // theoretically we do not need the camera detections of aruco tags for this,
+        // but we use every camera detection that associates to a known landmark within a gate distance because:
+        // - the camera detecting the tag means we have lign of sight to it so it will be visible by the pointcloud
+        //     (unless its hidden by the drill structure TODO: check if aruco tag is hidden)
+        // - selecting the closest ones means we are more likely to be able to detected the cubes using RANSAC later on
+        //   because there will be more points on the cubes.
+
+        // Rate limit
         const int64_t now_ns = this->now().nanoseconds();
-        if (now_ns - last_cloud_time_ns_ < min_cloud_period_ns_) {
-            return;
-        }
+        if (now_ns - last_cloud_time_ns_ < min_cloud_period_ns_) return;
         last_cloud_time_ns_ = now_ns;
 
-        size_t k = selected_count_;
-        if (k == 0) {
-            return;
-        }
+        const auto landmarks_in_base_link = get_aruco_poses_in_base_link(landmark_poses_);
+        if (landmarks_in_base_link.empty()) return;
 
-        double angles_local[3];
-        double ranges_local[3];
-        for (size_t i = 0; i < k && i < 3; ++i) {
-            angles_local[i] = selected_angles_aruco_deg_[i];
-            ranges_local[i] = selected_ranges_[i];
+        // get the detected aruco angles and ranges in the camera frame.
+        std::vector<double> cam_angles, cam_ranges;
+        {
+            std::lock_guard<std::mutex> lk(angles_mutex_);
+            cam_angles = selected_angles_aruco_deg_;
+            cam_ranges = selected_ranges_;
+        }
+        // if there are no camera detections, we dont even attempt to try to find the aruco boxes
+        // For now this is done to ensure maximum reliability of the detection because if the camera
+        // sees it then it means we should have LoS and it should be visible in the pcl.
+        // if the detection code is robust enough then one could just remove this dependance on the cameras.
+        if (cam_angles.empty()) return;
+
+        //associate each camera deteciton with the closest known landmark in base_link.
+        static constexpr double ANGLE_OFFSET_DEG   = 90.0; // LiDAR is mounted at 90 degrees compared to rover frame
+        static constexpr double DEG2RAD            = M_PI / 180.0;
+        static constexpr double OUT_OF_BOUNDS_COORD = 999999.0;
+        const double ASSOCIATION_GATE_DIST = 1.3; // in meters, max distance to associate a camera detection to a landmark
+
+        std::vector<std::pair<double, double>> selected_landmarks;
+        // avoid associating two camera detections to the same landmark
+        // by keeping track of which landmarks have already been associated to a camera detection.
+        selected_landmarks.reserve(cam_angles.size());
+        std::vector<char> landmark_used(landmarks_in_base_link.size(), 0);
+
+        // WARNING: we currently assume that the camera origin is the same as the base_link origin, which isn't exactly true
+        // but the error is comprised in the tolerance_radius_ param
+
+        //TODO : use URDF Transform Lookup from camera frame to base_link frame to convert the camera detections to base_link frame.
+        for(size_t i=0; i<cam_angles.size(); ++i) {
+            const double theta = (cam_angles[i] + ANGLE_OFFSET_DEG) * DEG2RAD;
+
+            // convert to cartesian coords in cam frame
+            const double cx = cam_ranges[i] * std::cos(theta);
+            const double cy = cam_ranges[i] * std::sin(theta);
+
+            // nearest neighbor search among the known landmarks in base_link
+            double best_squared_dist = std::numeric_limits<double>::infinity();
+            size_t best_idx = landmarks_in_base_link.size();
+
+
+            for(size_t j=0; j<landmarks_in_base_link.size(); ++j) {
+                if (landmark_used[j]) continue; // already associated to another cam detection
+                const double lx = landmarks_in_base_link[j].first;
+                const double ly = landmarks_in_base_link[j].second;
+                if (lx == OUT_OF_BOUNDS_COORD || ly == OUT_OF_BOUNDS_COORD) continue; // invalid landmark position
+                const double squared_dist = (cx - lx) * (cx - lx) + (cy - ly) * (cy - ly);
+                if (squared_dist < best_squared_dist) {
+                    best_squared_dist = squared_dist;
+                    best_idx = j;
+                }
+            }
+            if (best_idx < landmarks_in_base_link.size() && best_squared_dist <= ASSOCIATION_GATE_DIST * ASSOCIATION_GATE_DIST) {
+                selected_landmarks.push_back(landmarks_in_base_link[best_idx]);
+                landmark_used[best_idx] = 1;
+            }
+        }
+        if (selected_landmarks.empty()) return;
+
+        // bounding box filter over all selected landmark neighborhooods
+        const double bounding_box_tol = tolerance_radius_;
+        const double bounding_box_tol_squared = bounding_box_tol * bounding_box_tol;
+
+        double xmin = std::numeric_limits<double>::infinity();
+        double xmax = -std::numeric_limits<double>::infinity();
+        double ymin = std::numeric_limits<double>::infinity();
+        double ymax = -std::numeric_limits<double>::infinity();
+
+        for(const auto &landmark : selected_landmarks) {
+            xmin = std::min(xmin, landmark.first - bounding_box_tol);
+            xmax = std::max(xmax, landmark.first + bounding_box_tol);
+            ymin = std::min(ymin, landmark.second - bounding_box_tol);
+            ymax = std::max(ymax, landmark.second + bounding_box_tol);
         }
 
         extract_ouster_coordinates(*in, points_buf_);
-        if (points_buf_.empty()) {
-            return;
-        }
+        if (points_buf_.empty()) return;
 
         sensor_msgs::msg::PointCloud2 out;
-        out.header = in->header;
-        out.height = 1;
-        out.width = static_cast<uint32_t>(points_buf_.size());
-        out.is_bigendian = false;
-        out.is_dense = false;
+        out.header         = in->header;
+        out.height         = 1;
+        out.is_bigendian   = false;
+        out.is_dense       = false;
         sensor_msgs::PointCloud2Modifier mod(out);
         mod.setPointCloud2FieldsByString(1, "xyz");
         mod.resize(points_buf_.size());
-        sensor_msgs::PointCloud2Iterator<float> ox(out, "x");
-        sensor_msgs::PointCloud2Iterator<float> oy(out, "y");
-        sensor_msgs::PointCloud2Iterator<float> oz(out, "z");
 
+        sensor_msgs::PointCloud2Iterator<float> ox(out, "x"), oy(out, "y"), oz(out, "z");
         size_t kept = 0;
+
         for (const auto &p : points_buf_) {
-            const double angle_pointcloud_deg = wrap180(atan2(static_cast<double>(p[1]), static_cast<double>(p[0])) * 180.0 / M_PI);
-            const double r_point = hypot(static_cast<double>(p[0]), static_cast<double>(p[1]));
-            bool match = false;
-            for (size_t i = 0; i < k; ++i) {
-                // RCLCPP_INFO(this->get_logger(), "position z pt cloud lidar: %.3f", p[2])
-                if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ &&
-                    fabs(r_point - ranges_local[i]) <= tolerance_radius_  && p[2]> hauteur_z_min && p[2]< hauteur_z_max) 
-                    { 
-                        match = true;
-                        // RCLCPP_INFO(this->get_logger(), "Distance lidar - arucotag : %f", fabs(r_point - ranges_local[i])); 
-                        //RCLCPP_INFO(this->get_logger(), "Distance lidar à aruco tag R point : %f", fabs(r_point - ranges_local[i]));
-                        //RCLCPP_INFO(this->get_logger(), "z filtre: %f", p[2]);
+            // z height filter
+            if (p[2] < hauteur_z_min || p[2] > hauteur_z_max) continue;
 
-                        break;
-                    }
-                // if (angDeltaDeg(angle_pointcloud_deg , angles_local[i]+90) <= tolerance_deg_ ) { match = true; break; }
-                         
+            const double px = p[0];
+            const double py = p[1];
+
+            if (px < xmin || px > xmax || py < ymin || py > ymax) continue; // outside of bounding box
+
+            // check if the point is within bounding_box_tol of any of the selected landmarks
+            for (const auto &landmark: selected_landmarks) {
+                const double dx = px - landmark.first;
+                const double dy = py - landmark.second;
+                const double squared_dist = dx * dx + dy * dy;
+                if (squared_dist <= bounding_box_tol_squared) {
+                    *ox++ = px;
+                    *oy++ = py;
+                    *oz++ = p[2];
+                    ++kept;
+                    break; // no need to check other landmarks
+                }
             }
-            if (!match) continue;
-            
-
-            *ox = p[0]; *oy = p[1]; *oz = p[2];
-            ++ox; ++oy; ++oz;
-            ++kept;
         }
 
-        if (kept == 0) {
-            return; // rien à publier
-        }
-
+        if (kept == 0) return; // nothing to publish
         mod.resize(kept);
         out.width = static_cast<uint32_t>(kept);
         cloud_pub_->publish(out);
     }
+
 
 private:
     double tolerance_deg_;
@@ -295,6 +426,7 @@ private:
     int64_t min_cloud_period_ns_;
     int64_t last_cloud_time_ns_;
     std::vector<std::array<float, 3>> points_buf_;
+    vector<std::pair<double, double>> landmark_poses_;
 
     string input_cloud_topic_;
     string output_cloud_topic_;
@@ -307,10 +439,10 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
     // état angles
     mutex angles_mutex_;
-    // angles sélectionnés (max 3)
+    // Toutes les détections caméra utilisables pour l’association LiDAR–landmark (triées par portée croissante).
     size_t selected_count_;
-    double selected_angles_aruco_deg_[3];
-    double selected_ranges_[3];
+    vector<double> selected_angles_aruco_deg_;
+    vector<double> selected_ranges_;
     // transformation 
     tf2_ros::Buffer tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

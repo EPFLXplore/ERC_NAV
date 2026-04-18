@@ -15,6 +15,7 @@
 #include <vector>
 #include <cmath>
 #include <string>
+#include <mutex>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -22,6 +23,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "tf2/exceptions.h"
 
 
 // #include <pcl/filters/project_inliers.h>
@@ -49,8 +51,12 @@ public:
         this->declare_parameter<double>("t", 0.25);
         this->declare_parameter<int>("min_inliers", 10);
         this->declare_parameter<int>("max_lines", 3);
+        // Half-width (m) of radial band: |r_point − r_expected| < tol, where r_expected is from map landmark → LiDAR frame.
         this->declare_parameter<double>("max_distance_from_aruco", 0.3);
-        this->declare_parameter<double>("angular_tolerance_deg", 10.0);
+        // Map frame for landmark_map_pos_* (same as lidar_phi_filter_node / multiview_aruco).
+        this->declare_parameter<std::string>("map_frame", "map");
+        // Angular gate vs ref_angle (camera bearing + offset); wide default while upstream filter is tight.
+        this->declare_parameter<double>("angular_tolerance_deg", 45.0);
 
         input_cloud_topic_ = "/ouster_points_aruco";
         output_cloud_topic_ = "/cloud_with_lines";
@@ -64,6 +70,7 @@ public:
         this->get_parameter("min_inliers", min_inliers_);
         this->get_parameter("max_lines", max_lines_);
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
+        this->get_parameter("map_frame", map_frame_);
         this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
         min_process_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
         last_process_time_ns_ = 0;
@@ -96,9 +103,12 @@ public:
 
 private:
     void on_aruco_markers(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
+        std::lock_guard<std::mutex> lk(aruco_mutex_);
         aruco_ids_ = msg->marker_ids;
         aruco_poses_ = msg->poses;
-        
+        aruco_landmark_map_x_ = msg->landmark_map_pos_x;
+        aruco_landmark_map_y_ = msg->landmark_map_pos_y;
+
         RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 2000, 
                              "ArUco markers reçus: %zu markers détectés", aruco_ids_.size());
         
@@ -112,8 +122,58 @@ private:
                         aruco_ids_[i], x, y, z);
         }
     }
+
+    // Converts map coordinates to cloud frame coordinates and returns the horizontal range in the cloud frame
+    bool expected_horizontal_range_from_map(
+        double map_x,
+        double map_y,
+        const std::string &cloud_frame_id,
+        double &out_range_xy)
+    {
+        geometry_msgs::msg::PointStamped pin;
+        pin.header.frame_id = map_frame_;
+        pin.header.stamp = rclcpp::Time(0);
+        pin.point.x = map_x;
+        pin.point.y = map_y;
+        pin.point.z = 0.0;
+        try {
+            if (!tf_buffer_.canTransform(
+                    cloud_frame_id, map_frame_, tf2::TimePointZero, tf2::durationFromSec(0.1))) {
+                return false;
+            }
+            const geometry_msgs::msg::TransformStamped tf =
+                tf_buffer_.lookupTransform(cloud_frame_id, map_frame_, tf2::TimePointZero);
+            geometry_msgs::msg::PointStamped pout;
+            tf2::doTransform(pin, pout, tf);
+            out_range_xy = std::hypot(pout.point.x, pout.point.y);
+            return true;
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *get_clock(), 2000,
+                "expected_horizontal_range_from_map: %s", ex.what());
+            return false;
+        }
+    }
+
+    static bool is_invalid_landmark_xy(double mx, double my)
+    {
+        constexpr double kSentinel = 999999.0;
+        return mx >= kSentinel - 1.0 || my >= kSentinel - 1.0;
+    }
+
     void detect_lignes(const sensor_msgs::msg::PointCloud2 &cloud_msg) {
-        if (aruco_ids_.empty()) {
+        std::vector<int64_t> aruco_ids;
+        std::vector<geometry_msgs::msg::Pose> aruco_poses;
+        std::vector<double> aruco_landmark_map_x;
+        std::vector<double> aruco_landmark_map_y;
+        {
+            std::lock_guard<std::mutex> lk(aruco_mutex_);
+            aruco_ids = aruco_ids_;
+            aruco_poses = aruco_poses_;
+            aruco_landmark_map_x = aruco_landmark_map_x_;
+            aruco_landmark_map_y = aruco_landmark_map_y_;
+        }
+        if (aruco_ids.empty()) {
             return;
         }
 
@@ -130,28 +190,45 @@ private:
         visualization_msgs::msg::MarkerArray points;
         ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
 
-        for (size_t aruco_idx = 0; aruco_idx < aruco_ids_.size(); ++aruco_idx) {
+        for (size_t aruco_idx = 0; aruco_idx < aruco_ids.size(); ++aruco_idx) {
             pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers(new pcl::PointCloud<pcl::PointXYZ>());
             pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers_2d(new pcl::PointCloud<pcl::PointXYZ>());
 
-            const auto& aruco_pose = aruco_poses_[aruco_idx];
+            const auto& aruco_pose = aruco_poses[aruco_idx];
             float aruco_x = static_cast<float>(aruco_pose.position.x);
             float aruco_y = static_cast<float>(aruco_pose.position.y);
             float aruco_z = static_cast<float>(aruco_pose.position.z);
             double aruco_angle_deg = atan2(aruco_y, aruco_x) * 180.0f / M_PI;
 
-            double dist = static_cast<double>(sqrt(aruco_x*aruco_x + aruco_y*aruco_y));
-            const int dynamic_min_inliers = static_cast<int>(0.3 / (dist * 0.002967) / 3);
-            const double dynamic_max_distance_from_aruco = dist / 5.0;
+            // Radial gate: expected horizontal range from LiDAR origin to map landmark in cloud frame.
+            double expected_range_xy = 0.0;
+            bool have_expected_range = false;
+            if (aruco_idx < aruco_landmark_map_x.size() && aruco_idx < aruco_landmark_map_y.size()) {
+                const double mx = aruco_landmark_map_x[aruco_idx];
+                const double my = aruco_landmark_map_y[aruco_idx];
+                if (!is_invalid_landmark_xy(mx, my)) {
+                    have_expected_range = expected_horizontal_range_from_map(
+                        mx, my, cloud_msg.header.frame_id, expected_range_xy);
+                }
+            }
+            const double range_for_inlier_heuristic =
+                have_expected_range ? expected_range_xy
+                                    : std::max(0.5, std::hypot(static_cast<double>(aruco_x), static_cast<double>(aruco_y)));
+            const int dynamic_min_inliers =
+                static_cast<int>(0.3 / (range_for_inlier_heuristic * 0.002967) / 3);
+            const double radial_tol =
+                have_expected_range
+                    ? std::min(max_distance_from_aruco_, std::max(0.05, expected_range_xy / 5.0))
+                    : max_distance_from_aruco_;
             const int min_inliers = std::max(min_inliers_, dynamic_min_inliers);
-            const double max_distance_from_aruco = std::min(
-                max_distance_from_aruco_, dynamic_max_distance_from_aruco);
             double ref_angle = wrap180(aruco_angle_deg + 90);
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
             for (const auto& pt : full_cloud_->points) {
                 double r_point = sqrt(static_cast<double>(pt.x)*static_cast<double>(pt.x) + static_cast<double>(pt.y)*static_cast<double>(pt.y));
-                if (fabs(dist - r_point) >= max_distance_from_aruco) continue;
+                if (have_expected_range && fabs(expected_range_xy - r_point) >= radial_tol) {
+                    continue;
+                }
 
                 double pt_angle_deg = atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) * 180.0 / M_PI;
                 if (angDeltaDeg(pt_angle_deg, ref_angle) < angular_tolerance_deg_) {
@@ -256,41 +333,6 @@ private:
                 p_last.z= p_first.z + dz*t/norm;
 
 
-
-                    // pcl::PointCloud<pcl::PointXYZ> projected_inliers;
-                    // pcl::ProjectInliers<pcl::PointXYZ> proj;
-                    // proj.setModelType(pcl::SACMODEL_LINE);
-                    // proj.setInputCloud(detected_lines);
-                // proj.setModelCoefficients(coefficients);
-                // proj.filter(projected_inliers);
-
-                // std::vector<float> ts;
-                // ts.reserve(projected_inliers.size());
-
-                // for (const auto &p : projected_inliers.points) {
-                //     float vx = p.x - x0;
-                //     float vy = p.y - y0;
-                //     float vz = p.z - z0;
-
-                //     float t = vx * dx + vy * dy + vz * dz;
-                //     ts.push_back(t);
-                // }
-                // auto [t_min_it, t_max_it] = std::minmax_element(ts.begin(), ts.end());
-                //     float t_min = *t_min_it;
-                //     float t_max = *t_max_it;
-                
-                //geometry_msgs::msg::Point p_first, p_last,p_milieu;
-                // p_first.x = x0 + t_min * dx/norm;
-                // p_first.y = y0 + t_min * dy/norm;
-                // p_first.z = z0 + t_min * dz/norm;
-
-                // p_last.x = x0 + t_max * dx/norm;
-                // p_last.y = y0 + t_max * dy/norm;
-                // p_last.z = z0 + t_max * dz/norm;
-
-                // p_milieu.z = z0 + (t_max+t_min)/2 * dz/norm;
-                // p_milieu.y = y0 + (t_max+t_min)/2 * dy/norm;
-                // p_milieu.z = x0 + (t_max+t_min)/2 * dx/norm;
                 
 
 
@@ -304,23 +346,7 @@ private:
 
                 lines.push_back(det);
 
-                // visualization_msgs::msg::Marker line_marker;
-                // line_marker.header = cloud_msg.header;
-                // line_marker.ns = "detected_lines";
-                // line_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-                // line_marker.action = visualization_msgs::msg::Marker::ADD;
-                // line_marker.scale.x = 0.01; // épaisseur de la ligne
-                // line_marker.color.r = 0.0f;
-                // line_marker.color.g = 1.0f;
-                // line_marker.color.b = 0.0f;
-                // line_marker.color.a = 1.0f;
 
-                // line_marker.points.push_back(p_first);
-                // line_marker.points.push_back(p_last);
-
-                // markers.markers.push_back(line_marker);
-                
-                // RCLCPP_INFO(this->get_logger(), "avantswap111");
 
 
                 extract.setNegative(true);
@@ -347,9 +373,6 @@ private:
                     // RCLCPP_INFO(this->get_logger(), "forrr point");
                     // RCLCPP_INFO(this->get_logger(), "all_inliers size: %zu", all_inliers->size());
                     // RCLCPP_INFO(this->get_logger(), "forrr point", point.x, point.y, point.z);
-
-
-
                 }
 
             
@@ -515,7 +538,7 @@ private:
                 centre_moyen.y /= static_cast<float>(cube_centres.size());
                 centre_moyen.z /= static_cast<float>(cube_centres.size());
 
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "marker ids: %s", std::to_string(aruco_ids_[aruco_idx]).c_str());
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "marker ids: %s", std::to_string(aruco_ids[aruco_idx]).c_str());
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Centre position in frame %s: (%.3f, %.3f, %.3f)", 
                            cloud_msg.header.frame_id.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
 
@@ -629,7 +652,7 @@ private:
                 centre_marker_moyen.header.stamp = cloud_msg.header.stamp;
                 centre_marker_moyen.header.frame_id = target_frame;
                 centre_marker_moyen.ns = "cube_center_mean";
-                centre_marker_moyen.id = static_cast<int>(aruco_ids_[aruco_idx]);  // ID fixe pour le centre moyen
+                centre_marker_moyen.id = static_cast<int>(aruco_ids[aruco_idx]);  // ID fixe pour le centre moyen
 
                 centre_marker_moyen.type = visualization_msgs::msg::Marker::SPHERE;
                 centre_marker_moyen.action = visualization_msgs::msg::Marker::ADD;
@@ -668,7 +691,7 @@ private:
 
                 cube_msg.header.stamp = cloud_msg.header.stamp;
                 cube_msg.header.frame_id = "base_link";
-                cube_msg.marker_ids.push_back(aruco_ids_[aruco_idx]);
+                cube_msg.marker_ids.push_back(aruco_ids[aruco_idx]);
                 geometry_msgs::msg::Pose pose;
                 pose.position = centre_moyen;
                 pose.orientation.w = 0.0;
@@ -713,6 +736,7 @@ private:
     double t;
     double max_distance_from_aruco_;
     double angular_tolerance_deg_;
+    std::string map_frame_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscriber_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lines_pub_;
@@ -721,6 +745,9 @@ private:
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr aruco_subscriber_;
     std::vector<int64_t> aruco_ids_;
     std::vector<geometry_msgs::msg::Pose> aruco_poses_;
+    std::vector<double> aruco_landmark_map_x_;
+    std::vector<double> aruco_landmark_map_y_;
+    std::mutex aruco_mutex_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
 
     int64_t min_process_period_ns_;
