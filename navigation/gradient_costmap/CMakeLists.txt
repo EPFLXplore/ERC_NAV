@@ -71,6 +71,10 @@ ament_target_dependencies(gradient_layer
   rclcpp
   nav2_costmap_2d
   nav_msgs
+  geometry_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
   pluginlib
 )
 

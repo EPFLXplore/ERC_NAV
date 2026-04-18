@@ -2,8 +2,14 @@
 
 #include "nav2_costmap_2d/cost_values.hpp"
 
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_ros/buffer.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -81,6 +87,9 @@ void GradientLayer::onInitialize()
     throw std::runtime_error("Failed to lock node");
   }
 
+  tf_logger_ = node->get_logger();
+  clock_     = node->get_clock();
+
   declareParameter("enabled", rclcpp::ParameterValue(true));
   declareParameter("topic", rclcpp::ParameterValue("/occupancy_map_local_inflated"));
   declareParameter("use_map_file", rclcpp::ParameterValue(false));
@@ -90,7 +99,8 @@ void GradientLayer::onInitialize()
   declareParameter("map_subscribe_transient_local", rclcpp::ParameterValue(true));
   declareParameter("map_subscribe_reliable", rclcpp::ParameterValue(true));
   declareParameter("expand_update_bounds", rclcpp::ParameterValue(true));
-  
+  declareParameter("transform_tolerance", rclcpp::ParameterValue(0.2));
+
   std::string topic;
   std::string map_yaml_filename;
   bool map_subscribe_transient_local{true};
@@ -103,6 +113,7 @@ void GradientLayer::onInitialize()
   node->get_parameter(name_ + ".map_subscribe_transient_local", map_subscribe_transient_local);
   node->get_parameter(name_ + ".map_subscribe_reliable", map_subscribe_reliable);
   node->get_parameter(name_ + ".expand_update_bounds", expand_update_bounds_);
+  node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
 
   if (use_map_file_) {
     file_map_loaded_ = loadMapFromYaml(map_yaml_filename);
@@ -250,7 +261,73 @@ bool GradientLayer::loadMapFromYaml(const std::string & yaml_path)
 
 void GradientLayer::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lk(map_mutex_);
   latest_map_ = msg;
+}
+
+bool GradientLayer::refreshGridTransforms(const std::string & master_frame_id)
+{
+  master_from_grid_.valid = false;
+  grid_from_master_.valid = false;
+
+  if (!active_map_ || !tf_) {
+    return false;
+  }
+
+  const std::string & grid_frame_id = active_map_->header.frame_id;
+  if (grid_frame_id.empty()) {
+    RCLCPP_WARN_THROTTLE(
+      tf_logger_, *clock_, 5000,
+      "GradientLayer: incoming OccupancyGrid has empty frame_id, skipping update.");
+    return false;
+  }
+
+  // Fast-path: same frame -> identity transform (avoids a TF lookup).
+  if (grid_frame_id == master_frame_id) {
+    master_from_grid_ = PlanarTransform2D{true, 1.0, 0.0, 0.0, 0.0};
+    grid_from_master_ = PlanarTransform2D{true, 1.0, 0.0, 0.0, 0.0};
+    return true;
+  }
+
+  geometry_msgs::msg::TransformStamped t_master_from_grid;
+  geometry_msgs::msg::TransformStamped t_grid_from_master;
+  try {
+    // Use the latest available transform (TimePointZero) to avoid waiting and
+    // to be robust to small timestamp mismatches between the grid and TF.
+    t_master_from_grid = tf_->lookupTransform(
+      master_frame_id, grid_frame_id,
+      tf2::TimePointZero,
+      tf2::durationFromSec(transform_tolerance_));
+    t_grid_from_master = tf_->lookupTransform(
+      grid_frame_id, master_frame_id,
+      tf2::TimePointZero,
+      tf2::durationFromSec(transform_tolerance_));
+  } catch (const tf2::TransformException & ex) {
+    RCLCPP_WARN_THROTTLE(
+      tf_logger_, *clock_, 2000,
+      "GradientLayer: TF lookup '%s' <- '%s' failed: %s",
+      master_frame_id.c_str(), grid_frame_id.c_str(), ex.what());
+    return false;
+  }
+
+  auto to_planar = [](const geometry_msgs::msg::TransformStamped & t) {
+    tf2::Quaternion q(
+      t.transform.rotation.x, t.transform.rotation.y,
+      t.transform.rotation.z, t.transform.rotation.w);
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+    PlanarTransform2D p;
+    p.valid   = true;
+    p.cos_yaw = std::cos(yaw);
+    p.sin_yaw = std::sin(yaw);
+    p.tx      = t.transform.translation.x;
+    p.ty      = t.transform.translation.y;
+    return p;
+  };
+
+  master_from_grid_ = to_planar(t_master_from_grid);
+  grid_from_master_ = to_planar(t_grid_from_master);
+  return true;
 }
 
 void GradientLayer::updateBounds(
@@ -269,16 +346,55 @@ void GradientLayer::updateBounds(
     return;
   }
 
-  if (!latest_map_) return;
+  // Snapshot the latest map so updateBounds and updateCosts see the same grid
+  // even if a new message arrives between the two calls.
+  {
+    std::lock_guard<std::mutex> lk(map_mutex_);
+    active_map_ = latest_map_;
+  }
+
+  if (!active_map_) return;
+
+  // Resolve the master costmap's global frame so we can transform the grid
+  // into it.  Without layered_costmap_ we cannot know the target frame.
+  std::string master_frame_id;
+  if (layered_costmap_) {
+    master_frame_id = layered_costmap_->getGlobalFrameID();
+  }
+  if (master_frame_id.empty()) {
+    return;
+  }
+
+  if (!refreshGridTransforms(master_frame_id)) {
+    // Leave active_map_ populated so updateCosts can no-op consistently.
+    return;
+  }
 
   if (!expand_update_bounds_) return;
 
-  *min_x = std::min(*min_x, latest_map_->info.origin.position.x);
-  *min_y = std::min(*min_y, latest_map_->info.origin.position.y);
-  *max_x = std::max(*max_x, latest_map_->info.origin.position.x +
-           latest_map_->info.width * latest_map_->info.resolution);
-  *max_y = std::max(*max_y, latest_map_->info.origin.position.y +
-           latest_map_->info.height * latest_map_->info.resolution);
+  // Expand bounds by transforming the 4 corners of the incoming grid into the
+  // master frame.  This correctly handles arbitrary yaw between frames.
+  const double res = active_map_->info.resolution;
+  const double ox  = active_map_->info.origin.position.x;
+  const double oy  = active_map_->info.origin.position.y;
+  const double w_m = active_map_->info.width  * res;
+  const double h_m = active_map_->info.height * res;
+
+  const double corners_grid[4][2] = {
+    {ox,       oy      },
+    {ox + w_m, oy      },
+    {ox,       oy + h_m},
+    {ox + w_m, oy + h_m}
+  };
+
+  for (const auto & c : corners_grid) {
+    double wx, wy;
+    master_from_grid_.apply(c[0], c[1], wx, wy);
+    *min_x = std::min(*min_x, wx);
+    *min_y = std::min(*min_y, wy);
+    *max_x = std::max(*max_x, wx);
+    *max_y = std::max(*max_y, wy);
+  }
 }
 
 void GradientLayer::updateCosts(
@@ -328,28 +444,38 @@ void GradientLayer::updateCosts(
     return;
   }
 
-  if (!latest_map_) return;
+  if (!active_map_ || !grid_from_master_.valid) return;
+
+  const double inv_res   = 1.0 / active_map_->info.resolution;
+  const double grid_ox   = active_map_->info.origin.position.x;
+  const double grid_oy   = active_map_->info.origin.position.y;
+  const int    grid_w    = static_cast<int>(active_map_->info.width);
+  const int    grid_h    = static_cast<int>(active_map_->info.height);
+  const auto & grid_data = active_map_->data;
 
   for (int i = min_i; i < max_i; ++i) {
     for (int j = min_j; j < max_j; ++j) {
-      double wx, wy;
-      master_grid.mapToWorld(i, j, wx, wy);
+      double wx_master, wy_master;
+      master_grid.mapToWorld(i, j, wx_master, wy_master);
 
-      int map_x = (int)((wx - latest_map_->info.origin.position.x) / latest_map_->info.resolution);
-      int map_y = (int)((wy - latest_map_->info.origin.position.y) / latest_map_->info.resolution);
+      // Master-frame world point -> grid-frame world point -> grid cell.
+      double wx_grid, wy_grid;
+      grid_from_master_.apply(wx_master, wy_master, wx_grid, wy_grid);
 
-      if (map_x < 0 || map_y < 0 || 
-          map_x >= (int)latest_map_->info.width || 
-          map_y >= (int)latest_map_->info.height)
+      const int map_x = static_cast<int>((wx_grid - grid_ox) * inv_res);
+      const int map_y = static_cast<int>((wy_grid - grid_oy) * inv_res);
+
+      if (map_x < 0 || map_y < 0 || map_x >= grid_w || map_y >= grid_h) {
         continue;
+      }
 
-      int index = map_y * latest_map_->info.width + map_x;
-      int8_t cost = latest_map_->data[index];
+      const int index = map_y * grid_w + map_x;
+      const int8_t cost = grid_data[index];
 
-      if (cost < 0) continue; // unknown
+      if (cost < 0) continue;  // unknown
 
       // Scale 0-100 occupancy to 0-254 costmap range
-      unsigned char scaled_cost = (unsigned char)((cost * 252) / 100);
+      const unsigned char scaled_cost = static_cast<unsigned char>((cost * 252) / 100);
       master_grid.setCost(i, j, scaled_cost);
     }
   }
