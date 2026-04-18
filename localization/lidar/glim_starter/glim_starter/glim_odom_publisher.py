@@ -88,7 +88,7 @@ class GlimOdomRepublisher(Node):
         y = msg.pose.position.y
         z = msg.pose.position.z
         yaw = yaw_from_quaternion(msg.pose.orientation)
-        self.get_logger().info(f"raw odom message: x{x} y{y} yaw{yaw}" )
+        # self.get_logger().info(f"raw odom message: x{x} y{y} yaw{yaw}" )
 
 
         # Capture once
@@ -115,8 +115,8 @@ class GlimOdomRepublisher(Node):
             xr = -xr
             yaw_r = -yaw_r  # keep forward direction consistent under reflection
 
-        if self.debug_logs and self._zeroed:
-            self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
+        # if self.debug_logs and self._zeroed:
+        #     self.get_logger().info(f"dx,dy=({dx:.3f},{dy:.3f}) -> xr,yr=({xr:.3f},{yr:.3f}); yaw0={self._yaw0:.3f}, yaw={yaw:.3f}, yaw'={yaw_r:.3f}")
 
 
         if self.rotation_sign :

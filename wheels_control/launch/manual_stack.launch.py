@@ -123,8 +123,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     custom_local_ekf_node = launch_ros.actions.Node(
         package='local_nav_ekf',
-        executable='nav_ekf_node',
-        name='nav_custom_ekf',
+        executable='nav_ekf_3d_node',
+        name='nav_custom_ekf_3d',
         output='screen',
         parameters=[{'include_lidar': True, 'include_aruco': False, 'include_vio': False}]
     )

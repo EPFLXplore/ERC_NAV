@@ -43,7 +43,7 @@ void log_info(const std::string &msg){
 using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
-motors_obj current_motors_position = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+motors_obj current_motors_position = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 float speed_rover = 1.0; // initial value inside the kinematics model
 
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment

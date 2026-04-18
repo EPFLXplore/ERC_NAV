@@ -146,23 +146,20 @@ public:
 
         /* ---- landmark map positions (indexed by aruco_index = id - 51) ---- */
 
-
         landmark_poses_ = {
-            {7.4, 0.0},       // id 51
-            {4.5, 3.0},       // id 52
-            {9.4, 3.0},       // id 53
-            {999999, 999999}, 
-            {999999, 999999},
-            {999999, 999999}, 
-            {999999, 999999}, 
-            {6.5, 5.6},         // id 58
-            {999999, 999999}, 
-            {999999, 999999}, 
-            {999999, 999999},
-            {999999, 999999}, 
-            {999999, 999999}, 
-            {999999, 999999},
-            {999999, 999999},
+            {2.6, -0.4},            // id 51
+            {2.6, 0.4},             // id 52
+            {999999, 999999},       // id 53
+            {999999, 999999},       // id 54
+            {999999, 999999},       // id 55
+            {999999, 999999},       // id 56
+            {999999, 999999},       // id 57
+            {999999, 999999},       // id 58
+            {999999, 999999},       // id 59
+            {999999, 999999},       // id 60
+            {999999, 999999},       // id 61
+            {999999, 999999},       // id 62
+            {999999, 999999},       // id 63
         }; 
 
         /* ---- TF ---- */
@@ -242,9 +239,9 @@ private:
         if (now_ns - last_cb_ns_ < CB_MIN_PERIOD_NS) return;
         last_cb_ns_ = now_ns;
 
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "synced_callback fired (img sizes: %zu, %zu, %zu)",
-            msg1->data.size(), msg2->data.size(), msg3->data.size());
+        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+        //     "synced_callback fired (img sizes: %zu, %zu, %zu)",
+        //     msg1->data.size(), msg2->data.size(), msg3->data.size());
 
         ros2_aruco_interfaces::msg::ArucoMarkers markers;
         geometry_msgs::msg::PoseArray pose_array;
@@ -286,6 +283,13 @@ private:
         std::vector<int> ids;
         cv::aruco::detectMarkers(
             gray, dictionary_, corners, ids, parameters_);
+        // if (!ids.empty()) {
+        //     std::string id_str;
+        //     for (int id : ids) id_str += std::to_string(id) + " ";
+        //     // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+        //     //     "[%s] detected IDs: %s (img %dx%d)",
+        //     //     camera_frame.c_str(), id_str.c_str(), gray.cols, gray.rows);
+        // }
         if (ids.empty()) return;
 
         /* ---- estimate poses ---- */
@@ -395,9 +399,9 @@ private:
             if (fov_yaw.has_value())
                 yaw_deg = fov_yaw.value();
 
-            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-                "tag %d bearing rv frame: %.2f°",
-                aruco_index + 51, yaw_deg);
+            // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            //     "tag %d bearing rv frame: %.2f°",
+            //     aruco_index + 51, yaw_deg);
 
             markers.landmark_map_pos_x.push_back(
                 landmark_poses_[aruco_index].first);

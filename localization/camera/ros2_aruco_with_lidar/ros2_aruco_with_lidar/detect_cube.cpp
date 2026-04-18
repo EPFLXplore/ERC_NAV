@@ -46,11 +46,11 @@ class DetectCubeNode : public rclcpp::Node {
 public:
     DetectCubeNode()
         : rclcpp::Node("detect_cube_node"), tf_buffer_(this->get_clock()) {
-        this->declare_parameter<double>("distance_threshold_inliers", 0.05);
-        this->declare_parameter<int>("max_iterations", 100);
+        this->declare_parameter<double>("distance_threshold_inliers", 0.04);
+        this->declare_parameter<int>("max_iterations", 150);
         this->declare_parameter<double>("t", 0.25);
         this->declare_parameter<int>("min_inliers", 10);
-        this->declare_parameter<int>("max_lines", 3);
+        this->declare_parameter<int>("max_lines", 4);
         // Half-width (m) of radial band: |r_point − r_expected| < tol, where r_expected is from map landmark → LiDAR frame.
         this->declare_parameter<double>("max_distance_from_aruco", 0.3);
         // Map frame for landmark_map_pos_* (same as lidar_phi_filter_node / multiview_aruco).
@@ -92,7 +92,7 @@ public:
         cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", qos);
 
         aruco_subscriber_ = create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
-            aruco_topic_, rclcpp::SensorDataQoS(),
+            aruco_topic_, qos,
             [this](const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
                 on_aruco_markers(msg);
             }
@@ -197,7 +197,6 @@ private:
             const auto& aruco_pose = aruco_poses[aruco_idx];
             float aruco_x = static_cast<float>(aruco_pose.position.x);
             float aruco_y = static_cast<float>(aruco_pose.position.y);
-            float aruco_z = static_cast<float>(aruco_pose.position.z);
             double aruco_angle_deg = atan2(aruco_y, aruco_x) * 180.0f / M_PI;
 
             // Radial gate: expected horizontal range from LiDAR origin to map landmark in cloud frame.
@@ -224,20 +223,29 @@ private:
             double ref_angle = wrap180(aruco_angle_deg + 90);
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
+            size_t stage_in = full_cloud_->points.size();
+            size_t stage_pass_radial = 0;
+            size_t stage_pass_both = 0;
             for (const auto& pt : full_cloud_->points) {
                 double r_point = sqrt(static_cast<double>(pt.x)*static_cast<double>(pt.x) + static_cast<double>(pt.y)*static_cast<double>(pt.y));
                 if (have_expected_range && fabs(expected_range_xy - r_point) >= radial_tol) {
                     continue;
                 }
+                ++stage_pass_radial;
 
                 double pt_angle_deg = atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) * 180.0 / M_PI;
                 if (angDeltaDeg(pt_angle_deg, ref_angle) < angular_tolerance_deg_) {
+                    ++stage_pass_both;
                     pointcloud_minus_lines->push_back(pt);
                 }
             }
             if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers)) {
-                // RCLCPP_INFO(this->get_logger(), "min inliners %zu", static_cast<size_t>(min_inliers_));
-                // RCLCPP_INFO(this->get_logger(), "pas assez de points");
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
+                    "[detect_cube] id=%ld ABORT pre-3D: in=%zu pass_radial=%zu pass_ang=%zu < min_inl=%d "
+                    "(aruco_xy=(%.2f,%.2f) ref_ang=%.1f° ang_tol=%.1f° r_exp=%.2fm r_tol=%.2fm)",
+                    aruco_ids[aruco_idx], stage_in, stage_pass_radial, stage_pass_both, min_inliers,
+                    aruco_x, aruco_y, ref_angle, angular_tolerance_deg_,
+                    have_expected_range ? expected_range_xy : -1.0, radial_tol);
                 continue;
             }
 
@@ -283,15 +291,7 @@ private:
                 float dx = coefficients->values[3];
                 float dy = coefficients->values[4];
                 float dz = coefficients->values[5];
-        
-                float norm_dir = sqrt(dx * dx + dy * dy + dz * dz);
-                
-                float ndx = dx / norm_dir;
-                float ndy = dy / norm_dir;
-                float ndz = dz / norm_dir;
 
-                bool is_parallel = false;
-                const float parallel_cos_threshold = 0.99; // 8degre a peut pres
                 // if (!lines.empty()){
                 //     for (const auto &L : lines) {
                 //         float norm_existing = sqrt(L.dx * L.dx + L.dy * L.dy + L.dz * L.dz);
@@ -385,10 +385,7 @@ private:
             *projected_cloud_temp = *projected_cloud;
             
             for (int line_idx_2d = 0; line_idx_2d < 2; ++line_idx_2d) {
-                // RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
-                
                 if(projected_cloud_temp->points.size() < static_cast<size_t>(min_inliers)) {
-                    RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "detect pas suffisamment de points pour une ligne 2d AAAAAA");
                     break;
                 }
 
@@ -407,7 +404,6 @@ private:
                 // RCLCPP_INFO(this->get_logger(), "forrr pointnummm2");
                 const float x0_2d = coefficients_2d->values[0];
                 const float y0_2d = coefficients_2d->values[1];
-                const float z0_2d = coefficients_2d->values[2];  // devrait être ~0
                 float dx_2d = coefficients_2d->values[3];
                 float dy_2d = coefficients_2d->values[4];
                 float dz_2d = coefficients_2d->values[5];  // devrait être ~0
@@ -475,16 +471,25 @@ private:
             lines_pub_->publish(cloud_with_all_lines);
             markers_pub_->publish(markers);
 
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 1000,
+                "[detect_cube] id=%ld in=%zu radial=%zu ang=%zu | 3D: lines=%zu inliers=%zu | "
+                "2D: in=%zu lines=%zu | min_inl=%d",
+                aruco_ids[aruco_idx], stage_in, stage_pass_radial, stage_pass_both,
+                lines.size(), all_inliers->size(),
+                projected_cloud->size(), lines_2d.size(), min_inliers);
+
+            if (lines_2d.empty()) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
+                    "[detect_cube] id=%ld no 2D line extracted from %zu projected points (min_inl=%d)",
+                    aruco_ids[aruco_idx], projected_cloud->size(), min_inliers);
+            }
+
 
             
             std::vector<geometry_msgs::msg::Point> cube_centres;
 
             if (!lines_2d.empty()) {
                 // Vérifier les paires de lignes proches (< 0.6 m entre les milieux)
-                const float distance_threshold_lines = 0.6;
-                int non_prendpasligne1=10;
-                int non_prendpasligne2=10;
-                int non_prendpasligne3=10;
                 for (size_t i = 0; i < lines_2d.size(); ++i) {
                     
                     // RCLCPP_INFO(this->get_logger(), "forrr detectlinesss1");
@@ -707,19 +712,10 @@ private:
 
 
 
-            if (!lines.empty()) {
-                for (size_t i = 0; i < lines.size(); ++i) {
-                    const auto &L = lines[i];
-                    RCLCPP_INFO_THROTTLE(
-                        get_logger(), *get_clock(), 2000,
-                        "Ligne %zu | Eq: (x,y,z)=(%.3f,%.3f,%.3f)+t*(%.3f,%.3f,%.3f)",
-                        i,
-                        L.x0, L.y0, L.z0, L.dx, L.dy, L.dz
-                    );
-                }
-            } else {
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "problemeeeetechnique");
-
+            if (lines.empty()) {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
+                    "[detect_cube] id=%ld no 3D line found despite %zu candidate points",
+                    aruco_ids[aruco_idx], pointcloud_minus_lines->size());
             }
 
         }
