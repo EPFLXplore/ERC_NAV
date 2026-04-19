@@ -1,27 +1,27 @@
 /*
-pkg:    wheels_commands
+pkg:    wheels_control
 node:   NAV_motor_cmds
 topics:
-        publish:    /NAV/absolute_encoders
-        subscribe:  /CS/nav_shutdown_cmds - /NAV/displacement
-description:    Check that all the motors are connected
-                Send the commands of speed or position to one motors
-                Motors steering: control in position
-                Motors driving: control in velocity
-Function used from motors.hpp:  - connected()
-                                - get_position_is()
-                                - set_velocity_ref()
-                                - set_position_ref()
+        publish:    /NAV/motor_nav_status
+        subscribe:  /NAV/displacement
+services:
+        /CS/ResetNavMotors
+        /CS/ResetHomeNavMotors
+description:    Lifecycle node that connects and monitors the navigation motors.
+                Publishes motor state, position, velocity, current, and fault status.
+                Applies displacement commands to each motor:
+                - steering motors are controlled in position
+                - drive motors are controlled in velocity
+                Detects faults, attempts recovery, and skips faulty motors and pairs.
 */
 
 #include <chrono>
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <map>
-#include <unordered_set>
 #include <signal.h>
 #include <unistd.h>
 
@@ -47,20 +47,8 @@ std::string mode_deplacement = "";
 _Float64 motors_cmds[8];
 bool safemode = true;
 
-int encoder_resolution; // NEEDED?
 std::vector<NAV_Motor> motors;
 struct gateway_struct *gateway;
-std::vector<unsigned short> motor_ids = {
-    FRONT_LEFT_DRIVE,
-    FRONT_RIGHT_DRIVE,
-    BACK_RIGHT_DRIVE,
-    BACK_LEFT_DRIVE,
-    FRONT_LEFT_STEER,
-    FRONT_RIGHT_STEER,
-    BACK_RIGHT_STEER,
-    BACK_LEFT_STEER};
-std::unordered_set<int> DRIVING_MOTORS = {FRONT_LEFT_DRIVE, FRONT_RIGHT_DRIVE, BACK_RIGHT_DRIVE, BACK_LEFT_DRIVE};
-std::unordered_set<int> STEERING_MOTORS = {FRONT_LEFT_STEER, FRONT_RIGHT_STEER, BACK_RIGHT_STEER, BACK_LEFT_STEER};
 
 void publish_motors_position();
 
@@ -150,6 +138,7 @@ public:
 
         current_faulty_motors.resize(motors.size(), false);
         fault_retry_counts.resize(motors.size(), 0);
+        last_fault_log_times.resize(motors.size());
 
         return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
     }
@@ -212,7 +201,13 @@ public:
 
             for (auto motor = motors.begin(); motor != motors.end(); motor++){
                 int id = motor->get_id();
-                int idx = id - 1;
+                const MotorLayout* layout = motor_layout_from_can_id(id);
+                if (layout == nullptr) {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "Unknown CAN node ID %d in reset service", id);
+                    continue;
+                }
+                int idx = internal_can_index(*layout);
 
                 if(current_faulty_motors[idx]){
                     bool cleared = motor->clear_fault();
@@ -283,37 +278,46 @@ public:
 
         for (auto motor = motors.begin(); motor != motors.end(); motor++){
             
-            int id = motor->get_id();
+            int id = motor->get_id(); // gets the CAN node ID of the motor
+            const MotorLayout* layout = motor_layout_from_can_id(id);
+            if (layout == nullptr) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Unknown CAN node ID %d in motors_param_callback", id);
+                continue;
+            }
+            const int can_idx = internal_can_index(*layout);
+            const int status_idx = motor_status_index(*layout);
             bool debug_verbose = false;
 
             if (motor->connected()){
                 //Put the motor current callback at a lower requency because it severly diminishes the publishing rate
-                message_nav.state[id-1] = true;
+                message_nav.state[status_idx] = true;
                 
                 if(check_faults){
-                    //message_nav.current[id-1] = (double)motor->get_current_is();
-                    message_nav.average_current[id-1] = (double)motor->get_current_is_averaged();
+                    //message_nav.current[status_idx] = (double)motor->get_current_is();
+                    message_nav.average_current[status_idx] = (double)motor->get_current_is_averaged();
                 }
-                // IDs [0,1,2,3] are the nodes for the driving
-                // IDs [4,5,6,7] are the nodes for the steering
-                if (id > 4){
-                    message_nav.position[id-5] = (double)motor->get_position_is(); //takes max 6ms
+                if (is_steer_motor(*layout)){
+                    message_nav.position[layout->corner] = (double)motor->get_position_is(); //takes max 6ms
                 }
                 else{
                     //this returns 1800 (approx) which is correct for the max speed.
                     //to get the actual value we need to divide by the gear ration 1:53
                     //which gives us again the 33.3 rpm
-                    message_nav.velocity[id-1] = motor->get_velocity_is(); //takes max 6ms
+                    message_nav.velocity[layout->corner] = motor->get_velocity_is(); //takes max 6ms
                 }
             }else{
-                message_nav.state[id-1] = false;
+                message_nav.state[status_idx] = false;
             }
 
             if(check_faults){
                 //RCLCPP_INFO(get_logger(), "checking for faults");
                 bool has_fault = motor->is_faulty(debug_verbose);
-                message_nav.fault_state[id-1] = has_fault;
-                current_faulty_motors[id-1] = has_fault;
+                message_nav.fault_state[status_idx] = has_fault;
+                current_faulty_motors[can_idx] = has_fault;
+                if (has_fault) {
+                    log_motor_fault_throttled(*motor, *layout, "fault reported during periodic status check");
+                }
             }
         }
 
@@ -327,33 +331,26 @@ public:
         mode_deplacement = msg->modedeplacement;
         //at max speed it sends in abs value 1800 --> gear ration 1:53 --> 1800/53=33.3rpm
         //which is what we actually measure in real life with a timer hence it is correct
-        motors_cmds[0] = msg->drive[0];
-        //RCLCPP_INFO(get_logger(), "drive0 sent: %f", motors_cmds[0]);
-        motors_cmds[1] = msg->drive[1];
-        //RCLCPP_INFO(get_logger(), "drive1 sent: %f", motors_cmds[1]);
-        motors_cmds[2] = msg->drive[2];
-        //RCLCPP_INFO(get_logger(), "drive2 sent: %f", motors_cmds[2]);
-        motors_cmds[3] = msg->drive[3];
-        //RCLCPP_INFO(get_logger(), "drive3 sent: %f", motors_cmds[3]);
 
-        motors_cmds[4] = msg->steer[0];
-        //RCLCPP_INFO(get_logger(), "lifecycle steering 4 sent: %f", motors_cmds[4]);
-
-        motors_cmds[5] = msg->steer[1];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 5 sent: %f", motors_cmds[5]);
-
-        motors_cmds[6] = msg->steer[2];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 6 sent: %f", motors_cmds[6]);
-
-        motors_cmds[7] = msg->steer[3];
-        //RCLCPP_INFO(get_logger(), "lifecyclesteering 7 sent: %f", motors_cmds[7]);
+        for (const auto& layout : MOTOR_LAYOUT) {
+            const int can_idx = internal_can_index(layout);
+            motors_cmds[can_idx] = is_drive_motor(layout)
+                ? msg->drive[layout.corner]
+                : msg->steer[layout.corner];
+        }
 
 
         // --- Per-motor fault detection and recovery ---
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
-            int idx = id - 1;
+            const MotorLayout* layout = motor_layout_from_can_id(id);
+            if (layout == nullptr) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Unknown CAN node ID %d in fault recovery loop", id);
+                continue;
+            }
+            int idx = internal_can_index(*layout);
 
             if (current_faulty_motors[idx])
             {
@@ -369,8 +366,10 @@ public:
                     else
                     {
                         fault_retry_counts[idx]++;
-                        RCLCPP_WARN(get_logger(), "Motor %d: fault clear attempt %d/%d failed",
-                                    id, fault_retry_counts[idx], MAX_FAULT_RETRIES);
+                        log_motor_fault_throttled(
+                            *motor,
+                            *layout,
+                            "fault recovery still active; clear attempt failed");
                     }
                 }
                 continue;
@@ -381,15 +380,24 @@ public:
 
             if (error_code != 0)
             {
-                RCLCPP_WARN(get_logger(), "Motor %d: CAN read error (0x%X), skipping this cycle", id, error_code);
+                log_motor_fault_throttled(
+                    *motor,
+                    *layout,
+                    "fault-state read failed; skipping command cycle",
+                    error_code);
                 continue;
             }
 
             if (is_fault)
             {
-                RCLCPP_ERROR(get_logger(), "Motor %d: FAULT detected, attempting recovery", id);
                 current_faulty_motors[idx] = true;
                 fault_retry_counts[idx] = 0;
+                log_motor_fault_throttled(
+                    *motor,
+                    *layout,
+                    "FAULT detected; attempting recovery",
+                    0,
+                    true);
 
                 bool cleared = motor->clear_fault();
                 if (cleared && !motor->is_faulty(false) && motor->set_output_state(true))
@@ -422,7 +430,13 @@ public:
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
-            int idx = id - 1;
+            const MotorLayout* layout = motor_layout_from_can_id(id);
+            if (layout == nullptr) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    "Unknown CAN node ID %d in command send loop", id);
+                continue;
+            }
+            int idx = internal_can_index(*layout);
 
             if (!motor->connected() || current_faulty_motors[idx])
                 continue;
@@ -431,14 +445,14 @@ public:
             int pair_idx = paired_motor_idx(id);
             if (pair_idx >= 0 && current_faulty_motors[pair_idx])
             {
-                if (DRIVING_MOTORS.count(id) > 0)
+                if (is_drive_motor(*layout))
                     motor->set_velocity_ref(0);
                 continue;
             }
 
-            if (STEERING_MOTORS.count(id) > 0)
+            if (is_steer_motor(*layout))
                 motor->set_position_ref(motors_cmds[idx]);
-            else if (DRIVING_MOTORS.count(id) > 0)
+            else if (is_drive_motor(*layout))
                 motor->set_velocity_ref(motors_cmds[idx]);
             else
                 motor->set_velocity_ref(0);
@@ -480,78 +494,20 @@ public:
             return false;
         }
 
-        int i = 0;
         RCLCPP_INFO(get_logger(), "START MOTOR DETECTION");
-        for (auto id = motor_ids.begin(); id != motor_ids.end(); id++, i++)
+        for (const auto& layout : MOTOR_LAYOUT)
         {
-            switch (*id)
+            const bool drive_motor = is_drive_motor(layout);
+            motors.push_back(NAV_Motor(
+                gateway,
+                layout.can_id,
+                drive_motor ? MT_EC_BLOCK_COMMUTATED_MOTOR : MT_EC_SINUS_COMMUTATED_MOTOR,
+                drive_motor ? OMD_PROFILE_VELOCITY_MODE : OMD_PROFILE_POSITION_MODE,
+                drive_motor ? false : homing));
+
+            if (motors.back().connected())
             {
-            case FRONT_LEFT_DRIVE:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_DRIVE connected");
-                }
-                break;
-
-            case FRONT_RIGHT_DRIVE:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_DRIVE connected");
-                }
-                break;
-
-            case BACK_RIGHT_DRIVE:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_DRIVE connected");
-                }
-                break;
-
-            case BACK_LEFT_DRIVE:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_BLOCK_COMMUTATED_MOTOR, OMD_PROFILE_VELOCITY_MODE, false));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_DRIVE connected");
-                }
-                break;
-
-            case FRONT_LEFT_STEER:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_LEFT_STEER connected");
-                }
-                break;
-
-            case FRONT_RIGHT_STEER:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "FRONT_RIGHT_STEER connected");
-                }
-                break;
-
-            case BACK_RIGHT_STEER:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_RIGHT_STEER connected");
-                }
-                break;
-
-            case BACK_LEFT_STEER:
-                motors.push_back(NAV_Motor(gateway, *id, MT_EC_SINUS_COMMUTATED_MOTOR, OMD_PROFILE_POSITION_MODE, homing));
-                if (motors.data()->connected())
-                {
-                    RCLCPP_INFO_ONCE(get_logger(), "BACK_LEFT_STEER connected");
-                }
-                break;
-
-            default:
-                RCLCPP_INFO_ONCE(get_logger(), "WARNING DEFAULT: NO MOTOR ");
+                RCLCPP_INFO_ONCE(get_logger(), "%s connected", layout.name);
             }
         }
         RCLCPP_INFO(get_logger(), "END MOTOR DETECTION");
@@ -559,22 +515,21 @@ public:
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
             int id = motor->get_id();
+            const MotorLayout* layout = motor_layout_from_can_id(id);
+            if (layout == nullptr) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *clock, 1000,
+                    "Unknown CAN node ID %d after motor detection", id);
+                return false;
+            }
             if (motor->connected())
             {
                 motor->set_output_state(true);
-                if ((id == FRONT_LEFT_STEER) || (id == BACK_LEFT_STEER) || (id == FRONT_RIGHT_STEER) ||
-                    (id == BACK_RIGHT_STEER))
+                if (is_steer_motor(*layout))
                 {
-
                     std::cout << "[NAV_motors_debugging_node]: motor steer " << id << " : position " << motor->get_position_is() << std::endl;
                     motor->set_position_ref(0);
                 }
-                else if (id == FRONT_LEFT_STEER)
-                {
-                    encoder_resolution = motor->get_encoder_pulse();
-                    std::cout << "[NAV_motors_debugging_node]: motor steer " << id << " : encoder pulse" << motor->get_encoder_pulse() << std::endl;
-                }
-                else if (((id == FRONT_LEFT_DRIVE) || (id == BACK_LEFT_DRIVE) || (id == FRONT_RIGHT_DRIVE) || (id == BACK_RIGHT_DRIVE)))
+                else if (is_drive_motor(*layout))
                 {
                     std::cout << "[NAV_motors_debugging_node]: motor drive " << id << " : position " << motor->get_position_is() << std::endl;
                 }
@@ -607,22 +562,136 @@ private:
 
         close_gateway(gateway);
         motors.clear();
+        last_fault_log_times.clear();
     }
 
     static constexpr int MAX_FAULT_RETRIES = 3;
     std::vector<bool> current_faulty_motors;
     std::vector<int> fault_retry_counts;
+    std::vector<std::chrono::steady_clock::time_point> last_fault_log_times;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_nav_motors_service_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr reset_home_nav_motors_service_;
 
-    // Drive ID d is paired with steer ID d+4. Returns -1 if no pair.
+    static const char* corner_name(int corner)
+    {
+        switch (corner)
+        {
+            case FRONT_LEFT:
+                return "front_left";
+            case FRONT_RIGHT:
+                return "front_right";
+            case BACK_RIGHT:
+                return "back_right";
+            case BACK_LEFT:
+                return "back_left";
+            default:
+                return "unknown_corner";
+        }
+    }
+
+    static const char* motor_kind_name(const MotorLayout& layout)
+    {
+        return is_drive_motor(layout) ? "drive" : "steering";
+    }
+
+    bool should_log_motor_fault(int can_idx)
+    {
+        if (can_idx < 0 || static_cast<size_t>(can_idx) >= last_fault_log_times.size())
+            return true;
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = now - last_fault_log_times[can_idx];
+        if (last_fault_log_times[can_idx].time_since_epoch().count() == 0 ||
+            elapsed >= std::chrono::seconds(1))
+        {
+            last_fault_log_times[can_idx] = now;
+            return true;
+        }
+
+        return false;
+    }
+
+    std::string describe_motor_fault(
+        NAV_Motor& motor,
+        const MotorLayout& layout,
+        const std::string& event,
+        unsigned int epos_api_error_code = 0)
+    {
+        const int can_idx = internal_can_index(layout);
+        const int status_idx = motor_status_index(layout);
+        const int pair_idx = paired_motor_idx(layout.can_id);
+        const MotorLayout* paired_layout = paired_motor_layout(layout);
+
+        std::ostringstream details;
+        details << event
+                << " | motor=" << layout.name
+                << " | type=" << motor_kind_name(layout)
+                << " | corner=" << corner_name(layout.corner)
+                << " | can_id=" << layout.can_id
+                << " | internal_can_idx=" << can_idx
+                << " | motor_status_idx=" << status_idx
+                << " | connected=" << (motor.connected() ? "true" : "false")
+                << " | command_ref=" << motors_cmds[can_idx]
+                << " | retry=" << fault_retry_counts[can_idx] << "/" << MAX_FAULT_RETRIES;
+
+        if (paired_layout != nullptr)
+        {
+            details << " | paired_motor=" << paired_layout->name
+                    << " | paired_type=" << motor_kind_name(*paired_layout)
+                    << " | paired_can_id=" << paired_layout->can_id;
+            if (pair_idx >= 0 && static_cast<size_t>(pair_idx) < current_faulty_motors.size())
+            {
+                details << " | paired_fault=" << (current_faulty_motors[pair_idx] ? "true" : "false");
+            }
+        }
+
+        if (epos_api_error_code != 0)
+        {
+            details << " | epos_api_error=0x" << std::hex << epos_api_error_code << std::dec;
+        }
+
+        const auto device_errors = motor.get_device_error_messages();
+        details << " | device_errors=";
+        for (size_t i = 0; i < device_errors.size(); ++i)
+        {
+            if (i > 0)
+                details << "; ";
+            details << device_errors[i];
+        }
+
+        return details.str();
+    }
+
+    void log_motor_fault_throttled(
+        NAV_Motor& motor,
+        const MotorLayout& layout,
+        const std::string& event,
+        unsigned int epos_api_error_code = 0,
+        bool as_error = false)
+    {
+        const int can_idx = internal_can_index(layout);
+        if (!should_log_motor_fault(can_idx))
+            return;
+
+        const std::string details = describe_motor_fault(motor, layout, event, epos_api_error_code);
+        if (as_error)
+            RCLCPP_ERROR(get_logger(), "%s", details.c_str());
+        else
+            RCLCPP_WARN(get_logger(), "%s", details.c_str());
+    }
+
+    // Returns the private CAN-indexed fault array slot for the same wheel's paired motor.
     int paired_motor_idx(int id) const
     {
-        if (DRIVING_MOTORS.count(id) > 0)
-            return (id + 4) - 1;
-        if (STEERING_MOTORS.count(id) > 0)
-            return (id - 4) - 1;
-        return -1;
+        const MotorLayout* layout = motor_layout_from_can_id(id);
+        if (layout == nullptr)
+            return -1;
+
+        const MotorLayout* paired = paired_motor_layout(*layout);
+        if (paired == nullptr)
+            return -1;
+
+        return internal_can_index(*paired);
     }
 };
 

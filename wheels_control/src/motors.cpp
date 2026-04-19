@@ -1,4 +1,5 @@
 #include "wheels_control/motors.hpp"
+#include <cstdio>
 
 //use the ros logger instead of cout from iostream
 #include "rclcpp/rclcpp.hpp"
@@ -523,6 +524,54 @@ bool NAV_Motor::is_faulty(bool verbose)
     }
 
     return (in_fault || error_code);
+}
+
+std::vector<std::string> NAV_Motor::get_device_error_messages()
+{
+    std::vector<std::string> errors;
+    if (!is_connected)
+    {
+        errors.push_back("motor is not connected");
+        return errors;
+    }
+
+    unsigned int error_code = 0;
+    unsigned char nb_err = 0;
+    VCS_GetNbOfDeviceError(gateway, id, &nb_err, &error_code);
+    print_VCS_error(error_code, __FUNCTION__);
+    if (error_code)
+    {
+        char buffer[80];
+        std::snprintf(buffer, sizeof(buffer), "failed to read device errors, EPOS API error 0x%X", error_code);
+        errors.push_back(buffer);
+        return errors;
+    }
+
+    static char error_msg[100];
+    for (unsigned char i = 1; i <= nb_err; i++)
+    {
+        unsigned int device_error = 0;
+        VCS_GetDeviceErrorCode(gateway, id, i, &device_error, &error_code);
+        if (error_code)
+        {
+            char buffer[80];
+            std::snprintf(buffer, sizeof(buffer), "failed to read device error %u/%u, EPOS API error 0x%X", i, nb_err, error_code);
+            errors.push_back(buffer);
+            continue;
+        }
+
+        VCS_GetErrorInfo(device_error, error_msg, 100);
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "0x%X: %s", device_error, error_msg);
+        errors.push_back(buffer);
+    }
+
+    if (errors.empty())
+    {
+        errors.push_back("controller reports fault state but no device error entries");
+    }
+
+    return errors;
 }
 
 bool NAV_Motor::clear_fault()

@@ -609,16 +609,8 @@ private:
       return;
     }
 
-        //in the definition.hpp file :
-        // #define FRONT_LEFT_DRIVE 1
-        // #define FRONT_RIGHT_DRIVE 2
-        // #define BACK_RIGHT_DRIVE 3
-        // #define BACK_LEFT_DRIVE 4
-
-        // #define FRONT_LEFT_STEER 5  --> index 0 here
-        // #define FRONT_RIGHT_STEER 6 --> index 1 here
-        // #define BACK_RIGHT_STEER 7  --> index 2 here
-        // #define BACK_LEFT_STEER 8   --> index 3 here
+    // MotorStatus position/velocity are published in wheel-corner order:
+    // [front-left, front-right, back-right, back-left].
     std::vector<double> wheel_speeds_;
     std::vector<double> wheel_angles_;
     wheel_speeds_.reserve(4);

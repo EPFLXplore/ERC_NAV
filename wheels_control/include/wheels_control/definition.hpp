@@ -19,14 +19,78 @@
 #define NB_WHEELS 4 
 #define NB_MOTORS 8 
 
+// NEW rover CAN Node IDs as of Sat 25th April 2026
+
 #define FRONT_LEFT_DRIVE 1
-#define FRONT_RIGHT_DRIVE 2
+#define FRONT_RIGHT_DRIVE 4
 #define BACK_RIGHT_DRIVE 3
-#define BACK_LEFT_DRIVE 4
+#define BACK_LEFT_DRIVE 2
 #define FRONT_LEFT_STEER 5
-#define FRONT_RIGHT_STEER 6
+#define FRONT_RIGHT_STEER 8
 #define BACK_RIGHT_STEER 7
-#define BACK_LEFT_STEER 8
+#define BACK_LEFT_STEER 6
+
+
+enum class MotorKind { Drive, Steer };
+
+struct MotorLayout {
+    int can_id;
+    int corner;
+    MotorKind kind;
+    const char* name;
+};
+
+inline constexpr MotorLayout MOTOR_LAYOUT[] = {
+    {FRONT_LEFT_DRIVE,  FRONT_LEFT,  MotorKind::Drive, "FRONT_LEFT_DRIVE"},
+    {BACK_LEFT_DRIVE,   BACK_LEFT,   MotorKind::Drive, "BACK_LEFT_DRIVE"},
+    {BACK_RIGHT_DRIVE,  BACK_RIGHT,  MotorKind::Drive, "BACK_RIGHT_DRIVE"},
+    {FRONT_RIGHT_DRIVE, FRONT_RIGHT, MotorKind::Drive, "FRONT_RIGHT_DRIVE"},
+    {FRONT_LEFT_STEER,  FRONT_LEFT,  MotorKind::Steer, "FRONT_LEFT_STEER"},
+    {BACK_LEFT_STEER,   BACK_LEFT,   MotorKind::Steer, "BACK_LEFT_STEER"},
+    {BACK_RIGHT_STEER,  BACK_RIGHT,  MotorKind::Steer, "BACK_RIGHT_STEER"},
+    {FRONT_RIGHT_STEER, FRONT_RIGHT, MotorKind::Steer, "FRONT_RIGHT_STEER"},
+};
+
+inline constexpr bool is_drive_motor(const MotorLayout& motor)
+{
+    return motor.kind == MotorKind::Drive;
+}
+
+inline constexpr bool is_steer_motor(const MotorLayout& motor)
+{
+    return motor.kind == MotorKind::Steer;
+}
+
+inline constexpr int motor_status_index(const MotorLayout& motor)
+{
+    return is_drive_motor(motor) ? motor.corner : motor.corner + NB_WHEELS;
+}
+
+inline constexpr int internal_can_index(const MotorLayout& motor)
+{
+    return motor.can_id - 1;
+}
+
+inline constexpr const MotorLayout* motor_layout_from_can_id(int can_id)
+{
+    for (const auto& motor : MOTOR_LAYOUT) {
+        if (motor.can_id == can_id) {
+            return &motor;
+        }
+    }
+    return nullptr;
+}
+
+inline constexpr const MotorLayout* paired_motor_layout(const MotorLayout& motor)
+{
+    const MotorKind paired_kind = is_drive_motor(motor) ? MotorKind::Steer : MotorKind::Drive;
+    for (const auto& candidate : MOTOR_LAYOUT) {
+        if (candidate.corner == motor.corner && candidate.kind == paired_kind) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
 
 #define TOUR_RESOLUTION_BITS 16
 #define STEERING_RESOLUTION_BITS 14
@@ -66,8 +130,9 @@
 #define MIN_DESIRED_RADIUS 1
 #define PI_IN_INCR 16384
 
-#define WIDTH 0.75
-#define LENGTH 0.87
+// NEW rover dimensions as of Sat 25th April 2026
+#define WIDTH 0.745
+#define LENGTH 0.98
 
 // #define ROTATION_TRANSLATION 0
 // #define CRABE 1

@@ -4,6 +4,8 @@
 #include <iostream>
 #include <math.h>
 #include <tuple>
+#include <string>
+#include <vector>
 /*
 #ifndef TESTING
 #include "ros/ros.h"
@@ -71,6 +73,8 @@ public:
      * return : in_fault    if the device is faulty
      */
     bool is_faulty(bool verbose);
+
+    std::vector<std::string> get_device_error_messages();
 
     bool clear_fault();
 

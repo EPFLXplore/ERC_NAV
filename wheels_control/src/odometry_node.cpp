@@ -25,9 +25,6 @@ const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
 const double gear_ratio = 1.0/53;
 const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
 const double deg_to_rad = M_PI/(180.0);
-const double ANGLE_THRESHOLD = 0.8 * deg_to_rad;
-const double ROTATION_ANGLE_THRESHOLD = 0.642;//max mean ackerman angle is 36.6°=0.639
-const double SPEED_EPSILON = 0.02; // m/s
 
 
 //WARNING: this code assumes the wheels are properly homed before starting the node!
@@ -107,17 +104,8 @@ private:
         // RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[2]);
         // RCLCPP_INFO(this->get_logger(), "back right m/s: %f", wheel_speeds_[3]);
 
-        
-        //in the definition.hpp file :
-        // #define FRONT_LEFT_DRIVE 1
-        // #define FRONT_RIGHT_DRIVE 2
-        // #define BACK_RIGHT_DRIVE 3
-        // #define BACK_LEFT_DRIVE 4
-
-        // #define FRONT_LEFT_STEER 5  --> index 0 here
-        // #define FRONT_RIGHT_STEER 6 --> index 1 here
-        // #define BACK_RIGHT_STEER 7  --> index 2 here
-        // #define BACK_LEFT_STEER 8   --> index 3 here
+        // MotorStatus position/velocity are published in wheel-corner order:
+        // [front-left, front-right, back-right, back-left].
 
         wheel_angles_[0] = (msg->position[0] * incr_to_rad);// * deg_to_rad;
         wheel_angles_[1] = (msg->position[1] * incr_to_rad);// * deg_to_rad;
@@ -196,187 +184,6 @@ private:
 
         //////////////////////////////////////////////////////////////////////////////////
 
-        // double a_fl = wheel_angles_[0];
-        // double a_fr = wheel_angles_[1];
-        // double a_br = wheel_angles_[2];
-        // double a_bl = wheel_angles_[3];
-
-        // // RCLCPP_INFO(this->get_logger(), "front left ang: %f", wheel_angles_[0]);
-        // // RCLCPP_INFO(this->get_logger(), "front right ang: %f", wheel_angles_[1]);
-        // // RCLCPP_INFO(this->get_logger(), "back right ang: %f", wheel_angles_[2]);
-        // // RCLCPP_INFO(this->get_logger(), "back left ang: %f", wheel_angles_[3]);
-
-        // double v_fl = wheel_speeds_[0];
-        // double v_fr = wheel_speeds_[1];
-        // double v_br = wheel_speeds_[2];
-        // double v_bl = wheel_speeds_[3];
-
-        
-
-        // //double avg_angle_front = (a_fl + a_fr) / 2.0;
-        // //double avg_angle_back  = (a_bl + a_br) / 2.0;
-        // double avg_abs_angle = (std::fabs(a_fl) + std::fabs(a_fr) + std::fabs(a_br) + std::fabs(a_bl)) / 4.0;
-        // double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
-        // bool going_right = false;
-        // bool going_left = false;
-        // bool going_straight = false;
-        // //RCLCPP_INFO(this->get_logger(), "avg abs angle %f", avg_abs_angle);
-
-    
-        // double v_x = 0.0;
-        // double v_y = 0.0;
-        // double omega_z = 0.0;
-        // // Check for straight driving       
-        // bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
-        // bool all_angles_tiny = avg_abs_angle < (ANGLE_THRESHOLD*0.1);
-        // // Check for in-place rotation (symmetrical opposing angles, opposing speeds)
-        // // bool possible_rotation = (std::abs(a_fl + a_bl) < ANGLE_THRESHOLD) &&
-        // //                          (std::abs(a_fr + a_br) < ANGLE_THRESHOLD) &&
-        // //                          (std::abs(v_fl + v_bl) < SPEED_EPSILON)   &&
-        // //                          (std::abs(v_fr + v_br) < SPEED_EPSILON)   &&
-        // //                          (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
-        
-        // bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
-
-        // //RCLCPP_INFO(this->get_logger(), "avg speed z: %f", avg_speed);
-        // //RCLCPP_INFO(this->get_logger(), "avg_abs_ang: %f", avg_abs_angle);
-
-
-        // if (all_angles_small) {
-	    //     RCLCPP_INFO(this->get_logger(), "translation");
-        //     // Straight motion
-        //     double v_avg = (v_fl + v_fr + v_bl + v_br) / 4.0;
-        //     v_x = v_avg;
-        //     v_y = 0.0;
-        //     omega_z = 0.0;
-        //     going_straight = true;
-        //     RCLCPP_INFO(this->get_logger(), "speed AVG%f", v_avg);
-        // } else if (possible_rotation) {
-        //     going_straight = false;
-        //     //RCLCPP_INFO(this->get_logger(), "rotation sur place");
-
-        //     // In-place rotation
-        //     double v_rot = (v_fr - v_fl + v_br - v_bl) / 4.0;
-            
-        //     // Estimate radius of rotation circle
-        //     double r = std::sqrt((LENGTH / 2.0) * (LENGTH / 2.0) + (WIDTH / 2.0) * (WIDTH / 2.0));
-        //     omega_z = v_rot / r;
-        //     //RCLCPP_INFO(this->get_logger(), "omega z: %f", omega_z);
-        //     //RCLCPP_INFO(this->get_logger(), "v_rot: %f", v_rot);
-
-        //     v_x = 0.0;
-        //     v_y = 0.0;
-        // } else {
-        //     going_straight = false;
-        //     // Curved translation (double Ackermann)
-        //     // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
-        //     double alpha_ext = a_fr;
-        //     double alpha_int = -a_fl;
-        //     double v_ext = v_fr;
-        //     double v_int = v_fl;
-
-        //     if(a_fl >= 0 && a_fr >= 0 && a_fr > a_fl &&
-        //        a_bl <= 0 && a_br <= 0 && a_br < a_bl){
-        //         //going forwards right or backwards right
-        //         going_right = true;
-        //         going_left=false;
-
-        //         v_ext = (0.5) * (v_fl + v_bl);
-        //         v_int = (0.5) * (v_fr + v_br);
-
-        //         alpha_int = (0.5) * (a_fl - a_bl);
-        //         alpha_ext = (0.5) * (a_fr - a_br);
-
-        //     }else if(a_bl >= 0 && a_br >= 0 && a_br < a_bl &&
-        //         a_fl <= 0 && a_fr <= 0 && a_fr > a_fl){
-        //         //going forwards left or backwards left
-        //         going_left = true;
-        //         going_right=false;
-
-        //         v_int = (0.5) * (v_fl + v_bl);
-        //         v_ext = (0.5) * (v_fr + v_br);
-
-        //         alpha_ext = (0.5) * (a_fl - a_bl);
-        //         alpha_int = (0.5) * (a_fr - a_br);
-        //     }
-
-	    //     if(std::abs(alpha_ext)>0 && std::abs(alpha_int)>0){
-        //         //RCLCPP_INFO(this->get_logger(), "ackerman");
-
-        //         double r_ext = std::sqrt(std::pow(WIDTH / 2.0 + LENGTH / (2.0 * std::tan(alpha_ext)), 2) + std::pow(LENGTH / 2.0, 2));
-        //         double r_int = std::sqrt(std::pow(WIDTH / 2.0 - LENGTH / (2.0 * std::tan(alpha_int)), 2) + std::pow(LENGTH / 2.0, 2));
-                
-        //         double R_geo = 0.25 * LENGTH * (1.0 / std::tan(alpha_ext) + 1.0 / std::tan(alpha_int));
-
-        //         double omega_ext = v_ext / r_ext;
-        //         double omega_int = v_int / r_int;
-
-        //         omega_z = (omega_ext + omega_int) / 2.0;
-        //         //RCLCPP_INFO(this->get_logger(), "omega z ackerman: %f", omega_z);
-
-        //         double R_vel = 0.0;
-
-        //         if(std::abs(omega_z)<1e-6){
-        //             omega_z = 1e-6;
-        //             R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-        //         }else{
-        //             R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-        //         }
-                    
-        //         double R = R_geo;
-
-        //         v_x = omega_z * R;
-
-
-        //         v_y = 0.0;
-	    //     }
-        // }
-
-        // // Transform velocities to world frame
-        // if(going_left){
-        //     v_x = -v_x;
-        // }
-        
-
-        // double world_vx = v_x * std::cos(pos_theta_) - v_y * std::sin(pos_theta_);
-        // double world_vy = v_x * std::sin(pos_theta_) + v_y * std::cos(pos_theta_);
-
-
-        // pos_x_ += world_vx * dt;
-        // pos_y_ += world_vy * dt;
-
-        // if(going_left){
-        //     //RCLCPP_INFO(this->get_logger(), "going left: ");
-
-        //     if(avg_speed>=0){
-        //         //RCLCPP_INFO(this->get_logger(), "going left forwards: ");
-        //         pos_theta_ += dt * std::abs(omega_z);
-        //     }else{
-        //         //RCLCPP_INFO(this->get_logger(), "going left backwards: ");
-        //         pos_theta_ -= dt * std::abs(omega_z);
-        //     }
-        // }else if(going_right){
-        //     //RCLCPP_INFO(this->get_logger(), "going right: ");
-
-        //     if(avg_speed>=0){
-        //         //RCLCPP_INFO(this->get_logger(), "going right forwards: ");
-        //         pos_theta_ -= dt * std::abs(omega_z);
-        //     }else{
-        //         //RCLCPP_INFO(this->get_logger(), "going right backwards: ");
-        //         pos_theta_ += dt * std::abs(omega_z);
-        //     }
-        // }else{ //in place rotation
-        //     pos_theta_ += dt * omega_z;
-        // }
-
-        // //normalize [-pi, pi]
-        // if (pos_theta_ > M_PI) {
-        //     pos_theta_ -= 2 * M_PI;
-        // } else if (pos_theta_ < -M_PI) {
-        //     pos_theta_ += 2 * M_PI;
-        // }
-
-        //RCLCPP_INFO(this->get_logger(), "yaw wheel odom: %f", pos_theta_ *180/M_PI);
 
 
         nav_msgs::msg::Odometry odom;

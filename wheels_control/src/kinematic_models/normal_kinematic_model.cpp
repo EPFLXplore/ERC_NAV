@@ -24,11 +24,11 @@ void log_info_acker(const std::string &msg){
     RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "%s", msg.c_str());
 }
 
-RoverNormalKinematicModel::RoverNormalKinematicModel() : motor_cmds(true),
-                                                         en_rotation_quoi(false),
+RoverNormalKinematicModel::RoverNormalKinematicModel() : en_rotation_quoi(false),
                                                          wheels_angle_for_rotation(0),
-                                                         current_motors_cmds({{""}, {0, 0, 0, 0}, {0, 0, 0, 0}}),
-                                                         current_motors_position({{0, 0, 0, 0}, {0, 0, 0, 0}})
+                                                         current_motors_cmds({"", {0, 0, 0, 0}, {0, 0, 0, 0}}),
+                                                         current_motors_position({"", {0, 0, 0, 0}, {0, 0, 0, 0}}),
+                                                         motor_cmds(true)
 {
 }
 
@@ -40,6 +40,7 @@ void RoverNormalKinematicModel::init(motors_obj motors_position, _Float64 wheels
 
 motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z, _Float64 speed_rover, bool crab_mode_active)
 {
+    current_motors_position = motors_position;
 
     _Float64 r_ = 0;
     _Float64 v_ext = 0.0;
