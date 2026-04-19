@@ -17,6 +17,7 @@
   <depend>tf2_geometry_msgs</depend>
   <depend>ros2_aruco_interfaces</depend>
   <depend>message_filters</depend>
+  <depend>custom_msg</depend>
 
   <build_depend>OpenCV</build_depend>
   <build_depend>eigen</build_depend>
