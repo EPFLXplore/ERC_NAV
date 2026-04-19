@@ -288,6 +288,7 @@ public:
             const int can_idx = internal_can_index(*layout);
             const int status_idx = motor_status_index(*layout);
             bool debug_verbose = false;
+            message_nav.fault_state[status_idx] = current_faulty_motors[can_idx];
 
             if (motor->connected()){
                 //Put the motor current callback at a lower requency because it severly diminishes the publishing rate
@@ -295,7 +296,7 @@ public:
                 
                 if(check_faults){
                     //message_nav.current[status_idx] = (double)motor->get_current_is();
-                    message_nav.average_current[status_idx] = (double)motor->get_current_is_averaged();
+                    message_nav.average_current[status_idx] = (double)motor->get_current_is_averaged(); // goes from 16hz to 12hz
                 }
                 if (is_steer_motor(*layout)){
                     message_nav.position[layout->corner] = (double)motor->get_position_is(); //takes max 6ms

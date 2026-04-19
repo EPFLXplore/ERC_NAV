@@ -448,6 +448,7 @@ private:
 
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
     rclcpp::Time now(msg->header.stamp);
+
     tf2::Quaternion q;
     tf2::fromMsg(msg->orientation, q);
     double roll, pitch, yaw;

@@ -564,6 +564,7 @@ private:
   // ---------------- Sensor callbacks ----------------
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
     const rclcpp::Time stamp(msg->header.stamp);
+
     tf2::Quaternion q;
     tf2::fromMsg(msg->orientation, q);
     double raw_roll, raw_pitch, raw_yaw;

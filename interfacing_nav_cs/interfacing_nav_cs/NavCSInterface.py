@@ -716,10 +716,6 @@ class NavCSInterface(Node):
         Args:
             msg: MotorStatus message with arrays of motor data
         """
-        # Only process if not Off
-        if self.mode == 'Off':
-            return
-        
         # Conversion factor: RPS to m/s
         rps_to_ms = 2 * PI * self.wheels_radius / SECONDS_PER_MINUTE
         
@@ -792,6 +788,9 @@ class NavCSInterface(Node):
         # Update mode
         self.nav_full_state["state"]["mode"] = self.mode
         self.nav_full_state["state"]["lifecycle_state"] = self.get_lifecycle_string()
+        faulted_motors = self.get_faulted_motors()
+        self.nav_full_state["state"]["motor_fault"] = len(faulted_motors) > 0
+        self.nav_full_state["state"]["faulted_motors"] = faulted_motors
         
         # Update motor/wheel data
         self.nav_full_state["wheels"] = self.motor_data.get('wheels', {})
@@ -806,6 +805,15 @@ class NavCSInterface(Node):
         msg = String()
         msg.data = json.dumps(self.nav_full_state)
         self.state_publisher.publish(msg)
+
+    def get_faulted_motors(self):
+        faulted_motors = []
+        for wheel_name, wheel_data in self.motor_data.get('wheels', {}).items():
+            if wheel_data.get('driving_fault', False):
+                faulted_motors.append(f"{wheel_name}_drive")
+            if wheel_data.get('steering_fault', False):
+                faulted_motors.append(f"{wheel_name}_steer")
+        return faulted_motors
     
     def get_lifecycle_string(self):
         """

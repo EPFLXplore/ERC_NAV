@@ -3,10 +3,18 @@
   <Domain Id="0">
     <General>
       <Interfaces>
-        <NetworkInterface name="enP8p1s0" />
-        <NetworkInterface name="enx0a76f8b03d57" />
+        <NetworkInterface name="enP8p1s0" priority="100" presence_required="true"/>
+        <!-- <NetworkInterface name="enx0a76f8b03d57" priority="default" presence_required="false" multicast="default"/> -->
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
     </General>
+    <!-- <Internal>
+      <SocketReceiveBufferSize min="10MB"/>
+      <Watermarks>
+        <WhcHigh>500kB</WhcHigh>
+      </Watermarks>
+    </Internal> -->
   </Domain>
 </CycloneDDS>
+
