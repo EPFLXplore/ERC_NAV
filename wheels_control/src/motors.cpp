@@ -340,6 +340,7 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
     gateway = KeyHandle;
     id = node_id;
     pos_ref = 0;
+    op_mode = 0;
 
     VCS_GetMotorType(gateway, id, &motor_type, &error_code);
     cout << "motors.cpp] motor id : " << id << endl;
@@ -432,6 +433,43 @@ void NAV_Motor::disconnect()
     is_connected = false;
 }
 
+bool NAV_Motor::reconnect()
+{
+    unsigned int error_code = 0;
+    unsigned short detected_motor_type = 0;
+
+    VCS_GetMotorType(gateway, id, &detected_motor_type, &error_code);
+    print_VCS_error(error_code, __FUNCTION__);
+    if (error_code)
+    {
+        is_connected = false;
+        return false;
+    }
+
+    motor_type = detected_motor_type;
+    is_connected = true;
+
+    if (op_mode && !set_operational_mode(op_mode))
+    {
+        is_connected = false;
+        return false;
+    }
+
+    if (op_mode == OMD_PROFILE_POSITION_MODE)
+        VCS_SetPositionProfile(gateway, id, MAX_STEER_VEL, MAX_STEER_ACCEL, MAX_STEER_ACCEL, &error_code);
+    else if (op_mode == OMD_PROFILE_VELOCITY_MODE)
+        VCS_SetVelocityProfile(gateway, id, MAX_DRIVE_ACCEL, MAX_DRIVE_DECEL, &error_code);
+
+    print_VCS_error(error_code, __FUNCTION__);
+    if (error_code)
+    {
+        is_connected = false;
+        return false;
+    }
+
+    return true;
+}
+
 int NAV_Motor::get_encoder_pulse()
 {
     unsigned int encoder_pulse_nb;
@@ -488,6 +526,8 @@ bool NAV_Motor::fault_state(unsigned int *error_code)
 {
     int fault = false;
     VCS_GetFaultState(gateway, id, &fault, error_code);
+    if (*error_code)
+        is_connected = false;
     return fault;
 }
 
@@ -581,7 +621,7 @@ bool NAV_Motor::clear_fault()
     unsigned int error_code = 0;
     VCS_ClearFault(gateway, id, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
-    return (bool)error_code;
+    return !error_code;
 }
 
 bool NAV_Motor::set_position_ref(long pos)
@@ -658,26 +698,51 @@ bool NAV_Motor::has_reached()
 
 bool NAV_Motor::set_velocity_ref(long vel)
 {
-    CONNECTION_CHECK;
-
     unsigned int error_code = 0;
+    return set_velocity_ref(vel, &error_code);
+}
+
+bool NAV_Motor::set_velocity_ref(long vel, unsigned int *error_code)
+{
+    if (!is_connected)
+    {
+        *error_code = 0;
+        return false;
+    }
+
     if ((op_mode != OMD_VELOCITY_MODE) &&
         !this->set_operational_mode(OMD_PROFILE_VELOCITY_MODE))
+    {
+        *error_code = 0;
         return false;
+    }
 
-    VCS_MoveWithVelocity(gateway, id, vel, &error_code);
-    print_VCS_error(error_code, __FUNCTION__);
-    return !error_code;
+    VCS_MoveWithVelocity(gateway, id, vel, error_code);
+    print_VCS_error(*error_code, __FUNCTION__);
+    if (*error_code)
+        is_connected = false;
+    return !*error_code;
 }
 
 int NAV_Motor::get_velocity_is()
 {
-    CONNECTION_CHECK;
-
     unsigned int error_code = 0;
-    int vel;
-    VCS_GetVelocityIs(gateway, id, &vel, &error_code);
-    print_VCS_error(error_code, __FUNCTION__);
+    return get_velocity_is(&error_code);
+}
+
+int NAV_Motor::get_velocity_is(unsigned int *error_code)
+{
+    if (!is_connected)
+    {
+        *error_code = 0;
+        return 0;
+    }
+
+    int vel = 0;
+    VCS_GetVelocityIs(gateway, id, &vel, error_code);
+    print_VCS_error(*error_code, __FUNCTION__);
+    if (*error_code)
+        is_connected = false;
     return vel;
 }
 

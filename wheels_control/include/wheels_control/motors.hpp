@@ -50,6 +50,11 @@ public:
      */
     void disconnect();
 
+    /* reconnect
+     * brief :  probe a previously disconnected node and restore its configured mode
+     */
+    bool reconnect();
+
     /* set_operational_mode
      * brief :  set the operational mode of the controller (position / velocity, etc)
      */
@@ -103,11 +108,13 @@ public:
      *          automatically sets the controller into the right mode
      */
     bool set_velocity_ref(long vel);
+    bool set_velocity_ref(long vel, unsigned int *error_code);
 
     /* get_velocity_is
      * brief :  get the current velocity
      */
     int get_velocity_is();
+    int get_velocity_is(unsigned int *error_code);
 
     /* get_current_is
      * brief :  get the current current in [mA]

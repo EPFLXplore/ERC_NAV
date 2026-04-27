@@ -79,7 +79,7 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     //     }
     // }
 
-    omega_z = max_angular_velocity * omega_z;
+    omega_z = (-1.0)*max_angular_velocity * omega_z;
 
     // 3 DIFFERENT CASES: ONLY ROTATION ON ITSELF, ONLY TRANSLATION, TRANSLATION AND ROTATION
     if (std::abs(omega_z) > 1e-6)
@@ -119,12 +119,12 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
             current_motors_cmds.info = "self rotation";
 
             alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
+            alpha_ext = alpha_ext * (-1.0);
             alpha_int = -alpha_ext;
 
-            //TODO: Add sens de rotation with value of r_z from gamepad
 
-            v_ext = (std::abs(omega_z));
-            v_int = -(std::abs(omega_z));
+            v_ext = -(std::abs(omega_z));
+            v_int = (std::abs(omega_z));
         }
         else
         {

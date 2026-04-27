@@ -289,7 +289,7 @@ private:
         for (int c = 0; c < NUM_CAMERAS; ++c)
             process_image(msgs[c], cam_[c].intrinsic, cam_[c].distortion,
                           camera_frames_[c], markers, pose_array);
-        RCLCPP_INFO(get_logger(), "Before publish");
+        // RCLCPP_INFO(get_logger(), "Before publish");
 
         poses_pub_->publish(pose_array);
         markers_pub_->publish(markers);

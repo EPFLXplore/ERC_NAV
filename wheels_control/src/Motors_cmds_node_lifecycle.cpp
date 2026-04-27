@@ -288,6 +288,8 @@ public:
             const int can_idx = internal_can_index(*layout);
             const int status_idx = motor_status_index(*layout);
             bool debug_verbose = false;
+            double measured_velocity = 0.0;
+            unsigned int velocity_read_error = 0;
             message_nav.fault_state[status_idx] = current_faulty_motors[can_idx];
 
             if (motor->connected()){
@@ -305,7 +307,8 @@ public:
                     //this returns 1800 (approx) which is correct for the max speed.
                     //to get the actual value we need to divide by the gear ration 1:53
                     //which gives us again the 33.3 rpm
-                    message_nav.velocity[layout->corner] = motor->get_velocity_is(); //takes max 6ms
+                    measured_velocity = motor->get_velocity_is(&velocity_read_error); //takes max 6ms
+                    message_nav.velocity[layout->corner] = measured_velocity;
                 }
             }else{
                 message_nav.state[status_idx] = false;
@@ -320,6 +323,22 @@ public:
                     log_motor_fault_throttled(*motor, *layout, "fault reported during periodic status check");
                 }
             }
+
+            // if (layout->can_id == FRONT_RIGHT_DRIVE)
+            // {
+            //     const bool velocity_read_ok = motor->connected() && velocity_read_error == 0;
+            //     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            //         "FRONT_RIGHT_DRIVE status | can_id=%d | connected=%s | fault=%s | retry=%d/%d | command_ref=%.2f | measured_velocity=%.2f | velocity_read_ok=%s | velocity_read_error=0x%X",
+            //         layout->can_id,
+            //         motor->connected() ? "true" : "false",
+            //         message_nav.fault_state[status_idx] ? "true" : "false",
+            //         fault_retry_counts[can_idx],
+            //         MAX_FAULT_RETRIES,
+            //         motors_cmds[can_idx],
+            //         measured_velocity,
+            //         velocity_read_ok ? "true" : "false",
+            //         velocity_read_error);
+            // }
         }
 
         pub_motor_nav_status->publish(message_nav);
@@ -355,23 +374,53 @@ public:
 
             if (current_faulty_motors[idx])
             {
-                if (fault_retry_counts[idx] < MAX_FAULT_RETRIES)
+                bool restored = false;
+                if (!motor->connected())
                 {
-                    bool cleared = motor->clear_fault();
-                    if (cleared && !motor->is_faulty(false) && motor->set_output_state(true))
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        "Motor %d: marked faulty and disconnected; attempting reconnect", id);
+                    motor->reconnect();
+                }
+
+                unsigned int recovery_error_code = 0;
+                const bool still_in_fault = motor->connected()
+                    ? motor->fault_state(&recovery_error_code)
+                    : true;
+
+                if (recovery_error_code != 0)
+                {
+                    if (motor->reconnect())
                     {
-                        current_faulty_motors[idx] = false;
-                        fault_retry_counts[idx] = 0;
-                        RCLCPP_WARN(get_logger(), "Motor %d: fault cleared, resuming", id);
+                        recovery_error_code = 0;
+                        const bool fault_after_reconnect = motor->fault_state(&recovery_error_code);
+                        if (recovery_error_code == 0 && (!fault_after_reconnect || motor->clear_fault()))
+                        {
+                            restored = !motor->is_faulty(false) && motor->set_output_state(true);
+                        }
                     }
-                    else
+                }
+                else if (!still_in_fault || motor->clear_fault())
+                {
+                    restored = !motor->is_faulty(false) && motor->set_output_state(true);
+                }
+
+                if (restored)
+                {
+                    current_faulty_motors[idx] = false;
+                    fault_retry_counts[idx] = 0;
+                    RCLCPP_WARN(get_logger(), "Motor %d: fault cleared, reconnected, resuming", id);
+                }
+                else
+                {
+                    if (fault_retry_counts[idx] < MAX_FAULT_RETRIES)
                     {
                         fault_retry_counts[idx]++;
-                        log_motor_fault_throttled(
-                            *motor,
-                            *layout,
-                            "fault recovery still active; clear attempt failed");
                     }
+                    log_motor_fault_throttled(
+                        *motor,
+                        *layout,
+                        "fault recovery still active; clear/reconnect attempt failed",
+                        recovery_error_code);
                 }
                 continue;
             }
@@ -439,8 +488,21 @@ public:
             }
             int idx = internal_can_index(*layout);
 
-            if (!motor->connected() || current_faulty_motors[idx])
-                continue;
+            // if (!motor->connected() || current_faulty_motors[idx])
+            // {
+            //     if (layout->can_id == FRONT_RIGHT_DRIVE)
+            //     {
+            //         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+            //             "FRONT_RIGHT_DRIVE command skipped | can_id=%d | connected=%s | fault=%s | retry=%d/%d | command_ref=%.2f",
+            //             layout->can_id,
+            //             motor->connected() ? "true" : "false",
+            //             current_faulty_motors[idx] ? "true" : "false",
+            //             fault_retry_counts[idx],
+            //             MAX_FAULT_RETRIES,
+            //             motors_cmds[idx]);
+            //     }
+            //     continue;
+            // }
 
             // If this motor's wheel-pair partner is faulty, don't command it either
             int pair_idx = paired_motor_idx(id);
@@ -448,6 +510,15 @@ public:
             {
                 if (is_drive_motor(*layout))
                     motor->set_velocity_ref(0);
+                // if (layout->can_id == FRONT_RIGHT_DRIVE)
+                // {
+                //     const MotorLayout* paired_layout = paired_motor_layout(*layout);
+                //     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+                //         "FRONT_RIGHT_DRIVE command skipped because paired motor is faulty | can_id=%d | paired_motor=%s | command_ref=%.2f",
+                //         layout->can_id,
+                //         paired_layout != nullptr ? paired_layout->name : "unknown",
+                //         motors_cmds[idx]);
+                // }
                 continue;
             }
 
@@ -455,8 +526,6 @@ public:
                 motor->set_position_ref(motors_cmds[idx]);
             else if (is_drive_motor(*layout))
                 motor->set_velocity_ref(motors_cmds[idx]);
-            else
-                motor->set_velocity_ref(0);
         }
     }
 

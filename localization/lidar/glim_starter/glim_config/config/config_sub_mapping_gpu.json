@@ -52,6 +52,6 @@
     // Post processing
     "submap_downsample_resolution": 0.1,
     "submap_voxel_resolution": 0.5,
-    "submap_target_num_points": 60000
+    "submap_target_num_points": 40000
   }
 }

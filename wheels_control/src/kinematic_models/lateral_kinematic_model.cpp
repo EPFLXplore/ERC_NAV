@@ -20,10 +20,13 @@ motors_obj RoverLateralKinematicModel::run(double v_x, double r_z)
     double omni_speed = max_speed * v_x *conversion_speed; 
     float alpha = (-1.0) * (r_z) * conversion_angle;
 
-    current_motors_cmds.steer[FRONT_LEFT] = alpha;
-    current_motors_cmds.steer[FRONT_RIGHT] = -alpha;
-    current_motors_cmds.steer[BACK_RIGHT] = alpha;
-    current_motors_cmds.steer[BACK_LEFT] = -alpha;
+    // float sign_ang_speed = std::abs(alpha) / alpha;
+
+    current_motors_cmds.steer[FRONT_LEFT] = -alpha;
+    current_motors_cmds.steer[FRONT_RIGHT] = alpha;
+    current_motors_cmds.steer[BACK_RIGHT] = -alpha;
+    current_motors_cmds.steer[BACK_LEFT] = alpha;
+
     //RCLCPP_INFO(rclcpp::get_logger("omnidrive"),"omnikin speed vx %f", omni_speed);
 
     current_motors_cmds.drive[FRONT_LEFT] = omni_speed;
