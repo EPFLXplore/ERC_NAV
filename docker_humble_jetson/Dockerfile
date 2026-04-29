@@ -33,6 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcursor-dev \
     libcanberra-gtk-module \
     libcanberra-gtk3-module \
+    libeigen3-dev           \
+    libjsoncpp-dev          \
+    libspdlog-dev           \
+    libcurl4-openssl-dev    \
+    cmake \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 

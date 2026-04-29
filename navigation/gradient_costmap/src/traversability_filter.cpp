@@ -51,7 +51,7 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-        input_cloud_topic_ = this->declare_parameter<std::string>("input_cloud_topic", "/ouster_points");
+        input_cloud_topic_ = this->declare_parameter<std::string>("input_cloud_topic", "/ouster/points");
         output_cloud_topic_ = this->declare_parameter<std::string>("output_cloud_topic", "/filtered_pointcloud");
         map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
         base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");

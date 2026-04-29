@@ -3,18 +3,19 @@
   <Domain Id="0">
     <General>
       <Interfaces>
+        <!-- Rover / operator link (169.254.55.x); keep required so we fail fast if unplugged -->
         <NetworkInterface name="enP8p1s0" priority="100" presence_required="true"/>
-        <!-- <NetworkInterface name="enx0a76f8b03d57" priority="default" presence_required="false" multicast="default"/> -->
+        <!-- USB-Ethernet to Olive IMU — without this, DDS never uses 169.254.56.x (ping still works) -->
+        <NetworkInterface name="enx0a76f8b03d57" priority="10" presence_required="false" multicast="default"/>
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
       <MaxMessageSize>65500B</MaxMessageSize>
     </General>
-    <!-- <Internal>
-      <SocketReceiveBufferSize min="10MB"/>
-      <Watermarks>
-        <WhcHigh>500kB</WhcHigh>
-      </Watermarks>
-    </Internal> -->
+    <!-- Unicast discovery fallback if multicast on the point-to-point IMU link is flaky -->
+    <Discovery>
+      <Peers>
+        <Peer address="169.254.56.221"/>
+      </Peers>
+    </Discovery>
   </Domain>
 </CycloneDDS>
-

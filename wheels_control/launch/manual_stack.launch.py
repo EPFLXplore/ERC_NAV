@@ -7,6 +7,11 @@ from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 import os
 
+# ANSI colors for launch-time terminal messages (LogInfo / print). Ineffective when stdout is not a TTY.
+_C_RESET = "\033[0m"
+_C_BOLD_GREEN = "\033[1;32m"
+_C_BOLD_YELLOW = "\033[1;33m"
+
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
@@ -36,9 +41,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Publish the URDF via the robot state publisher"
     )
 
+    default_launch_lidar = "true"
+    launch_lidar_arg = DeclareLaunchArgument(
+        "launch_lidar",
+        default_value=default_launch_lidar,
+        description="Launch Ouster os_driver (driver.launch.py + driver_params.yaml)",
+    )
+
     motor_cmds = LaunchConfiguration("motor_cmds", default=default_motor_cmds)
     homing = LaunchConfiguration("homing", default=default_homing)
     publish_urdf = LaunchConfiguration("pub_urdf", default=default_pub_urdf)
+    launch_lidar = LaunchConfiguration("launch_lidar", default=default_launch_lidar)
     
 
     # ------------- Launch Nodes -------------
@@ -82,14 +95,23 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
 
-    # ------------- Ouster Launch File -------------
+    # ------------- Ouster (ouster_ros os_driver) -------------
+    # Use driver.launch.py (not driver_launch.py): driver_launch.py defaults to
+    # community_driver_config.yaml and hardcodes namespace/name that do not match driver_params.yaml.
+    ouster_share = get_package_share_directory("ouster_ros")
     ouster_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare("ros2_ouster").find("ros2_ouster"), "launch", "driver_launch.py")
+            os.path.join(ouster_share, "launch", "driver.launch.py")
         ),
-        launch_arguments={}.items(),
-        condition=IfCondition(publish_urdf)
+        launch_arguments={
+            "params_file": os.path.join(ouster_share, "config", "driver_params.yaml"),
+            "ouster_ns": "ouster",
+            "os_driver_name": "os_driver",
+            "viz": "False",
+        }.items(),
+        condition=IfCondition(launch_lidar),
     )
+
 
     # -------------- ERC_CAMERAS NAV Launch file --------
     nav_cameras_launch = IncludeLaunchDescription(
@@ -140,7 +162,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     delayed_aruco_launch = TimerAction(
         period=7.0,  # Wait 7 sec. before launching other nodes
         actions=[
-            LogInfo(msg="Cameras started! Launching aruco nodes..."),
+            LogInfo(msg=f"{_C_BOLD_GREEN}Cameras started! Launching aruco nodes...{_C_RESET}"),
             # ExecuteProcess(
             #     cmd=[
             #         "bash",
@@ -152,7 +174,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             #     output="screen"
             # ),
             aruco_launch,
-            LogInfo(msg="Aruco node cpp launch waiting for lidar aruco"),
+            LogInfo(msg=f"{_C_BOLD_YELLOW}Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
             aruco_lidar_detection_launch
         ]
     )
@@ -188,12 +210,13 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         motor_cmds_arg,
         homing_arg,
         pub_urdf_arg,
+        launch_lidar_arg,
         cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        description_launch,
+        # description_launch,
         olive_imu_restamp_node,
         wheel_odom_node,
         custom_local_ekf_node,

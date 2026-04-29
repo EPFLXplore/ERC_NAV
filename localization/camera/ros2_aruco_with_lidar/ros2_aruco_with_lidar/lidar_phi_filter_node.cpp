@@ -49,7 +49,7 @@ public:
         this->get_parameter("tolerance_radius", tolerance_radius_);
         this->get_parameter("hauteur_z_min", hauteur_z_min);
         this->get_parameter("hauteur_z_max", hauteur_z_max);
-        input_cloud_topic_ = "/ouster_points";
+        input_cloud_topic_ = "/ouster/points";
         output_cloud_topic_ = "/ouster_points_aruco";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;

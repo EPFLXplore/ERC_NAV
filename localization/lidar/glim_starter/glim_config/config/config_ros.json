@@ -58,7 +58,7 @@
     ],
     // Topics
     "imu_topic": "/olive/imu/id001/ahrs/restamped",
-    "points_topic": "/ouster_points",
+    "points_topic": "/ouster/points",
     "image_topic": "/image"
   }
 }

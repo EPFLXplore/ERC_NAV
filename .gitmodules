@@ -16,3 +16,6 @@
 [submodule "sensors/camera/ERC_CAMERAS"]
 	path = sensors/camera/ERC_CAMERAS
 	url = git@github.com:EPFLXplore/ERC_CAMERAS.git
+[submodule "sensors/lidar/ouster-ros"]
+	path = sensors/lidar/ouster-ros
+	url = https://github.com/epfl-xplore/ouster-ros

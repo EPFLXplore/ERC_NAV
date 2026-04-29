@@ -299,12 +299,12 @@ def generate_launch_description():
     )
 
     gradient_costmap_delay = TimerAction(
-        period=30.0,  # Start after Ouster TF is fully published (~28-30s), before Nav2 (35s)
+        period=5.0,  # Start after Ouster TF is fully published (~28-30s), before Nav2 (35s)
         actions=[gradient_costmap_launch]
     )
 
     nav2_launch_delay = TimerAction(
-        period=35.0,  # Wait for 35 seconds for the whole manual stack to launch
+        period=12.0,  # Wait for 35 seconds for the whole manual stack to launch
         actions=[
             load_nodes,
             load_composable_nodes
