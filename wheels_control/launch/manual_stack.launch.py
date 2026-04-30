@@ -160,7 +160,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
 
     delayed_aruco_launch = TimerAction(
-        period=7.0,  # Wait 7 sec. before launching other nodes
+        period=9.0,  # After oak1w 1s / 3s / 5s stagger + last camera DepthAI open
         actions=[
             LogInfo(msg=f"{_C_BOLD_GREEN}Cameras started! Launching aruco nodes...{_C_RESET}"),
             # ExecuteProcess(
