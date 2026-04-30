@@ -6,7 +6,7 @@
         <!-- Rover / operator link (169.254.55.x); keep required so we fail fast if unplugged -->
         <NetworkInterface name="enP8p1s0" priority="100" presence_required="true"/>
         <!-- USB-Ethernet to Olive IMU — without this, DDS never uses 169.254.56.x (ping still works) -->
-        <NetworkInterface name="enx0a76f8b03d57" priority="10" presence_required="false" multicast="default"/>
+        <NetworkInterface name="enx0a76f8b03d57" priority="10" presence_required="true" multicast="default"/>
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
       <MaxMessageSize>65500B</MaxMessageSize>
