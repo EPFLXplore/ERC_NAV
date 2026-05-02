@@ -57,4 +57,4 @@ docker run -it \
     -v nav_humble_jetson_home_volume:/home/xplore \
     -w /home/xplore/dev_ws/ \
     glim-humble-jetson \
-    /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; /bin/bash"
+    /bin/bash -c "sudo chown -R $USERNAME:$USERNAME /home/$USERNAME; source install/setup.bash && ros2 launch glim_starter glim_starter.launch.py"
