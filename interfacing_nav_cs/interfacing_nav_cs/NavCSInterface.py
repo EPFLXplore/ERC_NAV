@@ -124,8 +124,10 @@ MAX_ROVER_SPEED_MS = 2.0  # m/s
 # Motor conversion constants
 PI = 3.141592
 ENCODER_COUNTS_PER_REV = 65536
+STEERING_COUNTS_PER_REV = 2 ** 14
 DEGREES_PER_CIRCLE = 360
 SECONDS_PER_MINUTE = 60.0
+MOTOR_STATUS_LOG_PERIOD_SEC = 2.0
 
 # Motor indices (for MotorStatus arrays)
 MOTOR_DRIVE_FL = 0  # Front Left Drive
@@ -147,7 +149,7 @@ CAMERA_SERVO_ID = 1
 CAMERA_SERVO_INCREMENT_DEG = 20
 
 # Timer periods (seconds)
-FULL_STATE_PUBLISH_PERIOD = 2.0
+FULL_STATE_PUBLISH_PERIOD = 0.5 # 2hz
 MODE_PUBLISH_PERIOD = 2.0
 MOTOR_HEALTH_CHECK_PERIOD = 2.0
 
@@ -196,6 +198,7 @@ class NavCSInterface(Node):
         self.transitioning_state = False
         self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURED
         self.last_increment = 0  # Camera servo state
+        self.last_motor_status_log_time = 0.0
 
         # ====================================================================
         # Callback Groups
@@ -725,7 +728,7 @@ class NavCSInterface(Node):
             'current_driving': abs(msg.average_current[MOTOR_DRIVE_FL]),
             'current_steering': abs(msg.average_current[MOTOR_STEER_FL]),
             'speed': abs(round(msg.velocity[MOTOR_DRIVE_FL] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FL]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FL]) / STEERING_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
             'driving_motor_state': msg.state[MOTOR_DRIVE_FL],
             'steering_motor_state': msg.state[MOTOR_STEER_FL],
             'driving_fault': msg.fault_state[MOTOR_DRIVE_FL],
@@ -737,7 +740,7 @@ class NavCSInterface(Node):
             'current_driving': abs(msg.average_current[MOTOR_DRIVE_FR]),
             'current_steering': abs(msg.average_current[MOTOR_STEER_FR]),
             'speed': abs(round(msg.velocity[MOTOR_DRIVE_FR] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FR]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_FR]) / STEERING_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
             'driving_motor_state': msg.state[MOTOR_DRIVE_FR],
             'steering_motor_state': msg.state[MOTOR_STEER_FR],
             'driving_fault': msg.fault_state[MOTOR_DRIVE_FR],
@@ -749,7 +752,7 @@ class NavCSInterface(Node):
             'current_driving': abs(msg.average_current[MOTOR_DRIVE_RR]),
             'current_steering': abs(msg.average_current[MOTOR_STEER_RR]),
             'speed': abs(round(msg.velocity[MOTOR_DRIVE_RR] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RR]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RR]) / STEERING_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
             'driving_motor_state': msg.state[MOTOR_DRIVE_RR],
             'steering_motor_state': msg.state[MOTOR_STEER_RR],
             'driving_fault': msg.fault_state[MOTOR_DRIVE_RR],
@@ -761,12 +764,24 @@ class NavCSInterface(Node):
             'current_driving': abs(msg.average_current[MOTOR_DRIVE_RL]),
             'current_steering': abs(msg.average_current[MOTOR_STEER_RL]),
             'speed': abs(round(msg.velocity[MOTOR_DRIVE_RL] * rps_to_ms * self.gear_ratio, 1)),
-            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RL]) / ENCODER_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
+            'steering_angle': int(float(msg.position[MOTOR_DRIVE_RL]) / STEERING_COUNTS_PER_REV * DEGREES_PER_CIRCLE),
             'driving_motor_state': msg.state[MOTOR_DRIVE_RL],
             'steering_motor_state': msg.state[MOTOR_STEER_RL],
             'driving_fault': msg.fault_state[MOTOR_DRIVE_RL],
             'steering_fault': msg.fault_state[MOTOR_STEER_RL]
         }
+
+        now = time.time()
+        if now - self.last_motor_status_log_time >= MOTOR_STATUS_LOG_PERIOD_SEC:
+            self.last_motor_status_log_time = now
+            wheels = self.motor_data['wheels']
+            # self.get_logger().info(
+            #     "Steering angles deg: "
+            #     f"FL={wheels['front_left']['steering_angle']}, "
+            #     f"FR={wheels['front_right']['steering_angle']}, "
+            #     f"RR={wheels['rear_right']['steering_angle']}, "
+            #     f"RL={wheels['rear_left']['steering_angle']}"
+            # )
 
     # ========================================================================
     # State Publishing

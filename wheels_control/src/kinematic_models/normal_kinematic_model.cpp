@@ -52,32 +52,22 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
     _Float64 conversion_speed = 3600; // 1800; // for 0.5m.s                       ????????????
     _Float64 conversion_angle = (pow(2, STEERING_RESOLUTION_BITS)) / (2 * M_PI);
 
-    _Float64 max_linear_velocity = speed_rover; // in m/s 
-    _Float64 max_angular_velocity = 0.7; // in rad/s
-    _Float64 min_rotation_radius = 0.15; // in m
+    _Float64 max_linear_velocity = speed_rover; // in m/s
+    const double max_steering_angle_inner =  50.0 * M_PI / 180.0;
+    const double min_rotation_radius =
+    (LENGTH / 2.0) / std::tan(max_steering_angle_inner) + (WIDTH / 2.0);
+
+    // RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "Min rotation radius: %f", min_rotation_radius);
+    // _Float64 max_angular_velocity = 0.6; // in rad/s
+    //Rmin = (LENGTH / 2)/tan(alpha_max) + W/2
+    // _Float64 min_rotation_radius = 0.8; // in m
+    const double max_angular_velocity = max_linear_velocity / min_rotation_radius;
+    // RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "Max angular velocity: %f", max_angular_velocity);
 
 
-    // scale the normalized joystick inputs
-    // if(std::abs(v_x) > 1.0){
-    //     if(v_x >= 0){
-    //         v_x = 1.0;
-    //     }else{
-    //         v_x = -1.0;
-    //     }
-    // }
     
     v_x = max_linear_velocity * v_x;
-    //RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "%f", max_linear_velocity);
 
-
-    // scale the normalized joystick inputs
-    // if(std::abs(omega_z) > 1.0){ //a check si besoin pour le omni mode
-    //     if(omega_z >= 0){
-    //         omega_z = 1.0;
-    //     }else{
-    //         omega_z = -1.0;
-    //     }
-    // }
 
     omega_z = (-1.0)*max_angular_velocity * omega_z;
 
@@ -149,20 +139,19 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
 
     if (omega_z >= 0)
     {
-        wheels_current_commands.angle_1 = alpha_int * conversion_angle;
-        wheels_current_commands.angle_2 = alpha_ext * conversion_angle;
-
-        wheels_current_commands.velocity_1 = v_int * conversion_speed;
-        wheels_current_commands.velocity_2 = v_ext * conversion_speed;
+        wheels_current_commands.angle_1 = alpha_ext * conversion_angle;
+        wheels_current_commands.angle_2 = alpha_int * conversion_angle;
+    
+        wheels_current_commands.velocity_1 = v_ext * conversion_speed;
+        wheels_current_commands.velocity_2 = v_int * conversion_speed;
     }
     else
     {
-        wheels_current_commands.angle_2 = -alpha_int * conversion_angle;
-        wheels_current_commands.angle_1 = -alpha_ext * conversion_angle;
-
-        wheels_current_commands.velocity_2 = v_int * conversion_speed;
-        wheels_current_commands.velocity_1 = v_ext * conversion_speed;
-
+        wheels_current_commands.angle_2 = -alpha_ext * conversion_angle;
+        wheels_current_commands.angle_1 = -alpha_int * conversion_angle;
+    
+        wheels_current_commands.velocity_2 = v_ext * conversion_speed;
+        wheels_current_commands.velocity_1 = v_int * conversion_speed;
     }
 
     rotation_translation(wheels_current_commands);

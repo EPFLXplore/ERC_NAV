@@ -172,7 +172,7 @@ private:
     }else if(speed_rover <= 0.6){
       speed_rover = 0.6;
     }
-    log_info("New max speed from CS: " + std::to_string(speed_rover)+ "m/s");
+    log_info("--> NEW MAX SPEED from CS: " + std::to_string(speed_rover)+ "m/s <---");
 
   }
 
