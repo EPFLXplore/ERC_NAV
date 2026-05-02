@@ -180,7 +180,7 @@ controller_server:
 #         mark_threshold: 0
 #         observation_sources: ouster_pcl
 #         ouster_pcl:
-#           sensor_frame: ST_Lidar_1
+#           sensor_frame: Lidar_v2_1
 #           topic: /ouster/points
 #           sensor_data_qos: true
 #           clearing: true
@@ -303,7 +303,7 @@ global_costmap:
       #   mark_threshold: 0
       #   observation_sources: ouster_pcl
       #   ouster_pcl:
-      #     sensor_frame: ST_Lidar_1
+      #     sensor_frame: Lidar_v2_1
       #     topic: /ouster/points
       #     sensor_data_qos: true
       #     clearing: true

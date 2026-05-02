@@ -100,7 +100,7 @@ def generate_launch_description():
     )
     declare_lidar_points_topic = DeclareLaunchArgument(
         "lidar_points_topic",
-        default_value="/ouster_points",
+        default_value="/ouster/points",
         description="Input point cloud topic for traversability_filter",
     )
     declare_filtered_cloud_topic = DeclareLaunchArgument(
@@ -115,7 +115,7 @@ def generate_launch_description():
     )
     declare_source_frame = DeclareLaunchArgument(
         "source_frame",
-        default_value="ST_Lidar_1",
+        default_value="Lidar_v2_1",
         description="Fallback lidar frame if message frame_id is missing",
     )
     declare_fixed_origin_x = DeclareLaunchArgument(

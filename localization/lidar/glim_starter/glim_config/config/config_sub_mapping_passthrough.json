@@ -28,6 +28,6 @@
     "submap_voxel_resolution": 0.5,
     "min_dist_in_voxel": 0.2,
     "max_num_points_in_voxel": 100,
-    "submap_target_num_points": 50000
+    "submap_target_num_points": 30000
   }
 }

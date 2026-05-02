@@ -4,6 +4,7 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry
 import math
+import numpy as np
 
 def yaw_from_quaternion(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -95,8 +96,8 @@ class GlimOdomRepublisher(Node):
         if self._capture_next:
             self._x0, self._y0, self._yaw0 = x, y, yaw
             # Precompute rotation R(-yaw0)
-            self._Rc = math.cos(-self._yaw0)
-            self._Rs = math.sin(-self._yaw0)
+            self._Rc = math.cos(-self._yaw0 + math.pi/2)
+            self._Rs = math.sin(-self._yaw0 + math.pi/2)
             self._zeroed = True
             self._capture_next = False
             self.get_logger().info(f"Captured x0={self._x0:.3f}, y0={self._y0:.3f}, yaw0={self._yaw0:.3f} rad")
@@ -121,6 +122,12 @@ class GlimOdomRepublisher(Node):
 
         if self.rotation_sign :
             yaw_r = (-1.0)*yaw_r
+
+
+        # Matrice de rotation : bricolage
+        # rot = np.array([[ math.cos(2*math.pi), -math.sin(2*math.pi)],
+        #                 [math.sin(2*math.pi),  math.cos(2*math.pi)]])
+        # rot = np.eye(2)
             
         qx, qy, qz, qw = quaternion_from_yaw(yaw)
 
@@ -128,6 +135,9 @@ class GlimOdomRepublisher(Node):
         odom.header.stamp = now.to_msg()
         odom.header.frame_id = self.odom_frame_id
         odom.child_frame_id = self.child_frame_id
+
+        # x =  (rot @ np.array([x,y]) )[0]
+        # y =  (rot @ np.array([x,y]) )[1]
 
         odom.pose.pose.position.x = x
         odom.pose.pose.position.y = y

@@ -149,7 +149,7 @@ private:
     /*  Constants & state                                               */
     /* ================================================================ */
     static constexpr double MAP_SIZE           = 300.0;
-    static constexpr int    NBR_INIT_CALLBACKS = 35;
+    static constexpr int    NBR_INIT_CALLBACKS = 15;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
     static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
@@ -164,14 +164,14 @@ private:
     const std::array<double, 2> erc_start_pos_{0.0, 0.0};
 
     const std::vector<std::pair<double, double>> landmark_poses_ = {
-        {2.6, -0.4},            // id 51
-        {2.6, 0.4},             // id 52
-        {999999, 999999},       // id 53
+        {1.25, -1.13},            // id 51
+        {999999, 999999},             // id 52
+        {1.31, 1.1},       // id 53
         {999999, 999999},       // id 54
         {999999, 999999},       // id 55
         {999999, 999999},       // id 56
         {999999, 999999},       // id 57
-        {999999, 999999},       // id 58
+        {-1.80, 0.40},       // id 58
         {999999, 999999},       // id 59
         {999999, 999999},       // id 60
         {999999, 999999},       // id 61

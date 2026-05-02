@@ -220,7 +220,7 @@ private:
                     ? std::min(max_distance_from_aruco_, std::max(0.05, expected_range_xy / 5.0))
                     : max_distance_from_aruco_;
             const int min_inliers = std::max(min_inliers_, dynamic_min_inliers);
-            double ref_angle = wrap180(aruco_angle_deg + 90);
+            double ref_angle = wrap180(aruco_angle_deg); // expected angle of cube face normal, from camera pose
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
             size_t stage_in = full_cloud_->points.size();
@@ -552,7 +552,7 @@ private:
                 // std::string target_frame = "base_link";
 
                 
-                // Transform chain: ST_Lidar_1 -> ST_Service_Module_1 -> base_link
+                // Transform chain: Lidar_v2_1 -> Service_Module_v5_1 -> base_link
                 // TF2 should handle this automatically, but we need to check each step
                 try {
                     // First try direct transform (TF2 should chain automatically)
@@ -582,26 +582,26 @@ private:
                         RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "AFTER transform - frame: %s, pos: (%.3f, %.3f, %.3f)", 
                                    target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
                     } else {
-                        // If direct transform fails, try manual chain via ST_Service_Module_1
-                        RCLCPP_WARN(this->get_logger(), "Direct transform not available, trying via ST_Service_Module_1");
+                        // If direct transform fails, try manual chain via Service_Module_v5_1
+                        RCLCPP_WARN(this->get_logger(), "Direct transform not available, trying via Service_Module_v5_1");
                         
                         geometry_msgs::msg::PointStamped point_lidar, point_service, point_base;
                         point_lidar.header.frame_id = cloud_msg.header.frame_id;
                         point_lidar.header.stamp = rclcpp::Time(0);
                         point_lidar.point = centre_moyen;
                         
-                        // Step 1: ST_Lidar_1 -> ST_Service_Module_1
-                        if (tf_buffer_.canTransform("ST_Service_Module_1", 
+                        // Step 1: Lidar_v2_1 -> Service_Module_v5_1
+                        if (tf_buffer_.canTransform("Service_Module_v5_1", 
                                                    cloud_msg.header.frame_id,
                                                    tf2::TimePointZero,
                                                    tf2::durationFromSec(0.05))) {
                             auto transform1 = tf_buffer_.lookupTransform(
-                                "ST_Service_Module_1",
+                                "Service_Module_v5_1",
                                 cloud_msg.header.frame_id,
                                 tf2::TimePointZero
                             );
                             
-                            RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 1 (%s -> ST_Service_Module_1): (%.3f, %.3f, %.3f)",
+                            RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 1 (%s -> Service_Module_v5_1): (%.3f, %.3f, %.3f)",
                                        cloud_msg.header.frame_id.c_str(),
                                        transform1.transform.translation.x,
                                        transform1.transform.translation.y,
@@ -609,18 +609,18 @@ private:
                             
                             tf2::doTransform(point_lidar, point_service, transform1);
                             
-                            // Step 2: ST_Service_Module_1 -> base_link
+                            // Step 2: Service_Module_v5_1 -> base_link
                             if (tf_buffer_.canTransform("base_link", 
-                                                       "ST_Service_Module_1",
+                                                       "Service_Module_v5_1",
                                                        tf2::TimePointZero,
                                                        tf2::durationFromSec(0.05))) {
                                 auto transform2 = tf_buffer_.lookupTransform(
                                     "base_link",
-                                    "ST_Service_Module_1",
+                                    "Service_Module_v5_1",
                                     tf2::TimePointZero
                                 );
                                 
-                                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 2 (ST_Service_Module_1 -> base_link): (%.3f, %.3f, %.3f)",
+                                RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 500, "Transform 2 (Service_Module_v5_1 -> base_link): (%.3f, %.3f, %.3f)",
                                            transform2.transform.translation.x,
                                            transform2.transform.translation.y,
                                            transform2.transform.translation.z);
@@ -633,15 +633,15 @@ private:
                                            target_frame.c_str(), centre_moyen.x, centre_moyen.y, centre_moyen.z);
                             } else {
                                 RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
-                                           "Transform ST_Service_Module_1 -> base_link not available. "
-                                           "Check: ros2 run tf2_ros tf2_echo base_link ST_Service_Module_1");
+                                           "Transform Service_Module_v5_1 -> base_link not available. "
+                                           "Check: ros2 run tf2_ros tf2_echo base_link Service_Module_v5_1");
                                 centre_moyen = point_service.point;
-                                target_frame = "ST_Service_Module_1";
+                                target_frame = "Service_Module_v5_1";
                             }
                         } else {
                             RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 5000,
-                                       "Transform %s -> ST_Service_Module_1 not available. "
-                                       "Check: ros2 run tf2_ros tf2_echo ST_Service_Module_1 %s",
+                                       "Transform %s -> Service_Module_v5_1 not available. "
+                                       "Check: ros2 run tf2_ros tf2_echo Service_Module_v5_1 %s",
                                        cloud_msg.header.frame_id.c_str(), cloud_msg.header.frame_id.c_str());
                         }
                     }
@@ -699,7 +699,7 @@ private:
                 cube_msg.marker_ids.push_back(aruco_ids[aruco_idx]);
                 geometry_msgs::msg::Pose pose;
                 pose.position = centre_moyen;
-                pose.orientation.w = 0.0;
+                pose.orientation.w = 1.0;
                 cube_msg.poses.push_back(pose);
                 float angle_deg = std::atan2(centre_moyen.y, centre_moyen.x) * 180.0f / static_cast<float>(M_PI);
                 cube_msg.ar_angles_list.push_back(angle_deg);

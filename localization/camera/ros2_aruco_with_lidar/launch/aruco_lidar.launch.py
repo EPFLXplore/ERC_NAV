@@ -29,18 +29,18 @@ def generate_launch_description():
 
     return LaunchDescription([
         # lidar filter
-        DeclareLaunchArgument('tolerance_deg', default_value='15.0'),
-        DeclareLaunchArgument('tolerance_radius', default_value='1.5'), #1.5
-        DeclareLaunchArgument('hauteur_z_min', default_value='-0.7'),
+        DeclareLaunchArgument('tolerance_deg', default_value='10.0'),
+        DeclareLaunchArgument('tolerance_radius', default_value='0.5'), #1.5
+        DeclareLaunchArgument('hauteur_z_min', default_value='-0.5'),
         DeclareLaunchArgument('hauteur_z_max', default_value='1.0'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
-        DeclareLaunchArgument('max_iterations', default_value='100'),
+        DeclareLaunchArgument('max_iterations', default_value='20'),
         DeclareLaunchArgument('t', default_value='0.25'),
-        DeclareLaunchArgument('min_inliers', default_value='10'),
+        DeclareLaunchArgument('min_inliers', default_value='1'),
         DeclareLaunchArgument('max_lines', default_value='3'),
         # before ransac
-        DeclareLaunchArgument('max_distance_from_aruco', default_value='0.3'),
-        DeclareLaunchArgument('angular_tolerance_deg', default_value='10.0'),
+        DeclareLaunchArgument('max_distance_from_aruco', default_value='1.3'),
+        DeclareLaunchArgument('angular_tolerance_deg', default_value='100.0'),
 
         Node(
             package='ros2_aruco_with_lidar',

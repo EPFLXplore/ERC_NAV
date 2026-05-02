@@ -55,7 +55,7 @@ public:
         output_cloud_topic_ = this->declare_parameter<std::string>("output_cloud_topic", "/filtered_pointcloud");
         map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
         base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
-        source_frame_ = this->declare_parameter<std::string>("source_frame", "ST_Lidar_1");
+        source_frame_ = this->declare_parameter<std::string>("source_frame", "Lidar_v2_1");
         use_msg_frame_id_ = this->declare_parameter<bool>("use_msg_frame_id", true);
 
         auto qos = rclcpp::SensorDataQoS();
@@ -269,7 +269,7 @@ public:
         // sensor_msgs::msg::PointCloud2 debug_cloud;
         // pcl::toROSMsg(*filteredCloud, debug_cloud);
         // debug_cloud.header.stamp = this->get_clock()->now();
-        // debug_cloud.header.frame_id = "ST_Lidar_1";
+        // debug_cloud.header.frame_id = "Lidar_v2_1";
         // pubCloud->publish(debug_cloud);
         // RCLCPP_INFO(this->get_logger(), "Published filtered cloud: %zu points (filtered out %d too close)", 
         //             filteredCloud->size(), num_too_close);
