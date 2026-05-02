@@ -81,7 +81,9 @@ public:
 
     cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
     centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", qos);
-    cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/cube_markers", qos);
+    /* Separate from detect_cube (/cube_markers): pose_estimator merges both. */
+    cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>(
+        "/cube_markers_phi", qos);
 
     landmark_circles_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
         "aruco_cube_circles", qos);
@@ -93,7 +95,7 @@ public:
 private:
     const vector<std::pair<double, double>> landmark_poses_ = {
         {0.85, -0.8},          // id 51
-        {999999, 999999},             // id 52
+        {0.0, 1.2},             // id 52
         {1.38, 1.08},       // id 53
         {999999, 999999},       // id 54
         {999999, 999999},       // id 55
@@ -110,26 +112,53 @@ private:
 
     vector<std::pair<double, double>> get_aruco_poses_in_frame(
         const vector<std::pair<double, double>> &aruco_map_positions,
-        const std::string &target_frame)
+        const std::string &target_frame,
+        const builtin_interfaces::msg::Time &cloud_stamp)
     {
         // in: list of (x, y) map positions of the center of aruco boxes. Given by the ERC.
         // out: list of (x, y) positions of the center of aruco boxes in target_frame.
         // These positions are used to select points directly in the point cloud frame.
+        //
+        // Use the cloud header stamp for map→target_frame. Points in the cloud are expressed
+        // at that time; using tf2::TimePointZero ("latest") drifts from the scan once the
+        // robot moves or map→odom is updated, while /aruco_markers can still look correct.
 
         geometry_msgs::msg::TransformStamped transform;
         try {
-            if (tf_buffer_.canTransform(target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.1))) {
-                // gets the transform from map to target_frame at the latest available time
+            const bool zero_stamp =
+                (cloud_stamp.sec == 0u && cloud_stamp.nanosec == 0u);
+            if (zero_stamp) {
+                if (!tf_buffer_.canTransform(
+                        target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.1))) {
+                    return {};
+                }
                 transform = tf_buffer_.lookupTransform(target_frame, "map", tf2::TimePointZero);
             } else {
-                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
-                //     "Transform not available from map to %s", target_frame.c_str());
-                return {};
-            }        
+                const rclcpp::Time t(cloud_stamp, get_clock()->get_clock_type());
+                if (tf_buffer_.canTransform(
+                        target_frame, "map", t, rclcpp::Duration::from_seconds(0.1))) {
+                    transform = tf_buffer_.lookupTransform(
+                        target_frame, "map", t, rclcpp::Duration::from_seconds(0.1));
+                } else {
+                    /* Buffer not populated up to cloud time yet — latest is better than no filter. */
+                    if (!tf_buffer_.canTransform(
+                            target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                        return {};
+                    }
+                    transform = tf_buffer_.lookupTransform(target_frame, "map", tf2::TimePointZero);
+                }
+            }
         } catch (const tf2::TransformException &ex) {
-            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform error: %s", ex.what());
             (void)ex;
-            return {};
+            try {
+                if (!tf_buffer_.canTransform(
+                        target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                    return {};
+                }
+                transform = tf_buffer_.lookupTransform(target_frame, "map", tf2::TimePointZero);
+            } catch (const tf2::TransformException &) {
+                return {};
+            }
         }
 
         static constexpr double MAX_VALID_COORD = 80.0;
@@ -259,6 +288,12 @@ private:
         vector<RangeAngleId> for_filter;
         for_filter.reserve(n);
 
+        /* One batch per camera message so pose_estimator keeps every forbidden-sector
+         * tag (last_cube_phi_ is overwritten per callback, not per row). */
+        ros2_aruco_interfaces::msg::ArucoMarkers cube_phi_batch;
+        cube_phi_batch.header = msg->header;
+        visualization_msgs::msg::MarkerArray centre_markers_batch;
+
         for (size_t i = 0; i < n; ++i) {
             const double x = msg->poses[i].position.x;
             const double y = msg->poses[i].position.y;
@@ -267,7 +302,7 @@ private:
             const double a = wrap180(msg->ar_angles_list[i]);
 
             // Behind drill
-            const bool in_forbidden_sector = (msg->ar_angles_list[i] < 0.0 && msg->ar_angles_list[i] > -90.0);
+            const bool in_forbidden_sector = (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
 
             if (!in_forbidden_sector) {
                 for_filter.push_back({
@@ -279,7 +314,6 @@ private:
                 });
             }
             if (in_forbidden_sector) {
-                ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
                 geometry_msgs::msg::Point centre_moyen;
                 centre_moyen = msg->poses[i].position;
 
@@ -312,24 +346,21 @@ private:
                     (void)ex;
                     target_frame = msg->header.frame_id;
                 }
-                
-                cube_msg.header = msg->header;
-                cube_msg.header.frame_id = target_frame;
-                cube_msg.ar_angles_list.push_back(msg->ar_angles_list[i]);
+
+                cube_phi_batch.ar_angles_list.push_back(msg->ar_angles_list[i]);
                 geometry_msgs::msg::Pose cube_pose;
                 cube_pose.position = centre_moyen;
                 cube_pose.orientation = msg->poses[i].orientation;
-                cube_msg.poses.push_back(cube_pose);
-                cube_msg.marker_ids.push_back(msg->marker_ids[i]);
-                cube_markers_pub_->publish(cube_msg);
+                cube_phi_batch.poses.push_back(cube_pose);
+                cube_phi_batch.marker_ids.push_back(msg->marker_ids[i]);
+                cube_phi_batch.landmark_map_pos_x.push_back(msg->landmark_map_pos_x[i]);
+                cube_phi_batch.landmark_map_pos_y.push_back(msg->landmark_map_pos_y[i]);
 
-                // Publish a MarkerArray with one marker at the detected ArUco pose
-                visualization_msgs::msg::MarkerArray markers;
                 visualization_msgs::msg::Marker marker;
                 marker.header.stamp = this->now();
                 marker.header.frame_id = target_frame;
                 marker.ns = "cube_centres";
-                marker.id = static_cast<int>(i);
+                marker.id = static_cast<int>(msg->marker_ids[i]);
                 marker.type = visualization_msgs::msg::Marker::SPHERE;
                 marker.action = visualization_msgs::msg::Marker::ADD;
                 marker.pose.position = centre_moyen;
@@ -341,9 +372,17 @@ private:
                 marker.color.g = 1.0f;
                 marker.color.b = 0.0f;
                 marker.color.a = 1.0f;
-                markers.markers.push_back(marker);
-                centre_pub_->publish(markers);
+                centre_markers_batch.markers.push_back(marker);
             }
+        }
+
+        if (!cube_phi_batch.marker_ids.empty()) {
+            cube_phi_batch.header.stamp = msg->header.stamp;
+            cube_phi_batch.header.frame_id = "base_link";
+            cube_markers_pub_->publish(cube_phi_batch);
+        }
+        if (!centre_markers_batch.markers.empty()) {
+            centre_pub_->publish(centre_markers_batch);
         }
 
         sort(for_filter.begin(), for_filter.end(),
@@ -477,7 +516,7 @@ private:
             return;
         }
         std::vector<std::pair<double, double>> selected_landmarks =
-            get_aruco_poses_in_frame(selected_map_positions, cloud_frame);
+            get_aruco_poses_in_frame(selected_map_positions, cloud_frame, in->header.stamp);
 
         std::vector<std::pair<double, double>> valid_selected_landmarks;
         valid_selected_landmarks.reserve(selected_landmarks.size());

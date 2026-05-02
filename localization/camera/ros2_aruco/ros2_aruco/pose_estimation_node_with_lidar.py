@@ -2,7 +2,9 @@
 """
 Pose estimation node using lidar-refined ArUco cube detections.
 
-Subscribes to /cube_markers (ArucoMarkers) from the ros2_aruco_with_lidar pipeline, and to /fused_nav_ekf_odom (Odometry) for the EKF's odom->base_link state.
+Subscribes to /cube_markers (detect_cube) and /cube_markers_phi (lidar_phi_filter),
+merges them by marker id (preferring /cube_markers when both have the same id), and
+to /fused_nav_ekf_odom (Odometry) for the EKF's odom->base_link state.
 
 Initialization (n == 1 or 2): When only two markers are visible, uses the known start position erc_start_pos = [0.655, 2.515] and the two bearing angles to compute yaw via yaw = atan2(lm_y - y0, lm_x - x0) - bearing, assuming odom == base_link at init time.
 
@@ -18,6 +20,9 @@ Odometry output: Publishes /aruco_rover_pos (Odometry) in the map frame.
 """
 
 import math
+import copy
+from typing import Optional
+
 import numpy as np
 import cvxpy as cp
 
@@ -69,6 +74,11 @@ class PoseEstimatorLidarNode(Node):
         self.initialized_map_odom_tf = False
         self.last_callback_time = self.get_clock().now()
         self.callback_period_limit = 1 / 15.0
+        self._cube_merge_ttl_sec = 0.4
+        self._last_cube_detect_msg = None
+        self._last_cube_detect_stamp = None
+        self._last_cube_phi_msg = None
+        self._last_cube_phi_stamp = None
         self.avg_initialization_tfs = []
         self.yaw_init_list = []
         self.min_yaw_dt = 1.0
@@ -142,7 +152,11 @@ class PoseEstimatorLidarNode(Node):
         sensor_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.cube_sub = self.create_subscription(
             ArucoMarkers, '/cube_markers',
-            self.cube_callback, sensor_qos,
+            self._cube_detect_callback, sensor_qos,
+            callback_group=self._solver_cbg)
+        self.cube_phi_sub = self.create_subscription(
+            ArucoMarkers, '/cube_markers_phi',
+            self._cube_phi_callback, sensor_qos,
             callback_group=self._solver_cbg)
 
         ekf_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -337,7 +351,59 @@ class PoseEstimatorLidarNode(Node):
         return tf_msg
 
     # ------------------------------------------------------------------
-    # Main callback: /cube_markers
+    # Merge /cube_markers + /cube_markers_phi → cube_callback
+    # ------------------------------------------------------------------
+    def _merge_cube_sources(self) -> Optional[ArucoMarkers]:
+        now = self.get_clock().now()
+        ttl_ns = int(self._cube_merge_ttl_sec * 1e9)
+        use_det = (
+            self._last_cube_detect_msg is not None
+            and self._last_cube_detect_stamp is not None
+            and (now - self._last_cube_detect_stamp).nanoseconds < ttl_ns)
+        use_phi = (
+            self._last_cube_phi_msg is not None
+            and self._last_cube_phi_stamp is not None
+            and (now - self._last_cube_phi_stamp).nanoseconds < ttl_ns)
+        if not use_det and not use_phi:
+            return None
+        if use_det:
+            out = copy.deepcopy(self._last_cube_detect_msg)
+        else:
+            out = ArucoMarkers()
+        if use_phi:
+            phi = self._last_cube_phi_msg
+            existing = set(int(x) for x in out.marker_ids)
+            for i, mid in enumerate(phi.marker_ids):
+                if int(mid) in existing:
+                    continue
+                if i >= len(phi.poses) or i >= len(phi.ar_angles_list):
+                    continue
+                out.marker_ids.append(mid)
+                out.poses.append(phi.poses[i])
+                out.ar_angles_list.append(phi.ar_angles_list[i])
+                existing.add(int(mid))
+        if len(out.marker_ids) == 0:
+            return None
+        return out
+
+    def _cube_detect_callback(self, msg: ArucoMarkers):
+        self._last_cube_detect_msg = msg
+        self._last_cube_detect_stamp = self.get_clock().now()
+        self._dispatch_merged_cube()
+
+    def _cube_phi_callback(self, msg: ArucoMarkers):
+        self._last_cube_phi_msg = msg
+        self._last_cube_phi_stamp = self.get_clock().now()
+        self._dispatch_merged_cube()
+
+    def _dispatch_merged_cube(self):
+        merged = self._merge_cube_sources()
+        if merged is None:
+            return
+        self.cube_callback(merged)
+
+    # ------------------------------------------------------------------
+    # Main callback: merged cube markers
     # ------------------------------------------------------------------
     def cube_callback(self, msg: ArucoMarkers):
         now = self.get_clock().now()

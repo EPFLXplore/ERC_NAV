@@ -4,6 +4,7 @@ from geometry_msgs.msg import Pose2D, Pose
 from nav_msgs.msg import Odometry
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from visualization_msgs.msg import Marker, MarkerArray
+import copy
 import rclpy
 import numpy as np
 import cvxpy as cp
@@ -57,10 +58,16 @@ class ConvexRangeBearing(Node):
         self.pub = self.create_publisher(Marker, "aruco_rover_pos_rviz", qos)
         self.pub_pos = self.create_publisher(Odometry, "/aruco_rover_pos", qos)
 
-        self.sub_mes_ = self.create_subscription(
-            ArucoMarkers, "/cube_markers", self.aruco_callback, qos)
-        self.sub_mes_
+        self._cube_merge_ttl_sec = 0.4
+        self._last_cube_detect_msg = None
+        self._last_cube_detect_stamp = None
+        self._last_cube_phi_msg = None
+        self._last_cube_phi_stamp = None
 
+        self.create_subscription(
+            ArucoMarkers, "/cube_markers", self._cube_detect_callback, qos)
+        self.create_subscription(
+            ArucoMarkers, "/cube_markers_phi", self._cube_phi_callback, qos)
 
         self.get_logger().info("Convex Range+Bearing Node started.")
 
@@ -119,6 +126,58 @@ class ConvexRangeBearing(Node):
             return None
 
         return float(x.value[0]), float(x.value[1])
+
+    # ------------------------------------------------------------
+    # Merge /cube_markers + /cube_markers_phi (same as pose_estimator)
+    # ------------------------------------------------------------
+    def _merge_cube_sources(self):
+        now = self.get_clock().now()
+        ttl_ns = int(self._cube_merge_ttl_sec * 1e9)
+        use_det = (
+            self._last_cube_detect_msg is not None
+            and self._last_cube_detect_stamp is not None
+            and (now - self._last_cube_detect_stamp).nanoseconds < ttl_ns)
+        use_phi = (
+            self._last_cube_phi_msg is not None
+            and self._last_cube_phi_stamp is not None
+            and (now - self._last_cube_phi_stamp).nanoseconds < ttl_ns)
+        if not use_det and not use_phi:
+            return None
+        if use_det:
+            out = copy.deepcopy(self._last_cube_detect_msg)
+        else:
+            out = ArucoMarkers()
+        if use_phi:
+            phi = self._last_cube_phi_msg
+            existing = set(int(x) for x in out.marker_ids)
+            for i, mid in enumerate(phi.marker_ids):
+                if int(mid) in existing:
+                    continue
+                if i >= len(phi.poses) or i >= len(phi.ar_angles_list):
+                    continue
+                out.marker_ids.append(mid)
+                out.poses.append(phi.poses[i])
+                out.ar_angles_list.append(phi.ar_angles_list[i])
+                existing.add(int(mid))
+        if len(out.marker_ids) == 0:
+            return None
+        return out
+
+    def _cube_detect_callback(self, msg):
+        self._last_cube_detect_msg = msg
+        self._last_cube_detect_stamp = self.get_clock().now()
+        self._dispatch_merged_cube()
+
+    def _cube_phi_callback(self, msg):
+        self._last_cube_phi_msg = msg
+        self._last_cube_phi_stamp = self.get_clock().now()
+        self._dispatch_merged_cube()
+
+    def _dispatch_merged_cube(self):
+        merged = self._merge_cube_sources()
+        if merged is None:
+            return
+        self.aruco_callback(merged)
 
     # ------------------------------------------------------------
     # ROS2 Callback

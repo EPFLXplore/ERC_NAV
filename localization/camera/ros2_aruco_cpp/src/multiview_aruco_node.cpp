@@ -17,6 +17,7 @@
 #include <array>
 #include <unordered_map>
 #include <algorithm>
+#include <mutex>
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -123,9 +124,37 @@ public:
         declare_parameter("image_topic_3", "/NAV/feed_camera_nav_2");
         declare_parameter("camera_frame_3", "OAK-1_v1_3");
         declare_parameter("marker_size", 0.144);
+        /* Longer default: tags often arrive on different camera callbacks; short TTL drops the other. */
+        declare_parameter("marker_cache_ttl_sec", 1.5);
+        declare_parameter("marker_fusion_debug", false);
+        /* 0 = disable throttled WARN on large per-tag bearing steps. */
+        declare_parameter("aruco_bearing_jump_warn_deg", 30.0);
+        declare_parameter("aruco_min_marker_perimeter_rate", 0.015);
+        declare_parameter("aruco_adaptive_thresh_win_size_max", 23);
+        declare_parameter("aruco_error_correction_rate", 0.6);
+        declare_parameter("aruco_min_tvec_norm", 0.12);
+        /** 0..1: EMA on cached tag position in base_link (0 = off). Reduces jitter from noisy intrinsics. */
+        declare_parameter("cache_pose_smooth_alpha", 0.25);
 
         marker_size_ =
             get_parameter("marker_size").as_double();
+        marker_cache_ttl_ns_ = static_cast<int64_t>(
+            get_parameter("marker_cache_ttl_sec").as_double() * 1e9);
+        if (marker_cache_ttl_ns_ < 100000000LL) {
+            marker_cache_ttl_ns_ = 100000000LL; // floor 0.1 s
+        }
+        fusion_debug_ = get_parameter("marker_fusion_debug").as_bool();
+        bearing_jump_warn_deg_ =
+            get_parameter("aruco_bearing_jump_warn_deg").as_double();
+        aruco_min_tvec_norm_ =
+            get_parameter("aruco_min_tvec_norm").as_double();
+        cache_pose_smooth_alpha_ =
+            get_parameter("cache_pose_smooth_alpha").as_double();
+        if (cache_pose_smooth_alpha_ < 0.0) {
+            cache_pose_smooth_alpha_ = 0.0;
+        } else if (cache_pose_smooth_alpha_ > 1.0) {
+            cache_pose_smooth_alpha_ = 1.0;
+        }
 
         camera_frames_[0] = get_parameter("camera_frame_1").as_string();
         camera_frames_[1] = get_parameter("camera_frame_2").as_string();
@@ -137,6 +166,19 @@ public:
         parameters_ = cv::aruco::DetectorParameters::create();
         parameters_->cornerRefinementMethod =
             cv::aruco::CORNER_REFINE_SUBPIX;
+        parameters_->minMarkerPerimeterRate = static_cast<float>(
+            get_parameter("aruco_min_marker_perimeter_rate").as_double());
+        parameters_->adaptiveThreshWinSizeMax =
+            get_parameter("aruco_adaptive_thresh_win_size_max").as_int();
+        parameters_->errorCorrectionRate = static_cast<float>(
+            get_parameter("aruco_error_correction_rate").as_double());
+        RCLCPP_INFO(
+            get_logger(),
+            "ArUco detector: minMarkerPerimeterRate=%.4f adaptiveThreshWinSizeMax=%d "
+            "errorCorrectionRate=%.3f",
+            static_cast<double>(parameters_->minMarkerPerimeterRate),
+            parameters_->adaptiveThreshWinSizeMax,
+            static_cast<double>(parameters_->errorCorrectionRate));
 
         /* ---- camera intrinsics (hardcoded) ---- */
         // cam_[0].intrinsic = (cv::Mat_<double>(3, 3) <<
@@ -168,14 +210,14 @@ public:
         intrinsic_timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {
             intrinsic_timer_->cancel();
             setup_camera_intrinsics();
-            setup_subscribers();
+            ensure_image_subscribers_once();
         });
 
         /* ---- landmark map positions (indexed by aruco_index = id - 51) ---- */
 
         landmark_poses_ = {
             {0.85, -0.8},          // id 51
-            {999999, 999999},             // id 52
+            {0.0, 1.2},             // id 52
             {1.38, 1.08},       // id 53
             {999999, 999999},       // id 54
             {999999, 999999},       // id 55
@@ -209,7 +251,11 @@ private:
     static constexpr double ARUCO_BOX_OFFSET = 0.125;
     static constexpr double MAX_ARUCO_DIST   = 10.0;
     static constexpr int    NUM_CAMERAS      = 3;
-    static constexpr int64_t MARKER_CACHE_TTL_NS = 500000000LL; // 0.5 s
+    int64_t marker_cache_ttl_ns_{1500000000LL};
+    bool fusion_debug_{false};
+    double bearing_jump_warn_deg_{30.0};
+    double aruco_min_tvec_norm_{0.12};
+    double cache_pose_smooth_alpha_{0.25};
     const std::string base_frame_{"base_link"};
 
     /* ---- camera data ---- */
@@ -236,11 +282,14 @@ private:
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr
         markers_pub_;
     std::unordered_map<int64_t, CachedMarker> marker_cache_;
+    std::mutex marker_cache_mutex_;
 
     /* ---- rate limiter ---- */
     std::array<int64_t, NUM_CAMERAS> last_cb_ns_{};
     static constexpr int64_t CB_MIN_PERIOD_NS = 100000000LL; // 10 Hz
-    rclcpp::TimerBase::SharedPtr intrinsic_timer_;  
+    rclcpp::TimerBase::SharedPtr intrinsic_timer_;
+    rclcpp::Node::SharedPtr intrinsics_client_node_;
+    rclcpp::TimerBase::SharedPtr intrinsics_retry_timer_;
 
     /* ============================================================== */
     /* set up camera intrisics depending on the calibration they have on the camera */
@@ -301,66 +350,137 @@ private:
         }
     }
 
+    void ensure_image_subscribers_once()
+    {
+        static std::once_flag subs_once;
+        std::call_once(subs_once, [this]() { setup_subscribers(); });
+    }
 
-    void setup_camera_intrinsics() {
-        static bool called = false;
-        if (called) return;
-        called = true;
-
-        auto client_node = std::make_shared<rclcpp::Node>("intrinsics_client_tmp_0");
-
+    bool any_intrinsics_missing() const
+    {
         for (int i = 0; i < NUM_CAMERAS; ++i) {
-            bool success = false;
-
-            for (int attempt = 0; attempt < 3 && !success; ++attempt) {
-                auto client = client_node->create_client<custom_msg::srv::CameraParams>(
-                    "/NAV/camera_info_" + std::to_string(i));
-
-                if (!client->wait_for_service(std::chrono::seconds(5))) {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "Camera %d service not available (attempt %d/3)", i, attempt + 1);
-                    continue;  // retry
-                }
-
-                auto req    = std::make_shared<custom_msg::srv::CameraParams::Request>();
-                auto future = client->async_send_request(req);
-
-                if (rclcpp::spin_until_future_complete(client_node, future,
-                        std::chrono::seconds(5)) != rclcpp::FutureReturnCode::SUCCESS) {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "Camera %d intrinsics request failed (attempt %d/3)", i, attempt + 1);
-                    continue;  // retry
-                }
-
-                auto response = future.get();
-
-                // Sanity check: reject obviously wrong intrinsics
-                if (response->fx < 1.0 || response->fy < 1.0 ||
-                    response->cx < 1.0 || response->cy < 1.0) {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "Camera %d returned suspicious intrinsics fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                    //     i, response->fx, response->fy, response->cx, response->cy);
-                    continue;
-                }
-
-                cam_[i].intrinsic = (cv::Mat_<double>(3, 3) <<
-                    response->fx, 0.0,          response->cx,
-                    0.0,          response->fy, response->cy,
-                    0.0,          0.0,          1.0);
-                cam_[i].distortion = cv::Mat(response->distortion_coefficients);
-
-                // RCLCPP_INFO(get_logger(),
-                //     "Camera %d intrinsics OK: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                //     i, response->fx, response->fy, response->cx, response->cy);
-                success = true;
-            }
-
-            if (!success) {
-                // RCLCPP_ERROR(get_logger(),
-                //     "Camera %d: failed to get intrinsics after 3 attempts — "
-                //     "pose estimation will be skipped for this camera", i);
+            if (cam_[i].intrinsic.empty()) {
+                return true;
             }
         }
+        return false;
+    }
+
+    bool try_fetch_intrinsics_camera(int i)
+    {
+        if (i < 0 || i >= NUM_CAMERAS) {
+            return false;
+        }
+        if (!cam_[i].intrinsic.empty()) {
+            return true;
+        }
+
+        if (!intrinsics_client_node_) {
+            intrinsics_client_node_ = std::make_shared<rclcpp::Node>(
+                "intrinsics_client_mv_aruco");
+        }
+
+        auto client = intrinsics_client_node_->create_client<custom_msg::srv::CameraParams>(
+            "/NAV/camera_info_" + std::to_string(i));
+
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            if (!client->wait_for_service(std::chrono::seconds(2))) {
+                continue;
+            }
+
+            auto req    = std::make_shared<custom_msg::srv::CameraParams::Request>();
+            auto future = client->async_send_request(req);
+
+            if (rclcpp::spin_until_future_complete(
+                    intrinsics_client_node_, future,
+                    std::chrono::seconds(4)) != rclcpp::FutureReturnCode::SUCCESS) {
+                continue;
+            }
+
+            auto response = future.get();
+
+            if (response->fx < 1.0 || response->fy < 1.0 ||
+                response->cx < 1.0 || response->cy < 1.0) {
+                continue;
+            }
+
+            cam_[i].intrinsic = (cv::Mat_<double>(3, 3) <<
+                response->fx, 0.0,          response->cx,
+                0.0,          response->fy, response->cy,
+                0.0,          0.0,          1.0);
+            cam_[i].distortion = cv::Mat(response->distortion_coefficients);
+            return true;
+        }
+        return false;
+    }
+
+    void intrinsics_retry_tick()
+    {
+        for (int i = 0; i < NUM_CAMERAS; ++i) {
+            if (!cam_[i].intrinsic.empty()) {
+                continue;
+            }
+            if (try_fetch_intrinsics_camera(i)) {
+                RCLCPP_INFO(get_logger(),
+                    "[multiview_aruco] Camera %d intrinsics arrived (retry path).", i);
+            }
+        }
+        manage_intrinsics_retry_timer();
+    }
+
+    void manage_intrinsics_retry_timer()
+    {
+        if (!any_intrinsics_missing()) {
+            if (intrinsics_retry_timer_) {
+                intrinsics_retry_timer_->cancel();
+                intrinsics_retry_timer_.reset();
+                RCLCPP_INFO(get_logger(),
+                    "[multiview_aruco] All %d cameras have intrinsics.", NUM_CAMERAS);
+            }
+            return;
+        }
+        if (intrinsics_retry_timer_) {
+            return;
+        }
+
+        intrinsics_retry_timer_ = create_wall_timer(
+            std::chrono::seconds(4),
+            [this]() { intrinsics_retry_tick(); });
+        RCLCPP_WARN(
+            get_logger(),
+            "[multiview_aruco] Missing camera intrinsics; retrying every 4s until "
+            "/NAV/camera_info_* respond (late camera services caused silent blind cameras).");
+    }
+
+    void setup_camera_intrinsics()
+    {
+        for (int i = 0; i < NUM_CAMERAS; ++i) {
+            if (!cam_[i].intrinsic.empty()) {
+                continue;
+            }
+            try_fetch_intrinsics_camera(i);
+        }
+
+        if (any_intrinsics_missing()) {
+            std::string miss;
+            for (int i = 0; i < NUM_CAMERAS; ++i) {
+                if (cam_[i].intrinsic.empty()) {
+                    if (!miss.empty()) {
+                        miss += ",";
+                    }
+                    miss += std::to_string(i);
+                }
+            }
+            RCLCPP_WARN(
+                get_logger(),
+                "[multiview_aruco] No intrinsics yet for camera index(es) [%s] "
+                "(service /NAV/camera_info_N). Those streams will not produce tags until OK.",
+                miss.c_str());
+        } else {
+            RCLCPP_INFO(get_logger(),
+                "[multiview_aruco] Intrinsics OK for all %d cameras.", NUM_CAMERAS);
+        }
+        manage_intrinsics_retry_timer();
     }
     /* ============================================================== */
     /*  Per-camera callback                                           */
@@ -389,10 +509,23 @@ private:
         // "[cam %d] after process_image: %zu markers found, cache size=%zu",
         // camera_index, markers.marker_ids.size(), marker_cache_.size());
 
-        if (!markers.marker_ids.empty()) {
-            update_marker_cache(markers);
+        const size_t n_this_frame = markers.marker_ids.size();
+        size_t cache_size_after = 0;
+        {
+            std::lock_guard<std::mutex> lk(marker_cache_mutex_);
+            if (!markers.marker_ids.empty()) {
+                update_marker_cache(markers);
+            }
+            publish_cached_markers();
+            cache_size_after = marker_cache_.size();
         }
-        publish_cached_markers();
+        if (fusion_debug_) {
+            RCLCPP_INFO_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "[multiview_aruco] cam%d frame_marker_fields=%zu fused_cache_size=%zu ttl=%.2fs",
+                camera_index, n_this_frame, cache_size_after,
+                marker_cache_ttl_ns_ * 1e-9);
+        }
     }
 
     void update_marker_cache(const ros2_aruco_interfaces::msg::ArucoMarkers &markers)
@@ -417,12 +550,49 @@ private:
                 continue;
             }
 
-            marker_cache_[markers.marker_ids[i]] = CachedMarker{
-                markers.poses[i],
+            const int64_t mid = markers.marker_ids[i];
+            const auto pr = marker_cache_.find(mid);
+            if (bearing_jump_warn_deg_ > 0.0 && pr != marker_cache_.end()) {
+                const double da = std::abs(normalize_angle_deg(
+                    markers.ar_angles_list[i] - pr->second.ar_angle_deg));
+                if (da >= bearing_jump_warn_deg_) {
+                    RCLCPP_WARN_THROTTLE(
+                        get_logger(), *get_clock(), 5000,
+                        "[multiview_aruco] tag idx %lld bearing jump %.1f deg "
+                        "(TF vs image stamp, intrinsics, motion blur, marker_size, or camera switch)",
+                        static_cast<long long>(mid), da);
+                }
+            }
+
+            geometry_msgs::msg::Pose pose_out = markers.poses[i];
+            if (cache_pose_smooth_alpha_ > 0.0 && pr != marker_cache_.end() &&
+                finite_pose(pr->second.pose)) {
+                const double a = cache_pose_smooth_alpha_;
+                const double o = 1.0 - a;
+                pose_out.position.x =
+                    a * pose_out.position.x + o * pr->second.pose.position.x;
+                pose_out.position.y =
+                    a * pose_out.position.y + o * pr->second.pose.position.y;
+                pose_out.position.z =
+                    a * pose_out.position.z + o * pr->second.pose.position.z;
+                /* Orientation kept from current frame; jitter is mostly translation. */
+            }
+
+            double ar_deg = markers.ar_angles_list[i];
+            if (cache_pose_smooth_alpha_ > 0.0 && pr != marker_cache_.end() &&
+                std::isfinite(pr->second.ar_angle_deg)) {
+                const double a = cache_pose_smooth_alpha_;
+                const double d =
+                    normalize_angle_deg(ar_deg - pr->second.ar_angle_deg);
+                ar_deg = normalize_angle_deg(pr->second.ar_angle_deg + a * d);
+            }
+
+            marker_cache_[mid] = CachedMarker{
+                pose_out,
                 markers.landmark_map_pos_x[i],
                 markers.landmark_map_pos_y[i],
-                markers.ar_angles_list[i],
-                now
+                ar_deg,
+                now,
             };
         }
     }
@@ -432,7 +602,7 @@ private:
         const rclcpp::Time now = this->now();
 
         for (auto it = marker_cache_.begin(); it != marker_cache_.end();) {
-            if ((now - it->second.last_seen).nanoseconds() > MARKER_CACHE_TTL_NS) {
+            if ((now - it->second.last_seen).nanoseconds() > marker_cache_ttl_ns_) {
                 it = marker_cache_.erase(it);
             } else {
                 ++it;
@@ -544,17 +714,37 @@ private:
                 return;
             }
 
-            /* ---- TF: camera_frame -> base_link ---- */
+            /* ---- TF: camera_frame -> base_link (match image time when possible) ---- */
             geometry_msgs::msg::TransformStamped transform;
             try {
-                transform = tf_buffer_->lookupTransform(
-                    base_frame_, camera_frame, tf2::TimePointZero);
+                const bool zero_stamp =
+                    (img_msg->header.stamp.sec == 0u &&
+                     img_msg->header.stamp.nanosec == 0u);
+                if (zero_stamp) {
+                    transform = tf_buffer_->lookupTransform(
+                        base_frame_, camera_frame, tf2::TimePointZero);
+                } else {
+                    const rclcpp::Time t(img_msg->header.stamp, get_clock()->get_clock_type());
+                    if (tf_buffer_->canTransform(
+                            base_frame_, camera_frame, t,
+                            rclcpp::Duration::from_seconds(0.05))) {
+                        transform = tf_buffer_->lookupTransform(
+                            base_frame_, camera_frame, t,
+                            rclcpp::Duration::from_seconds(0.1));
+                    } else {
+                        transform = tf_buffer_->lookupTransform(
+                            base_frame_, camera_frame, tf2::TimePointZero);
+                    }
+                }
             } catch (const tf2::TransformException &ex) {
-                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
-                //     "TF %s -> %s unavailable: %s",
-                //     camera_frame.c_str(), base_frame_.c_str(), ex.what());
-                (void)ex;
-                return;
+                try {
+                    transform = tf_buffer_->lookupTransform(
+                        base_frame_, camera_frame, tf2::TimePointZero);
+                } catch (const tf2::TransformException &ex2) {
+                    (void)ex;
+                    (void)ex2;
+                    return;
+                }
             }
 
             Eigen::Matrix4d T_base_cam = transform_to_matrix(transform);
@@ -577,7 +767,10 @@ private:
                 }
 
                 double dist = cv::norm(tvecs[i]);                             
-                if (!std::isfinite(dist) || dist < 0.15 || dist > MAX_ARUCO_DIST) continue;
+                if (!std::isfinite(dist) || dist < aruco_min_tvec_norm_ ||
+                    dist > MAX_ARUCO_DIST) {
+                    continue;
+                }
 
                 int marker_id = ids[i];
 
@@ -619,9 +812,16 @@ private:
                 cands.resize(1);
             }
 
-            /* ---- publish best markers ---- */
-            for (auto &[marker_id, cands] : candidates) {
-                const MarkerCandidate &mc = cands.front();
+            /* ---- publish best markers (sorted id: stable order vs unordered_map) ---- */
+            std::vector<int> cand_ids;
+            cand_ids.reserve(candidates.size());
+            for (const auto &kv : candidates) {
+                cand_ids.push_back(kv.first);
+            }
+            std::sort(cand_ids.begin(), cand_ids.end());
+            for (int marker_id : cand_ids) {
+                const std::vector<MarkerCandidate> &cands_vec = candidates[marker_id];
+                const MarkerCandidate &mc = cands_vec.front();
 
                 // /* face-to-center offset */
                 // Eigen::Vector3d offset(0.0, 0.0, -ARUCO_BOX_OFFSET);
@@ -715,38 +915,24 @@ private:
                 }
 
 
-                /* ---- bearing computation ---- */
-                auto [bearing_deg, T_cam_box] =
-                    calculate_aruco_box_bearing(tvec_eigen, mc.rot_3x3);
-                (void)bearing_deg;   // used only for debug
-                if (!T_cam_box.allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d bearing transform is non-finite; skipping",
-                    //     camera_frame.c_str(), marker_id);
-                    continue;
-                }
-
-                Eigen::Matrix4d T_base_box = T_base_cam * T_cam_box;
-                Eigen::Matrix3d R_base_box = T_base_box.block<3, 3>(0, 0);
-                double yaw_deg = normalize_angle_deg(
-                    extract_yaw_xyz(R_base_box) * 180.0 / M_PI);
-
-                /* FOV-based override for RealSense / Brio cameras */
-                auto fov_yaw =
-                    calculate_bearing_with_fov(gray, mc.corners,
-                                            camera_frame, transform);
-                if (fov_yaw.has_value())
-                    yaw_deg = fov_yaw.value();
+                /* ---- bearing computation ----
+                 *
+                 * Downstream (pose_estimator_lidar_node) treats
+                 * ar_angles_list[i] as the bearing of marker i expressed
+                 * in base_link (i.e. atan2(y_base, x_base) in degrees).
+                 *
+                 * Compute it directly from the marker pose we already
+                 * transformed into base_link above (p_base). This is
+                 * geometrically consistent with poses[i] and avoids
+                 * mixing a tag-orientation yaw or FOV-pixel angle that
+                 * does not match the line from the rover to the
+                 * marker. */
+                double yaw_deg =
+                    std::atan2(p_base(1), p_base(0)) * 180.0 / M_PI;
+                yaw_deg = normalize_angle_deg(yaw_deg);
                 if (!std::isfinite(yaw_deg)) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d yaw is non-finite; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
-
-                // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-                //     "tag %d bearing rv frame: %.2f°",
-                //     aruco_index + 51, yaw_deg);
 
                 pose_array.poses.push_back(pose);
                 markers.poses.push_back(pose);

@@ -109,8 +109,10 @@ private:
         aruco_landmark_map_x_ = msg->landmark_map_pos_x;
         aruco_landmark_map_y_ = msg->landmark_map_pos_y;
 
-        // RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 2000,
-        //                      "ArUco markers reçus: %zu markers détectés", aruco_ids_.size());
+        // RCLCPP_INFO(this->get_logger(),
+        //    "[detect_cube INPUT] received aruco_markers: ids=%zu poses=%zu map_x=%zu map_y=%zu",
+        //    aruco_ids_.size(), aruco_poses_.size(),
+        //    aruco_landmark_map_x_.size(), aruco_landmark_map_y_.size());
     }
 
     // Converts map coordinates to cloud frame coordinates and returns the horizontal range in the cloud frame
@@ -123,8 +125,9 @@ private:
         double dummy_x = 0.0;
         double dummy_y = 0.0;
         double dummy_bearing_deg = 0.0;
+        builtin_interfaces::msg::Time zero_stamp;
         return expected_landmark_in_cloud_frame(
-            map_x, map_y, cloud_frame_id,
+            map_x, map_y, cloud_frame_id, zero_stamp,
             dummy_x, dummy_y, out_range_xy, dummy_bearing_deg);
     }
 
@@ -134,6 +137,7 @@ private:
         double map_x,
         double map_y,
         const std::string &cloud_frame_id,
+        const builtin_interfaces::msg::Time &cloud_stamp,
         double &out_x,
         double &out_y,
         double &out_range_xy,
@@ -145,13 +149,30 @@ private:
         pin.point.x = map_x;
         pin.point.y = map_y;
         pin.point.z = 0.0;
+        geometry_msgs::msg::TransformStamped tf;
         try {
-            if (!tf_buffer_.canTransform(
-                    cloud_frame_id, map_frame_, tf2::TimePointZero, tf2::durationFromSec(0.1))) {
-                return false;
+            const bool zero_stamp =
+                (cloud_stamp.sec == 0u && cloud_stamp.nanosec == 0u);
+            if (zero_stamp) {
+                if (!tf_buffer_.canTransform(
+                        cloud_frame_id, map_frame_, tf2::TimePointZero, tf2::durationFromSec(0.1))) {
+                    return false;
+                }
+                tf = tf_buffer_.lookupTransform(cloud_frame_id, map_frame_, tf2::TimePointZero);
+            } else {
+                const rclcpp::Time t(cloud_stamp, get_clock()->get_clock_type());
+                if (tf_buffer_.canTransform(
+                        cloud_frame_id, map_frame_, t, rclcpp::Duration::from_seconds(0.1))) {
+                    tf = tf_buffer_.lookupTransform(
+                        cloud_frame_id, map_frame_, t, rclcpp::Duration::from_seconds(0.1));
+                } else {
+                    if (!tf_buffer_.canTransform(
+                            cloud_frame_id, map_frame_, tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                        return false;
+                    }
+                    tf = tf_buffer_.lookupTransform(cloud_frame_id, map_frame_, tf2::TimePointZero);
+                }
             }
-            const geometry_msgs::msg::TransformStamped tf =
-                tf_buffer_.lookupTransform(cloud_frame_id, map_frame_, tf2::TimePointZero);
             geometry_msgs::msg::PointStamped pout;
             tf2::doTransform(pin, pout, tf);
             out_x = pout.point.x;
@@ -160,11 +181,23 @@ private:
             out_bearing_deg = std::atan2(out_y, out_x) * 180.0 / M_PI;
             return true;
         } catch (const tf2::TransformException &ex) {
-            // RCLCPP_WARN_THROTTLE(
-            //     this->get_logger(), *get_clock(), 2000,
-            //     "expected_landmark_in_cloud_frame: %s", ex.what());
             (void)ex;
-            return false;
+            try {
+                if (!tf_buffer_.canTransform(
+                        cloud_frame_id, map_frame_, tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                    return false;
+                }
+                tf = tf_buffer_.lookupTransform(cloud_frame_id, map_frame_, tf2::TimePointZero);
+                geometry_msgs::msg::PointStamped pout;
+                tf2::doTransform(pin, pout, tf);
+                out_x = pout.point.x;
+                out_y = pout.point.y;
+                out_range_xy = std::hypot(out_x, out_y);
+                out_bearing_deg = std::atan2(out_y, out_x) * 180.0 / M_PI;
+                return true;
+            } catch (const tf2::TransformException &) {
+                return false;
+            }
         }
     }
 
@@ -202,6 +235,9 @@ private:
         visualization_msgs::msg::MarkerArray markers;
         visualization_msgs::msg::MarkerArray points;
         ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
+        // RCLCPP_INFO(this->get_logger(),
+        //    "[detect_cube CLOUD] processing cloud frame=%s with aruco_ids=%zu points=%zu",
+        //    cloud_msg.header.frame_id.c_str(), aruco_ids.size(), full_cloud_->points.size());
 
         for (size_t aruco_idx = 0; aruco_idx < aruco_ids.size(); ++aruco_idx) {
             pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers(new pcl::PointCloud<pcl::PointXYZ>());
@@ -224,7 +260,7 @@ private:
                 const double my = aruco_landmark_map_y[aruco_idx];
                 if (!is_invalid_landmark_xy(mx, my)) {
                     have_expected_landmark = expected_landmark_in_cloud_frame(
-                        mx, my, cloud_msg.header.frame_id,
+                        mx, my, cloud_msg.header.frame_id, cloud_msg.header.stamp,
                         expected_x_cloud, expected_y_cloud,
                         expected_range_xy, expected_bearing_cloud_deg);
                 }
@@ -248,6 +284,15 @@ private:
                                          ? wrap180(expected_bearing_cloud_deg)
                                          : wrap180(aruco_angle_deg_base);
 
+            // RCLCPP_INFO(this->get_logger(),
+            //    "[detect_cube CANDIDATE] idx=%zu id=%ld camera_xy=(%.3f, %.3f) "
+            //    "have_expected=%d expected_xy=(%.3f, %.3f) expected_range=%.3f "
+            //    "ref_angle=%.2f deg",
+            //    aruco_idx, aruco_ids[aruco_idx], aruco_x, aruco_y,
+            //    have_expected_landmark ? 1 : 0,
+            //    expected_x_cloud, expected_y_cloud, expected_range_xy,
+            //    ref_angle);
+
             pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_minus_lines(new pcl::PointCloud<pcl::PointXYZ>());
             size_t stage_in = full_cloud_->points.size();
             size_t stage_pass_radial = 0;
@@ -266,12 +311,15 @@ private:
                 }
             }
             if (pointcloud_minus_lines->size() < static_cast<size_t>(min_inliers)) {
-                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
-                //     "[detect_cube] id=%ld ABORT pre-3D: in=%zu pass_radial=%zu pass_ang=%zu < min_inl=%d "
-                //     "(aruco_xy=(%.2f,%.2f) ref_ang=%.1f° ang_tol=%.1f° r_exp=%.2fm r_tol=%.2fm)",
-                //     aruco_ids[aruco_idx], stage_in, stage_pass_radial, stage_pass_both, min_inliers,
-                //     aruco_x, aruco_y, ref_angle, angular_tolerance_deg_,
-                //     have_expected_range ? expected_range_xy : -1.0, radial_tol);
+                // RCLCPP_WARN(this->get_logger(),
+                //     "[detect_cube SKIP pre3D] id=%ld in=%zu pass_radial=%zu "
+                //     "pass_angle=%zu min_inliers=%d ref_angle=%.2f deg "
+                //     "ang_tol=%.2f deg expected_range=%.3f radial_tol=%.3f",
+                //     aruco_ids[aruco_idx], stage_in, stage_pass_radial,
+                //     stage_pass_both, min_inliers, ref_angle,
+                //     angular_tolerance_deg_,
+                //     have_expected_range ? expected_range_xy : -1.0,
+                //     radial_tol);
                 continue;
             }
 
@@ -497,17 +545,17 @@ private:
             lines_pub_->publish(cloud_with_all_lines);
             markers_pub_->publish(markers);
 
-            // RCLCPP_INFO_THROTTLE(this->get_logger(), *get_clock(), 1000,
-            //     "[detect_cube] id=%ld in=%zu radial=%zu ang=%zu | 3D: lines=%zu inliers=%zu | "
-            //     "2D: in=%zu lines=%zu | min_inl=%d",
-            //     aruco_ids[aruco_idx], stage_in, stage_pass_radial, stage_pass_both,
-            //     lines.size(), all_inliers->size(),
-            //     projected_cloud->size(), lines_2d.size(), min_inliers);
+            // RCLCPP_INFO(this->get_logger(),
+            //    "[detect_cube LINES] id=%ld in=%zu radial=%zu angle=%zu "
+            //    "3d_lines=%zu 3d_inliers=%zu projected=%zu 2d_lines=%zu min_inliers=%d",
+            //    aruco_ids[aruco_idx], stage_in, stage_pass_radial,
+            //    stage_pass_both, lines.size(), all_inliers->size(),
+            //    projected_cloud->size(), lines_2d.size(), min_inliers);
 
             if (lines_2d.empty()) {
-                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
-                //     "[detect_cube] id=%ld no 2D line extracted from %zu projected points (min_inl=%d)",
-                //     aruco_ids[aruco_idx], projected_cloud->size(), min_inliers);
+                RCLCPP_WARN(this->get_logger(),
+                    "[detect_cube SKIP no2D] id=%ld projected=%zu min_inliers=%d",
+                    aruco_ids[aruco_idx], projected_cloud->size(), min_inliers);
             }
 
 
@@ -721,8 +769,6 @@ private:
                 // text_marker.text = "ArUco " + std::to_string(aruco_ids_[aruco_idx]);
                 // points.markers.push_back(text_marker);
 
-                cube_msg.header.stamp = cloud_msg.header.stamp;
-                cube_msg.header.frame_id = "base_link";
                 cube_msg.marker_ids.push_back(aruco_ids[aruco_idx]);
                 geometry_msgs::msg::Pose pose;
                 pose.position = centre_moyen;
@@ -730,7 +776,16 @@ private:
                 cube_msg.poses.push_back(pose);
                 float angle_deg = std::atan2(centre_moyen.y, centre_moyen.x) * 180.0f / static_cast<float>(M_PI);
                 cube_msg.ar_angles_list.push_back(angle_deg);
-                cube_markers_pub_->publish(cube_msg);
+                // RCLCPP_INFO(this->get_logger(),
+                //    "[detect_cube QUEUE] id=%ld center_base=(%.3f, %.3f, %.3f) "
+                //    "angle=%.2f deg batch_so_far=%zu",
+                //    aruco_ids[aruco_idx],
+                //    centre_moyen.x, centre_moyen.y, centre_moyen.z,
+                //    angle_deg, cube_msg.marker_ids.size());
+            } else {
+                RCLCPP_WARN(this->get_logger(),
+                    "[detect_cube SKIP no_center] id=%ld lines_2d=%zu",
+                    aruco_ids[aruco_idx], lines_2d.size());
             }
 
             
@@ -745,6 +800,18 @@ private:
                 //     aruco_ids[aruco_idx], pointcloud_minus_lines->size());
             }
 
+        }
+
+        /* One publish per cloud: pose_estimator_lidar_node rate-limits /cube_markers after
+         * init; multiple publishes in the same callback caused only the first (partial)
+         * message to be processed, so valid_markers stayed 1 with the same id. */
+        if (!cube_msg.marker_ids.empty()) {
+            cube_msg.header.stamp = cloud_msg.header.stamp;
+            cube_msg.header.frame_id = "base_link";
+            RCLCPP_INFO(this->get_logger(),
+                "[detect_cube PUBLISH BATCH] markers=%zu (one message per cloud)",
+                cube_msg.marker_ids.size());
+            cube_markers_pub_->publish(cube_msg);
         }
     }
     

@@ -11,6 +11,7 @@ import os
 _C_RESET = "\033[0m"
 _C_BOLD_GREEN = "\033[1;32m"
 _C_BOLD_YELLOW = "\033[1;33m"
+DEFAULT_ARUCO_STACK_DELAY = "18.0"
 
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
@@ -48,11 +49,23 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         description="Launch Ouster os_driver (driver.launch.py + driver_params.yaml)",
     )
 
+    # After camera_node_nav: last SetBool at 9s; give JPEG + camera_info a short buffer
+    # before multiview_aruco blocks on intrinsics service calls.
     motor_cmds = LaunchConfiguration("motor_cmds", default=default_motor_cmds)
     homing = LaunchConfiguration("homing", default=default_homing)
     publish_urdf = LaunchConfiguration("pub_urdf", default=default_pub_urdf)
     launch_lidar = LaunchConfiguration("launch_lidar", default=default_launch_lidar)
-    
+
+    delay_str = LaunchConfiguration(
+        "aruco_stack_delay_sec",
+        default=DEFAULT_ARUCO_STACK_DELAY,
+    ).perform(context)
+    try:
+        aruco_delay_s = float(delay_str)
+    except ValueError:
+        aruco_delay_s = float(DEFAULT_ARUCO_STACK_DELAY)
+    if aruco_delay_s < 0.0:
+        aruco_delay_s = 0.0
 
     # ------------- Launch Nodes -------------
     cs_interface = launch_ros.actions.Node(
@@ -159,24 +172,31 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
 
-    delayed_aruco_launch = TimerAction(
-        period=9.0,  # After oak1w 1s / 3s / 5s stagger + last camera DepthAI open
+    stack_boot_hint = TimerAction(
+        period=1.0,
         actions=[
-            LogInfo(msg=f"{_C_BOLD_GREEN}Cameras started! Launching aruco nodes...{_C_RESET}"),
-            # ExecuteProcess(
-            #     cmd=[
-            #         "bash",
-            #         "-lc",
-            #         "ros2 service call /NAV/req_camera_nav_0 std_srvs/srv/SetBool \"{data: true}\" && "
-            #         "ros2 service call /NAV/req_camera_nav_1 std_srvs/srv/SetBool \"{data: true}\" && "
-            #         "ros2 service call /NAV/req_camera_nav_2 std_srvs/srv/SetBool \"{data: true}\""
-            #     ],
-            #     output="screen"
-            # ),
+            LogInfo(
+                msg=(
+                    f"{_C_BOLD_YELLOW}manual_stack: ArUco+lidar_aruco start in "
+                    f"{delay_str}s (arg aruco_stack_delay_sec). "
+                    f"Silence until then is normal; cameras SetBool at ~9s.{_C_RESET}"
+                )
+            ),
+        ],
+    )
+
+    delayed_aruco_launch = TimerAction(
+        period=aruco_delay_s,
+        actions=[
+            LogInfo(
+                msg=f"{_C_BOLD_GREEN}Launching ArUco + lidar_aruco stack...{_C_RESET}"
+            ),
             aruco_launch,
-            LogInfo(msg=f"{_C_BOLD_YELLOW}Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
-            aruco_lidar_detection_launch
-        ]
+            LogInfo(
+                msg=f"{_C_BOLD_YELLOW}Aruco C++ launched; starting lidar_aruco...{_C_RESET}"
+            ),
+            aruco_lidar_detection_launch,
+        ],
     )
     
     jetson_stats = launch_ros.actions.Node(
@@ -211,6 +231,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         homing_arg,
         pub_urdf_arg,
         launch_lidar_arg,
+        stack_boot_hint,
         cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
@@ -228,4 +249,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     ]
 
 def generate_launch_description():
-    return launch.LaunchDescription([OpaqueFunction(function=launch_setup)])
+    return launch.LaunchDescription([
+        DeclareLaunchArgument(
+            "aruco_stack_delay_sec",
+            default_value=DEFAULT_ARUCO_STACK_DELAY,
+            description="Seconds after stack start before ArUco + lidar_aruco launches (cameras need stream first).",
+        ),
+        OpaqueFunction(function=launch_setup),
+    ])
