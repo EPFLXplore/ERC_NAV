@@ -92,14 +92,14 @@ public:
 
 private:
     const vector<std::pair<double, double>> landmark_poses_ = {
-        {1.25, -1.13},            // id 51
+        {0.85, -0.8},          // id 51
         {999999, 999999},             // id 52
-        {1.31, 1.1},       // id 53
+        {1.38, 1.08},       // id 53
         {999999, 999999},       // id 54
         {999999, 999999},       // id 55
         {999999, 999999},       // id 56
         {999999, 999999},       // id 57
-        {-1.80, 0.40},       // id 58
+        {-1.56, 0.27},       // id 58
         {999999, 999999},       // id 59
         {999999, 999999},       // id 60
         {999999, 999999},       // id 61
@@ -108,24 +108,27 @@ private:
     };
 
 
-    vector<std::pair<double, double>> get_aruco_poses_in_base_link(const vector<std::pair<double, double>> &aruco_map_positions) {
+    vector<std::pair<double, double>> get_aruco_poses_in_frame(
+        const vector<std::pair<double, double>> &aruco_map_positions,
+        const std::string &target_frame)
+    {
         // in: list of (x, y) map positions of the center of aruco boxes. Given by the ERC.
-        // out: list of (x, y) positions of the center of aruco boxes in base_link. Those will be used to select points in the pointcloud
-        // around those positions to make the detection more efficient and robust.
+        // out: list of (x, y) positions of the center of aruco boxes in target_frame.
+        // These positions are used to select points directly in the point cloud frame.
 
-        // check if the transform map->base_link is available
-        string target_frame = "base_link";
         geometry_msgs::msg::TransformStamped transform;
         try {
             if (tf_buffer_.canTransform(target_frame, "map", tf2::TimePointZero, tf2::durationFromSec(0.1))) {
-                // gets the transform from map to base_link at the latest available time (TimePointZero) with a timeout of 0.1s
+                // gets the transform from map to target_frame at the latest available time
                 transform = tf_buffer_.lookupTransform(target_frame, "map", tf2::TimePointZero);
             } else {
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform not available from map to base_link");
+                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
+                //     "Transform not available from map to %s", target_frame.c_str());
                 return {};
             }        
         } catch (const tf2::TransformException &ex) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform error: %s", ex.what());
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000, "Transform error: %s", ex.what());
+            (void)ex;
             return {};
         }
 
@@ -298,14 +301,15 @@ private:
                         tf2::doTransform(point_in, point_out, transform);
                         centre_moyen = point_out.point;
                     } else {
-                        RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
-                                           "Transform not available from %s to %s",
-                                           msg->header.frame_id.c_str(), target_frame.c_str());
+                        // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
+                        //                    "Transform not available from %s to %s",
+                        //                    msg->header.frame_id.c_str(), target_frame.c_str());
                         target_frame = msg->header.frame_id;
                     }
                 } catch (const tf2::TransformException &ex) {
-                    RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
-                                        "Transform error: %s", ex.what());
+                    // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 2000,
+                    //                     "Transform error: %s", ex.what());
+                    (void)ex;
                     target_frame = msg->header.frame_id;
                 }
                 
@@ -367,7 +371,7 @@ private:
     }
 
     void filter_pcl_with_known_aruco_poses(const sensor_msgs::msg::PointCloud2::SharedPtr in) {
-        // This functions uses the known ArUco poses in the base_link frame to filter the point cloud
+        // This function transforms known ArUco map poses into the point cloud frame and filters
         // keeping only points that are within tolerace_radius_ meters of the supposed ArUco poses.
         // It filters by map poses among landmarks that pass the camera association gate.
         // theoretically we do not need the camera detections of aruco tags for this,
@@ -381,24 +385,6 @@ private:
         const int64_t now_ns = this->now().nanoseconds();
         if (now_ns - last_cloud_time_ns_ < min_cloud_period_ns_) return;
         last_cloud_time_ns_ = now_ns;
-
-        const auto landmarks_in_base_link = get_aruco_poses_in_base_link(landmark_poses_);
-        for (size_t i = 0; i < landmarks_in_base_link.size(); ++i) {
-            RCLCPP_WARN_THROTTLE(
-                this->get_logger(),
-                *get_clock(),
-                3000,
-                "[phi_filter] Landmark %zu: x=%.3f, y=%.3f",
-                i,
-                landmarks_in_base_link[i].first,
-                landmarks_in_base_link[i].second
-            );
-        }
-        if (landmarks_in_base_link.empty()) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                "[phi_filter] EXIT: landmarks_in_base_link empty (TF failed)");
-            return;
-        }
 
         // get the detected aruco angles, ranges and marker IDs in the camera frame.
         std::vector<double> cam_angles, cam_ranges;
@@ -418,8 +404,8 @@ private:
         // sees it then it means we should have LoS and it should be visible in the pcl.
         // if the detection code is robust enough then one could just remove this dependance on the cameras.
         if (cam_marker_ids.empty()) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                "[phi_filter] EXIT: cam_marker_ids empty (no camera detections stored)");
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+            //     "[phi_filter] EXIT: cam_marker_ids empty (no camera detections stored)");
             return;
         }
 
@@ -432,10 +418,10 @@ private:
                 selected_landmark_map_positions_.clear();
                 selected_count_ = 0;
             }
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                "[phi_filter] EXIT: stale camera detections (age %.3fs > ttl %.3fs)",
-                (now_ns - last_camera_update_ns) / 1e9,
-                camera_detection_ttl_ns_ / 1e9);
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+            //     "[phi_filter] EXIT: stale camera detections (age %.3fs > ttl %.3fs)",
+            //     (now_ns - last_camera_update_ns) / 1e9,
+            //     camera_detection_ttl_ns_ / 1e9);
             return;
         }
 
@@ -457,9 +443,9 @@ private:
         for (size_t i = 0; i < cam_marker_ids.size(); ++i) {
             const int64_t id = cam_marker_ids[i];
             if (i >= cam_map_positions.size()) {
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                    "[phi_filter] cam[%zu] marker_id=%ld has no map position, skipping",
-                    i, static_cast<long>(id));
+                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+                //     "[phi_filter] cam[%zu] marker_id=%ld has no map position, skipping",
+                //     i, static_cast<long>(id));
                 continue;
             }
             if (std::find(selected_ids.begin(), selected_ids.end(), id) != selected_ids.end()) {
@@ -470,9 +456,9 @@ private:
             const double map_y = cam_map_positions[i].second;
             if (!std::isfinite(map_x) || !std::isfinite(map_y) ||
                 map_x == OUT_OF_BOUNDS_COORD || map_y == OUT_OF_BOUNDS_COORD) {
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                    "[phi_filter] cam[%zu] marker_id=%ld map position invalid, skipping",
-                    i, static_cast<long>(id));
+                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+                //     "[phi_filter] cam[%zu] marker_id=%ld map position invalid, skipping",
+                //     i, static_cast<long>(id));
                 continue;
             }
 
@@ -482,8 +468,16 @@ private:
             selected_ranges.push_back(cam_ranges[i]);
         }
 
+        // Transform selected landmarks directly from map into the point cloud frame
+        // so the spatial filter operates in the exact coordinate system of the LiDAR points.
+        const std::string &cloud_frame = in->header.frame_id;
+        if (cloud_frame.empty()) {
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+            //     "[phi_filter] EXIT: input cloud has empty frame_id");
+            return;
+        }
         std::vector<std::pair<double, double>> selected_landmarks =
-            get_aruco_poses_in_base_link(selected_map_positions);
+            get_aruco_poses_in_frame(selected_map_positions, cloud_frame);
 
         std::vector<std::pair<double, double>> valid_selected_landmarks;
         valid_selected_landmarks.reserve(selected_landmarks.size());
@@ -492,66 +486,40 @@ private:
             const double ly = selected_landmarks[i].second;
             if (!std::isfinite(lx) || !std::isfinite(ly) ||
                 lx == OUT_OF_BOUNDS_COORD || ly == OUT_OF_BOUNDS_COORD) {
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                    "[phi_filter] cam id=%ld map=(%.2f,%.2f) transformed invalid, skipping",
-                    static_cast<long>(selected_ids[i]),
-                    selected_map_positions[i].first, selected_map_positions[i].second);
+                // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+                //     "[phi_filter] cam id=%ld map=(%.2f,%.2f) transformed invalid, skipping",
+                //     static_cast<long>(selected_ids[i]),
+                //     selected_map_positions[i].first, selected_map_positions[i].second);
                 continue;
             }
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                "[phi_filter] cam id=%ld ang=%.1f° range=%.2fm map=(%.2f,%.2f) -> base=(%.2f,%.2f)",
-                static_cast<long>(selected_ids[i]), selected_angles[i], selected_ranges[i],
-                selected_map_positions[i].first, selected_map_positions[i].second, lx, ly);
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+            //     "[phi_filter] cam id=%ld ang=%.1f° range=%.2fm map=(%.2f,%.2f) -> %s=(%.2f,%.2f)",
+            //     static_cast<long>(selected_ids[i]), selected_angles[i], selected_ranges[i],
+            //     selected_map_positions[i].first, selected_map_positions[i].second,
+            //     cloud_frame.c_str(), lx, ly);
             valid_selected_landmarks.push_back({lx, ly});
         }
         selected_landmarks = std::move(valid_selected_landmarks);
 
         if (selected_landmarks.empty()) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                "[phi_filter] EXIT: no valid camera landmark map positions "
-                "(cam_marker_ids=%zu)",
-                cam_marker_ids.size());
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+            //     "[phi_filter] EXIT: no valid camera landmark map positions "
+            //     "(cam_marker_ids=%zu)",
+            //     cam_marker_ids.size());
             return;
         }
 
-        // Transform selected landmarks from base_link into the point cloud frame
-        // so the spatial filter operates in the same coordinate system as the lidar points.
-        const std::string &cloud_frame = in->header.frame_id;
-        if (cloud_frame != "base_link") {
-            try {
-                auto tf_bl_to_cloud = tf_buffer_.lookupTransform(
-                    cloud_frame, "base_link", tf2::TimePointZero);
-                geometry_msgs::msg::PointStamped pt_in, pt_out;
-                pt_in.header.frame_id = "base_link";
-                pt_in.point.z = 0.0;
-                for (auto &lm : selected_landmarks) {
-                    pt_in.point.x = lm.first;
-                    pt_in.point.y = lm.second;
-                    tf2::doTransform(pt_in, pt_out, tf_bl_to_cloud);
-                    lm.first  = pt_out.point.x;
-                    lm.second = pt_out.point.y;
-                }
-            } catch (const tf2::TransformException &ex) {
-                RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-                    "[phi_filter] Cannot transform landmarks to cloud frame '%s': %s",
-                    cloud_frame.c_str(), ex.what());
-                return;
-            }
-        }
-
         // Debug: print landmark positions in cloud frame and tolerance
-        std::string lm_str;
-        for (size_t i = 0; i < selected_landmarks.size(); ++i) {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "(%.2f,%.2f) ", selected_landmarks[i].first, selected_landmarks[i].second);
-            lm_str += buf;
-        }
+        // std::string lm_str;
+        // for (size_t i = 0; i < selected_landmarks.size(); ++i) {
+        //     char buf[64];
+        //     snprintf(buf, sizeof(buf), "(%.2f,%.2f) ", selected_landmarks[i].first, selected_landmarks[i].second);
+        //     lm_str += buf;
+        // }
         // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 1000,
         //     "[phi_filter] landmarks in '%s' frame: %s| tol=%.2fm",
         //     cloud_frame.c_str(), lm_str.c_str(), tolerance_radius_);
-
-        RCLCPP_INFO(this->get_logger(), "lidar frame Landmarks in %s", lm_str.c_str());
-        
+        // RCLCPP_INFO(this->get_logger(), "lidar frame Landmarks in %s", lm_str.c_str());
 
         // bounding box filter over all selected landmark neighborhoods (now in cloud frame)
         const double bounding_box_tol = tolerance_radius_;
@@ -586,13 +554,8 @@ private:
         size_t rej_z = 0;       // rejected by z filter
         size_t rej_bbox = 0;    // rejected by bounding box filter
         size_t rej_radius = 0;  // inside bbox but outside tolerance_radius of every landmark
-        float z_seen_min =  std::numeric_limits<float>::infinity();
-        float z_seen_max = -std::numeric_limits<float>::infinity();
 
         for (const auto &p : points_buf_) {
-            if (p[2] < z_seen_min) z_seen_min = p[2];
-            if (p[2] > z_seen_max) z_seen_max = p[2];
-
             if (p[2] < hauteur_z_min || p[2] > hauteur_z_max) { ++rej_z; continue; }
 
             const double px = p[0];
@@ -617,12 +580,12 @@ private:
             if (!in_radius) ++rej_radius;
         }
 
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
-            "[phi_filter] stats: in=%zu kept=%zu rej_z=%zu rej_bbox=%zu rej_radius=%zu "
-            "| z_seen=[%.2f..%.2f] z_filt=[%.2f..%.2f] | bbox=[%.2f..%.2f, %.2f..%.2f] frame='%s'",
-            points_buf_.size(), kept, rej_z, rej_bbox, rej_radius,
-            z_seen_min, z_seen_max, hauteur_z_min, hauteur_z_max,
-            xmin, xmax, ymin, ymax, in->header.frame_id.c_str());
+        // RCLCPP_WARN_THROTTLE(this->get_logger(), *get_clock(), 3000,
+        //     "[phi_filter] stats: in=%zu kept=%zu rej_z=%zu rej_bbox=%zu rej_radius=%zu "
+        //     "| z_seen=[%.2f..%.2f] z_filt=[%.2f..%.2f] | bbox=[%.2f..%.2f, %.2f..%.2f] frame='%s'",
+        //     points_buf_.size(), kept, rej_z, rej_bbox, rej_radius,
+        //     z_seen_min, z_seen_max, hauteur_z_min, hauteur_z_max,
+        //     xmin, xmax, ymin, ymax, in->header.frame_id.c_str());
 
         if (kept == 0) {
             return;

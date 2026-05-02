@@ -116,10 +116,10 @@ MOTOR_CHANGE_STATE_SERVICE = '/NAV_motor_cmds/change_state'
 MOTOR_GET_STATE_SERVICE = '/NAV_motor_cmds/get_state'
 
 # Hardware constants
-WHEELS_RADIUS_M = 0.1325  # meters
+WHEELS_RADIUS_M = 0.131  # meters
 GEAR_RATIO = 1.0 / 53.0
-MIN_ROVER_SPEED_MS = 0.5  # m/s
-MAX_ROVER_SPEED_MS = 2.0  # m/s
+MIN_ROVER_SPEED_MS = 0.6  # m/s
+MAX_ROVER_SPEED_MS = 2.4  # m/s
 
 # Motor conversion constants
 PI = 3.141592

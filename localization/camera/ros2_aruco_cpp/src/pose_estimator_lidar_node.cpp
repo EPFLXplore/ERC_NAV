@@ -1,4 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -6,6 +7,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/time.h>
 #include <Eigen/Dense>
 
@@ -72,6 +74,15 @@ struct Measurement {
     double vx, vy;   // bearing unit vector (pointing from landmark to rover)
 };
 
+struct ValidMarker {
+    int landmark_index;
+    int msg_index;
+    double base_x;
+    double base_y;
+    double range;
+    double bearing_rad;
+};
+
 /* ------------------------------------------------------------------ */
 /*  Node                                                              */
 /* ------------------------------------------------------------------ */
@@ -79,6 +90,14 @@ struct Measurement {
 class PoseEstimatorLidarNode : public rclcpp::Node
 {
 public:
+    /* ---- two-phase init state ---- */
+    // CAMERA: initialise map->odom from /aruco_markers (camera bearings only).
+    // CUBE  : re-iterate using /cube_markers (lidar-refined cube centers).
+    //         This phase requires the Phase-1 map->odom to be broadcast so that
+    //         lidar_phi_filter and detect_cube can label cubes correctly.
+    // DONE  : continuous post-init updates from /cube_markers.
+    enum class InitPhase { CAMERA, CUBE, DONE };
+
     PoseEstimatorLidarNode() : Node("pose_estimator_lidar_node")
     {
         /* ---- state ---- */
@@ -91,8 +110,9 @@ public:
         time_of_last_yaw_meas_ = now();
 
         /* ---- init averaging ---- */
-        init_callback_counter_ = 0;
-        initialized_map_odom_tf_ = false;
+        init_phase_ = InitPhase::CAMERA;
+        init_counter_phase1_ = 0;
+        init_counter_phase2_ = 0;
         last_callback_time_ = now();
 
         /* ---- callback groups ---- */
@@ -107,6 +127,15 @@ public:
 
         rclcpp::SubscriptionOptions solver_opts;
         solver_opts.callback_group = solver_cbg_;
+        // Phase 1 input: camera-only ArUco detections from multiview_aruco_node.
+        aruco_sub_ = create_subscription<
+            ros2_aruco_interfaces::msg::ArucoMarkers>(
+            "/aruco_markers",
+            sensor_qos,
+            std::bind(&PoseEstimatorLidarNode::aruco_callback, this,
+                      std::placeholders::_1),
+            solver_opts);
+        // Phase 2 input + post-init updates: lidar-refined cube centers from detect_cube.
         cube_sub_ = create_subscription<
             ros2_aruco_interfaces::msg::ArucoMarkers>(
             "/cube_markers",
@@ -149,7 +178,10 @@ private:
     /*  Constants & state                                               */
     /* ================================================================ */
     static constexpr double MAP_SIZE           = 300.0;
-    static constexpr int    NBR_INIT_CALLBACKS = 15;
+    // Phase 1: camera-bearings-only init samples.
+    static constexpr int    NBR_INIT_CALLBACKS_PHASE1 = 15;
+    // Phase 2: cube-refined init samples (after Phase-1 TF is broadcast).
+    static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 15;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
     static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
@@ -164,14 +196,14 @@ private:
     const std::array<double, 2> erc_start_pos_{0.0, 0.0};
 
     const std::vector<std::pair<double, double>> landmark_poses_ = {
-        {1.25, -1.13},            // id 51
+        {0.85, -0.8},          // id 51
         {999999, 999999},             // id 52
-        {1.31, 1.1},       // id 53
+        {1.38, 1.08},       // id 53
         {999999, 999999},       // id 54
         {999999, 999999},       // id 55
         {999999, 999999},       // id 56
         {999999, 999999},       // id 57
-        {-1.80, 0.40},       // id 58
+        {-1.56, 0.27},       // id 58
         {999999, 999999},       // id 59
         {999999, 999999},       // id 60
         {999999, 999999},       // id 61
@@ -193,11 +225,14 @@ private:
            curr_map_base_yaw_{0.0};
 
     /* ---- init accumulation ---- */
-    int  init_callback_counter_;
-    bool initialized_map_odom_tf_;
+    InitPhase init_phase_;
+    int  init_counter_phase1_;
+    int  init_counter_phase2_;
     rclcpp::Time last_callback_time_;
-    std::vector<geometry_msgs::msg::TransformStamped> avg_initialization_tfs_;
-    std::vector<double> yaw_init_list_;
+    std::vector<geometry_msgs::msg::TransformStamped> phase1_tfs_;
+    std::vector<double> phase1_yaws_;
+    std::vector<geometry_msgs::msg::TransformStamped> phase2_tfs_;
+    std::vector<double> phase2_yaws_;
 
     /* ---- TF ---- */
     std::shared_ptr<tf2_ros::Buffer>              tf_buffer_;
@@ -208,6 +243,8 @@ private:
 
     /* ---- ROS ---- */
     rclcpp::CallbackGroup::SharedPtr solver_cbg_, rt_cbg_;
+    rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr
+        aruco_sub_;
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr
         cube_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_sub_;
@@ -266,18 +303,17 @@ private:
     /* ================================================================ */
     double deduce_yaw(
         double est_x, double est_y,
-        const std::vector<std::tuple<int, int>> &valid_markers,
+        const std::vector<ValidMarker> &valid_markers,
         const ros2_aruco_interfaces::msg::ArucoMarkers &msg) const
     {
+        (void)msg;
         std::vector<double> yaw_list;
         yaw_list.reserve(valid_markers.size());
-        for (auto &[idx, k] : valid_markers) {
-            auto &lm = landmark_poses_[idx];
+        for (const auto &marker : valid_markers) {
+            auto &lm = landmark_poses_[marker.landmark_index];
             double bearing_map =
                 std::atan2(lm.second - est_y, lm.first - est_x);
-            double measured_phi =
-                msg.ar_angles_list[k] * M_PI / 180.0;
-            yaw_list.push_back(wrap(bearing_map - measured_phi));
+            yaw_list.push_back(wrap(bearing_map - marker.bearing_rad));
         }
         return circular_mean_yaw(yaw_list);
     }
@@ -331,7 +367,7 @@ private:
     {
         try {
             auto tf = tf_buffer_->lookupTransform(
-                "odom", "map", tf2::TimePointZero);
+                "map", "odom", tf2::TimePointZero);
             double tf_yaw = quat_to_yaw(tf.transform.rotation);
             Eigen::Matrix4d T_map_odom = pose_to_mat(
                 tf.transform.translation.x,
@@ -362,6 +398,133 @@ private:
                 curr_map_base_y_   = odom_pos_y_;
                 curr_map_base_yaw_ = odom_yaw_;
             }
+        }
+    }
+
+    bool marker_position_in_base_link(
+        const ros2_aruco_interfaces::msg::ArucoMarkers &msg,
+        size_t marker_msg_index,
+        double &base_x,
+        double &base_y)
+    {
+        if (marker_msg_index >= msg.poses.size()) {
+            return false;
+        }
+
+        const auto &p = msg.poses[marker_msg_index].position;
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+            return false;
+        }
+
+        const std::string &source_frame = msg.header.frame_id;
+        if (source_frame.empty()) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                "[pose_estimator_lidar] cube_markers has empty frame_id, skipping marker");
+            return false;
+        }
+
+        if (source_frame == "base_link") {
+            base_x = p.x;
+            base_y = p.y;
+            return std::isfinite(base_x) && std::isfinite(base_y);
+        }
+
+        try {
+            if (!tf_buffer_->canTransform(
+                    "base_link", source_frame, tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                    "[pose_estimator_lidar] TF unavailable %s -> base_link, skipping marker",
+                    source_frame.c_str());
+                return false;
+            }
+
+            const auto tf = tf_buffer_->lookupTransform(
+                "base_link", source_frame, tf2::TimePointZero);
+
+            geometry_msgs::msg::PointStamped point_in, point_out;
+            point_in.header.frame_id = source_frame;
+            point_in.header.stamp = rclcpp::Time(0);
+            point_in.point = p;
+            tf2::doTransform(point_in, point_out, tf);
+
+            base_x = point_out.point.x;
+            base_y = point_out.point.y;
+            return std::isfinite(base_x) && std::isfinite(base_y);
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                "[pose_estimator_lidar] Transform %s -> base_link failed: %s",
+                source_frame.c_str(), ex.what());
+            return false;
+        }
+    }
+
+    bool marker_bearing_in_base_link(
+        const ros2_aruco_interfaces::msg::ArucoMarkers &msg,
+        size_t marker_msg_index,
+        double &bearing_rad)
+    {
+        if (marker_msg_index >= msg.ar_angles_list.size()) {
+            return false;
+        }
+
+        const double source_bearing = msg.ar_angles_list[marker_msg_index] * M_PI / 180.0;
+        if (!std::isfinite(source_bearing)) {
+            return false;
+        }
+
+        const std::string &source_frame = msg.header.frame_id;
+        if (source_frame.empty()) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                "[pose_estimator_lidar] cube_markers has empty frame_id, skipping bearing");
+            return false;
+        }
+
+        if (source_frame == "base_link") {
+            bearing_rad = wrap(source_bearing);
+            return true;
+        }
+
+        try {
+            if (!tf_buffer_->canTransform(
+                    "base_link", source_frame, tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                    "[pose_estimator_lidar] TF unavailable %s -> base_link, skipping bearing",
+                    source_frame.c_str());
+                return false;
+            }
+
+            const auto tf = tf_buffer_->lookupTransform(
+                "base_link", source_frame, tf2::TimePointZero);
+
+            geometry_msgs::msg::PointStamped origin_in, origin_out;
+            origin_in.header.frame_id = source_frame;
+            origin_in.header.stamp = rclcpp::Time(0);
+            origin_in.point.x = 0.0;
+            origin_in.point.y = 0.0;
+            origin_in.point.z = 0.0;
+
+            geometry_msgs::msg::PointStamped bearing_in, bearing_out;
+            bearing_in.header = origin_in.header;
+            bearing_in.point.x = std::cos(source_bearing);
+            bearing_in.point.y = std::sin(source_bearing);
+            bearing_in.point.z = 0.0;
+
+            tf2::doTransform(origin_in, origin_out, tf);
+            tf2::doTransform(bearing_in, bearing_out, tf);
+
+            const double dx = bearing_out.point.x - origin_out.point.x;
+            const double dy = bearing_out.point.y - origin_out.point.y;
+            if (!std::isfinite(dx) || !std::isfinite(dy) || std::hypot(dx, dy) < 1e-6) {
+                return false;
+            }
+
+            bearing_rad = std::atan2(dy, dx);
+            return true;
+        } catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                "[pose_estimator_lidar] Bearing transform %s -> base_link failed: %s",
+                source_frame.c_str(), ex.what());
+            return false;
         }
     }
 
@@ -435,22 +598,19 @@ private:
     /*  Build measurements for SOCP solver                              */
     /* ================================================================ */
     std::vector<Measurement> build_measurements(
-        const std::vector<std::tuple<int, int>> &valid_markers,
+        const std::vector<ValidMarker> &valid_markers,
         const ros2_aruco_interfaces::msg::ArucoMarkers &msg) const
     {
+        (void)msg;
         std::vector<Measurement> meas;
         meas.reserve(valid_markers.size());
-        for (auto &[idx, k] : valid_markers) {
-            double lm_x = landmark_poses_[idx].first;
-            double lm_y = landmark_poses_[idx].second;
-            double px = msg.poses[k].position.x;
-            double py = msg.poses[k].position.y;
-            double r = std::hypot(px, py);
-            if (r < 1e-3) continue;
-            double bearing_rad = msg.ar_angles_list[k] * M_PI / 180.0;
-            meas.push_back({lm_x, lm_y, r,
-                            -std::cos(bearing_rad),
-                            -std::sin(bearing_rad)});
+        for (const auto &marker : valid_markers) {
+            double lm_x = landmark_poses_[marker.landmark_index].first;
+            double lm_y = landmark_poses_[marker.landmark_index].second;
+            if (marker.range < 1e-3) continue;
+            meas.push_back({lm_x, lm_y, marker.range,
+                            -std::cos(marker.bearing_rad),
+                            -std::sin(marker.bearing_rad)});
         }
         return meas;
     }
@@ -579,32 +739,80 @@ private:
     }
 
     /* ================================================================ */
-    /*  Main callback: /cube_markers                                    */
+    /*  Phase-1 input: camera-only ArUco detections                     */
+    /*  Active only while init_phase_ == CAMERA.                        */
+    /* ================================================================ */
+    void aruco_callback(
+        const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg)
+    {
+        if (init_phase_ != InitPhase::CAMERA) return;
+        handle_marker_message(msg, /*from_camera=*/true);
+    }
+
+    /* ================================================================ */
+    /*  Phase-2 input + post-init updates: lidar-refined cube centers   */
+    /*  Ignored while init_phase_ == CAMERA (Phase-1 must finish first  */
+    /*  so that detect_cube has a valid map->base_link TF to label      */
+    /*  cubes correctly).                                               */
     /* ================================================================ */
     void cube_callback(
         const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg)
     {
+        if (init_phase_ == InitPhase::CAMERA) return;
+        handle_marker_message(msg, /*from_camera=*/false);
+    }
+
+    /* ================================================================ */
+    /*  Shared processing: validate markers, run init or post-init      */
+    /*  update, accumulate samples for the active phase, broadcast TF.  */
+    /* ================================================================ */
+    void handle_marker_message(
+        const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg,
+        bool from_camera)
+    {
         rclcpp::Time t_now = now();
         double dt_since_last =
             (t_now - last_callback_time_).seconds();
+        // Rate-limit only after both init phases are complete.
         if (dt_since_last < CALLBACK_PERIOD_LIMIT &&
-            initialized_map_odom_tf_)
+            init_phase_ == InitPhase::DONE)
             return;
         last_callback_time_ = t_now;
 
         update_curr_map_base();
 
         /* ---- validate markers ---- */
-        using VM = std::tuple<int, int>;   // (landmark_index, msg_index)
-        std::vector<VM> valid_markers;
+        std::vector<ValidMarker> valid_markers;
         for (size_t k = 0; k < msg->marker_ids.size(); ++k) {
             int idx = static_cast<int>(msg->marker_ids[k]);
             if (idx < 0 || idx >= static_cast<int>(landmark_poses_.size()))
                 continue;
             auto &lm = landmark_poses_[idx];
-            if (std::abs(lm.first)  < MAP_SIZE &&
-                std::abs(lm.second) < MAP_SIZE)
-                valid_markers.emplace_back(idx, static_cast<int>(k));
+            if (std::abs(lm.first)  >= MAP_SIZE ||
+                std::abs(lm.second) >= MAP_SIZE)
+                continue;
+
+            double base_x = 0.0;
+            double base_y = 0.0;
+            if (!marker_position_in_base_link(*msg, k, base_x, base_y))
+                continue;
+
+            const double range = std::hypot(base_x, base_y);
+            if (!std::isfinite(range) || range < 1e-3)
+                continue;
+
+            double bearing_rad = 0.0;
+            if (!marker_bearing_in_base_link(*msg, k, bearing_rad))
+                continue;
+
+            valid_markers.push_back({
+                idx,
+                static_cast<int>(k),
+                base_x,
+                base_y,
+                range,
+                bearing_rad
+            });
         }
 
         int n = static_cast<int>(valid_markers.size());
@@ -613,18 +821,21 @@ private:
         bool is_measurement_valid = false;
         std::optional<geometry_msgs::msg::TransformStamped> transform_msg;
 
+        const char *src_tag = from_camera ? "P1" : "P2";
+
         /* ============================================================ */
-        /*  INITIALISATION PHASE                                        */
+        /*  INITIALISATION PHASE (Phase 1 OR Phase 2)                   */
+        /*  Same algorithm; only the input source and accumulator       */
+        /*  buffer differ.                                              */
         /* ============================================================ */
-        if (!initialized_map_odom_tf_) {
+        if (init_phase_ != InitPhase::DONE) {
 
             if (n == 1) {
-                auto [iA, kA] = valid_markers[0];
-                auto &A = landmark_poses_[iA];
-                double phiA = msg->ar_angles_list[kA] * M_PI / 180.0;
+                const auto &mA = valid_markers[0];
+                auto &A = landmark_poses_[mA.landmark_index];
                 double x0 = erc_start_pos_[0], y0 = erc_start_pos_[1];
                 double yawA = wrap(
-                    std::atan2(A.second - y0, A.first - x0) - phiA);
+                    std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
 
                 yaw_estimate_ = yawA;
                 x_estimate_ = x0;
@@ -633,38 +844,23 @@ private:
                 time_of_last_yaw_meas_ = t_now;
 
                 RCLCPP_INFO(get_logger(),
-                    "[INIT n=1] yaw = %.2f deg",
-                    yaw_estimate_ * 180.0 / M_PI);
+                    "[%s INIT n=1] yaw = %.2f deg",
+                    src_tag, yaw_estimate_ * 180.0 / M_PI);
 
-                Eigen::Matrix4d T_map_base =
-                    pose_to_mat(x0, y0, yaw_estimate_);
-                Eigen::Matrix4d T_map_odom =
-                    T_map_base; // odom==identity at init
-
-                geometry_msgs::msg::TransformStamped tf;
-                tf.header.stamp = stamp_now(this);
-                tf.header.frame_id = "map";
-                tf.child_frame_id  = "odom";
-                tf.transform.translation.x = T_map_odom(0, 3);
-                tf.transform.translation.y = T_map_odom(1, 3);
-                tf.transform.rotation = yaw_to_quat(
-                    std::atan2(T_map_odom(1, 0), T_map_odom(0, 0)));
-                transform_msg = tf;
+                transform_msg = build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_);
                 is_measurement_valid = true;
 
             } else if (n == 2) {
-                auto [iA, kA] = valid_markers[0];
-                auto [iB, kB] = valid_markers[1];
-                auto &A = landmark_poses_[iA];
-                auto &B = landmark_poses_[iB];
-                double phiA = msg->ar_angles_list[kA] * M_PI / 180.0;
-                double phiB = msg->ar_angles_list[kB] * M_PI / 180.0;
+                const auto &mA = valid_markers[0];
+                const auto &mB = valid_markers[1];
+                auto &A = landmark_poses_[mA.landmark_index];
+                auto &B = landmark_poses_[mB.landmark_index];
                 double x0 = erc_start_pos_[0], y0 = erc_start_pos_[1];
 
                 double yawA = wrap(
-                    std::atan2(A.second - y0, A.first - x0) - phiA);
+                    std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
                 double yawB = wrap(
-                    std::atan2(B.second - y0, B.first - x0) - phiB);
+                    std::atan2(B.second - y0, B.first - x0) - mB.bearing_rad);
                 yaw_estimate_ = wrap(0.5 * (yawA + yawB));
                 x_estimate_ = x0;
                 y_estimate_ = y0;
@@ -672,22 +868,10 @@ private:
                 time_of_last_yaw_meas_ = t_now;
 
                 RCLCPP_INFO(get_logger(),
-                    "[INIT n=2] yaw = %.2f deg",
-                    yaw_estimate_ * 180.0 / M_PI);
+                    "[%s INIT n=2] yaw = %.2f deg",
+                    src_tag, yaw_estimate_ * 180.0 / M_PI);
 
-                Eigen::Matrix4d T_map_base =
-                    pose_to_mat(x0, y0, yaw_estimate_);
-                Eigen::Matrix4d T_map_odom = T_map_base;
-
-                geometry_msgs::msg::TransformStamped tf;
-                tf.header.stamp = stamp_now(this);
-                tf.header.frame_id = "map";
-                tf.child_frame_id  = "odom";
-                tf.transform.translation.x = T_map_odom(0, 3);
-                tf.transform.translation.y = T_map_odom(1, 3);
-                tf.transform.rotation = yaw_to_quat(
-                    std::atan2(T_map_odom(1, 0), T_map_odom(0, 0)));
-                transform_msg = tf;
+                transform_msg = build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_);
                 is_measurement_valid = true;
 
             } else if (n >= 3) {
@@ -709,31 +893,18 @@ private:
                         time_of_last_yaw_meas_ = t_now;
 
                         RCLCPP_INFO(get_logger(),
-                            "[INIT n>=%d] P=(%.3f, %.3f), yaw=%.2f deg",
-                            n, xy->first, xy->second,
+                            "[%s INIT n>=%d] P=(%.3f, %.3f), yaw=%.2f deg",
+                            src_tag, n, xy->first, xy->second,
                             yaw_estimate_ * 180.0 / M_PI);
 
-                        Eigen::Matrix4d T_map_base =
-                            pose_to_mat(xy->first, xy->second,
-                                        yaw_estimate_);
-                        Eigen::Matrix4d T_map_odom = T_map_base;
-
-                        geometry_msgs::msg::TransformStamped tf;
-                        tf.header.stamp = stamp_now(this);
-                        tf.header.frame_id = "map";
-                        tf.child_frame_id  = "odom";
-                        tf.transform.translation.x = T_map_odom(0, 3);
-                        tf.transform.translation.y = T_map_odom(1, 3);
-                        tf.transform.rotation = yaw_to_quat(
-                            std::atan2(T_map_odom(1, 0),
-                                       T_map_odom(0, 0)));
-                        transform_msg = tf;
+                        transform_msg = build_map_odom_tf(
+                            x_estimate_, y_estimate_, yaw_estimate_);
                         is_measurement_valid = true;
                     } else {
                         RCLCPP_WARN(get_logger(),
-                            "[INIT] Rejected: solution (%.3f,%.3f) "
+                            "[%s INIT] Rejected: solution (%.3f,%.3f) "
                             "too far from start (%.2f m)",
-                            xy->first, xy->second,
+                            src_tag, xy->first, xy->second,
                             std::hypot(dx, dy));
                     }
                 }
@@ -800,30 +971,13 @@ private:
         }
 
         /* ============================================================ */
-        /*  INITIALISATION ACCUMULATION                                 */
+        /*  INITIALISATION ACCUMULATION (per-phase)                     */
         /* ============================================================ */
-        if (init_callback_counter_ < NBR_INIT_CALLBACKS &&
-            is_measurement_valid && transform_msg.has_value())
-        {
-            ++init_callback_counter_;
-            avg_initialization_tfs_.push_back(transform_msg.value());
-            yaw_init_list_.push_back(yaw_estimate_);
-
-            RCLCPP_INFO(get_logger(),
-                "[ACCUM %d/%d] yaw=%.2f deg",
-                init_callback_counter_, NBR_INIT_CALLBACKS,
-                yaw_estimate_ * 180.0 / M_PI);
-
-            if (init_callback_counter_ == NBR_INIT_CALLBACKS) {
-                initialized_map_odom_tf_ = true;
-                prev_map_odom_tf_ = calculate_robust_tf_avg(
-                    avg_initialization_tfs_, yaw_init_list_);
-                tf_broadcaster_->sendTransform(
-                    prev_map_odom_tf_.value());
-                RCLCPP_INFO(get_logger(),
-                    "INITIALIZED map->odom TF. "
-                    "Rate-limiting to %.1f Hz",
-                    1.0 / CALLBACK_PERIOD_LIMIT);
+        if (is_measurement_valid && transform_msg.has_value()) {
+            if (init_phase_ == InitPhase::CAMERA && from_camera) {
+                accumulate_phase1(*transform_msg);
+            } else if (init_phase_ == InitPhase::CUBE && !from_camera) {
+                accumulate_phase2(*transform_msg);
             }
         }
 
@@ -834,6 +988,89 @@ private:
         /* ---- reset per-callback flags ---- */
         solved_new_xy_ = false;
         measured_new_yaw_ = false;
+    }
+
+    /* ================================================================ */
+    /*  Phase-1 accumulation: camera-only init samples.                 */
+    /*  When full, broadcast the robust-averaged TF so that             */
+    /*  lidar_phi_filter and detect_cube can produce correctly          */
+    /*  labelled cubes. Then transition to Phase 2.                     */
+    /* ================================================================ */
+    void accumulate_phase1(
+        const geometry_msgs::msg::TransformStamped &tf_sample)
+    {
+        if (init_counter_phase1_ >= NBR_INIT_CALLBACKS_PHASE1) return;
+
+        ++init_counter_phase1_;
+        phase1_tfs_.push_back(tf_sample);
+        phase1_yaws_.push_back(yaw_estimate_);
+
+        RCLCPP_INFO(get_logger(),
+            "[P1 ACCUM %d/%d] yaw=%.2f deg",
+            init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
+            yaw_estimate_ * 180.0 / M_PI);
+
+        if (init_counter_phase1_ < NBR_INIT_CALLBACKS_PHASE1) return;
+
+        // Phase 1 complete: broadcast the camera-derived map->odom TF
+        // so downstream lidar nodes can label cubes correctly.
+        prev_map_odom_tf_ =
+            calculate_robust_tf_avg(phase1_tfs_, phase1_yaws_);
+        tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
+        init_phase_ = InitPhase::CUBE;
+
+        RCLCPP_INFO(get_logger(),
+            "PHASE 1 DONE (camera bearings): broadcasting initial "
+            "map->odom TF. Switching to PHASE 2 (cube refinement).");
+    }
+
+    /* ================================================================ */
+    /*  Phase-2 accumulation: lidar-refined cube samples.               */
+    /*  Refines the Phase-1 TF using detect_cube output, which is now   */
+    /*  reliable because the Phase-1 map->base_link TF is broadcast.    */
+    /* ================================================================ */
+    void accumulate_phase2(
+        const geometry_msgs::msg::TransformStamped &tf_sample)
+    {
+        if (init_counter_phase2_ >= NBR_INIT_CALLBACKS_PHASE2) return;
+
+        ++init_counter_phase2_;
+        phase2_tfs_.push_back(tf_sample);
+        phase2_yaws_.push_back(yaw_estimate_);
+
+        RCLCPP_INFO(get_logger(),
+            "[P2 ACCUM %d/%d] yaw=%.2f deg",
+            init_counter_phase2_, NBR_INIT_CALLBACKS_PHASE2,
+            yaw_estimate_ * 180.0 / M_PI);
+
+        if (init_counter_phase2_ < NBR_INIT_CALLBACKS_PHASE2) return;
+
+        // Phase 2 complete: refine TF and enter post-init mode.
+        auto refined =
+            calculate_robust_tf_avg(phase2_tfs_, phase2_yaws_);
+
+        if (prev_map_odom_tf_.has_value()) {
+            const auto &p1 = prev_map_odom_tf_.value().transform;
+            const auto &p2 = refined.transform;
+            double dxy = std::hypot(
+                p2.translation.x - p1.translation.x,
+                p2.translation.y - p1.translation.y);
+            double dyaw =
+                std::fabs(wrap(quat_to_yaw(p2.rotation) -
+                               quat_to_yaw(p1.rotation))) * 180.0 / M_PI;
+            RCLCPP_INFO(get_logger(),
+                "PHASE 2 refinement vs PHASE 1: dxy=%.3f m, dyaw=%.2f deg",
+                dxy, dyaw);
+        }
+
+        prev_map_odom_tf_ = refined;
+        tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
+        init_phase_ = InitPhase::DONE;
+
+        RCLCPP_INFO(get_logger(),
+            "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF. "
+            "Rate-limiting to %.1f Hz",
+            1.0 / CALLBACK_PERIOD_LIMIT);
     }
 };
 

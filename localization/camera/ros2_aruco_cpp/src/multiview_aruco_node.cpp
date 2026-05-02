@@ -112,7 +112,7 @@ class MultiViewArucoNode : public rclcpp::Node
 public:
     MultiViewArucoNode() : Node("multi_view_aruco_node")
     {
-        RCLCPP_INFO(get_logger(), "Multi camera (C++)");
+        // RCLCPP_INFO(get_logger(), "Multi camera (C++)");
 
         /* ---- parameters ---- */
         declare_parameter("aruco_dictionary_id", "DICT_5X5_250");
@@ -174,14 +174,14 @@ public:
         /* ---- landmark map positions (indexed by aruco_index = id - 51) ---- */
 
         landmark_poses_ = {
-            {1.25, -1.13},            // id 51
+            {0.85, -0.8},          // id 51
             {999999, 999999},             // id 52
-            {1.31, 1.1},       // id 53
+            {1.38, 1.08},       // id 53
             {999999, 999999},       // id 54
             {999999, 999999},       // id 55
             {999999, 999999},       // id 56
             {999999, 999999},       // id 57
-            {-1.80, 0.40},       // id 58
+            {-1.56, 0.27},       // id 58
             {999999, 999999},       // id 59
             {999999, 999999},       // id 60
             {999999, 999999},       // id 61
@@ -317,8 +317,8 @@ private:
                     "/NAV/camera_info_" + std::to_string(i));
 
                 if (!client->wait_for_service(std::chrono::seconds(5))) {
-                    RCLCPP_WARN(get_logger(),
-                        "Camera %d service not available (attempt %d/3)", i, attempt + 1);
+                    // RCLCPP_WARN(get_logger(),
+                    //     "Camera %d service not available (attempt %d/3)", i, attempt + 1);
                     continue;  // retry
                 }
 
@@ -327,8 +327,8 @@ private:
 
                 if (rclcpp::spin_until_future_complete(client_node, future,
                         std::chrono::seconds(5)) != rclcpp::FutureReturnCode::SUCCESS) {
-                    RCLCPP_WARN(get_logger(),
-                        "Camera %d intrinsics request failed (attempt %d/3)", i, attempt + 1);
+                    // RCLCPP_WARN(get_logger(),
+                    //     "Camera %d intrinsics request failed (attempt %d/3)", i, attempt + 1);
                     continue;  // retry
                 }
 
@@ -337,9 +337,9 @@ private:
                 // Sanity check: reject obviously wrong intrinsics
                 if (response->fx < 1.0 || response->fy < 1.0 ||
                     response->cx < 1.0 || response->cy < 1.0) {
-                    RCLCPP_WARN(get_logger(),
-                        "Camera %d returned suspicious intrinsics fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                        i, response->fx, response->fy, response->cx, response->cy);
+                    // RCLCPP_WARN(get_logger(),
+                    //     "Camera %d returned suspicious intrinsics fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                    //     i, response->fx, response->fy, response->cx, response->cy);
                     continue;
                 }
 
@@ -349,16 +349,16 @@ private:
                     0.0,          0.0,          1.0);
                 cam_[i].distortion = cv::Mat(response->distortion_coefficients);
 
-                RCLCPP_INFO(get_logger(),
-                    "Camera %d intrinsics OK: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                    i, response->fx, response->fy, response->cx, response->cy);
+                // RCLCPP_INFO(get_logger(),
+                //     "Camera %d intrinsics OK: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                //     i, response->fx, response->fy, response->cx, response->cy);
                 success = true;
             }
 
             if (!success) {
-                RCLCPP_ERROR(get_logger(),
-                    "Camera %d: failed to get intrinsics after 3 attempts — "
-                    "pose estimation will be skipped for this camera", i);
+                // RCLCPP_ERROR(get_logger(),
+                //     "Camera %d: failed to get intrinsics after 3 attempts — "
+                //     "pose estimation will be skipped for this camera", i);
             }
         }
     }
@@ -385,6 +385,9 @@ private:
 
         process_image(msg, cam_[camera_index].intrinsic, cam_[camera_index].distortion,
                       camera_frames_[camera_index], markers, pose_array);
+        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+        // "[cam %d] after process_image: %zu markers found, cache size=%zu",
+        // camera_index, markers.marker_ids.size(), marker_cache_.size());
 
         if (!markers.marker_ids.empty()) {
             update_marker_cache(markers);
@@ -408,9 +411,9 @@ private:
                 !std::isfinite(markers.landmark_map_pos_x[i]) ||
                 !std::isfinite(markers.landmark_map_pos_y[i]) ||
                 !std::isfinite(markers.ar_angles_list[i])) {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "Skipping invalid cached marker id=%ld: non-finite pose/map/yaw",
-                    markers.marker_ids[i]);
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                //     "Skipping invalid cached marker id=%ld: non-finite pose/map/yaw",
+                //     markers.marker_ids[i]);
                 continue;
             }
 
@@ -479,9 +482,9 @@ private:
             return;
         }
 
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-            "Publishing cached %zu poses, %zu marker_ids",
-            pose_array.poses.size(), markers.marker_ids.size());
+        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        //     "Publishing cached %zu poses, %zu marker_ids",
+        //     pose_array.poses.size(), markers.marker_ids.size());
 
         poses_pub_->publish(pose_array);
         markers_pub_->publish(markers);
@@ -512,9 +515,9 @@ private:
             if (!ids.empty()) {
                 std::string id_str;
                 for (int id : ids) id_str += std::to_string(id) + " ";
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-                    "[%s] detected IDs: %s (img %dx%d)",
-                    camera_frame.c_str(), id_str.c_str(), gray.cols, gray.rows);
+                // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+                //     "[%s] detected IDs: %s (img %dx%d)",
+                //     camera_frame.c_str(), id_str.c_str(), gray.cols, gray.rows);
             }
             if (ids.empty()) {
                 // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,    "EARLY RETURN: no markers detected on camera %s", camera_frame.c_str());
@@ -522,9 +525,9 @@ private:
             };
 
             if (intrinsic_mat.empty() || intrinsic_mat.rows != 3 || intrinsic_mat.cols != 3) {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s] invalid camera intrinsic matrix; skipping pose estimation",
-                    camera_frame.c_str());
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                //     "[%s] invalid camera intrinsic matrix; skipping pose estimation",
+                //     camera_frame.c_str());
                 return;
             }
 
@@ -535,9 +538,9 @@ private:
                 intrinsic_mat, distortion, rvecs, tvecs);
 
             if (rvecs.size() != ids.size() || tvecs.size() != ids.size()) {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s] pose estimation returned mismatched vector sizes; skipping frame",
-                    camera_frame.c_str());
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                //     "[%s] pose estimation returned mismatched vector sizes; skipping frame",
+                //     camera_frame.c_str());
                 return;
             }
 
@@ -547,17 +550,18 @@ private:
                 transform = tf_buffer_->lookupTransform(
                     base_frame_, camera_frame, tf2::TimePointZero);
             } catch (const tf2::TransformException &ex) {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
-                    "TF %s -> %s unavailable: %s",
-                    camera_frame.c_str(), base_frame_.c_str(), ex.what());
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
+                //     "TF %s -> %s unavailable: %s",
+                //     camera_frame.c_str(), base_frame_.c_str(), ex.what());
+                (void)ex;
                 return;
             }
 
             Eigen::Matrix4d T_base_cam = transform_to_matrix(transform);
             if (!T_base_cam.allFinite()) {
-                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s] base<-camera TF contains non-finite values; skipping frame",
-                    camera_frame.c_str());
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                //     "[%s] base<-camera TF contains non-finite values; skipping frame",
+                //     camera_frame.c_str());
                 return;
             }
 
@@ -566,9 +570,9 @@ private:
 
             for (size_t i = 0; i < ids.size(); ++i) {
                 if (!finite_cv_vec3(tvecs[i]) || !finite_cv_vec3(rvecs[i])) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d has non-finite rvec/tvec; skipping",
-                        camera_frame.c_str(), ids[i]);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d has non-finite rvec/tvec; skipping",
+                    //     camera_frame.c_str(), ids[i]);
                     continue;
                 }
 
@@ -581,9 +585,9 @@ private:
                 cv::Rodrigues(rvecs[i], R_cv);
                 Eigen::Matrix3d R_tag2cam = cv_mat_to_eigen3(R_cv);
                 if (!R_tag2cam.allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d has non-finite rotation matrix; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d has non-finite rotation matrix; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -594,9 +598,9 @@ private:
                 double abs_face_yaw =
                     std::abs(extract_box_face_yaw(R_corrected));
                 if (!std::isfinite(abs_face_yaw)) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d has non-finite face yaw; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d has non-finite face yaw; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -644,9 +648,9 @@ private:
                 Eigen::Vector3d tvec_eigen(mc.tvec[0], mc.tvec[1], mc.tvec[2]);
                 Eigen::Vector3d box_center_cam = tvec_eigen + mc.rot_3x3 * offset;
                 if (!box_center_cam.allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d has non-finite box center; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d has non-finite box center; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -661,25 +665,25 @@ private:
                 Eigen::Vector4d p_cam_h(box_center_ros(0), box_center_ros(1), box_center_ros(2), 1.0);
                 Eigen::Vector4d p_base = T_base_cam * p_cam_h;
                 if (!p_base.allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d transformed pose is non-finite; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d transformed pose is non-finite; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
                 Eigen::Matrix3d R_tag_in_base =
                     T_base_cam.block<3,3>(0,0) * R_opt2ros * mc.rot_3x3;
                 if (!R_tag_in_base.allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d transformed rotation is non-finite; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d transformed rotation is non-finite; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
                 Eigen::Quaterniond q_tag(R_tag_in_base);
                 if (!q_tag.coeffs().allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d quaternion is non-finite; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d quaternion is non-finite; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -695,18 +699,18 @@ private:
                 /* ERC ID mapping */
                 int aruco_index = marker_id - 51;
                 if (aruco_index < 0 || aruco_index >= static_cast<int>(landmark_poses_.size())) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-        "SKIP: marker_id %d (aruco_index %d) out of range on camera %s",
-        marker_id, aruco_index, camera_frame.c_str());
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    // "SKIP: marker_id %d (aruco_index %d) out of range on camera %s",
+                    // marker_id, aruco_index, camera_frame.c_str());
                     continue;
                 }
                     
                 if (std::find(markers.marker_ids.begin(),
                             markers.marker_ids.end(),
                             aruco_index) != markers.marker_ids.end()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "SKIP: marker_id %d (aruco_index %d) already added this frame on camera %s",
-                        marker_id, aruco_index, camera_frame.c_str());
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "SKIP: marker_id %d (aruco_index %d) already added this frame on camera %s",
+                    //     marker_id, aruco_index, camera_frame.c_str());
                     continue;
                 }
 
@@ -716,9 +720,9 @@ private:
                     calculate_aruco_box_bearing(tvec_eigen, mc.rot_3x3);
                 (void)bearing_deg;   // used only for debug
                 if (!T_cam_box.allFinite()) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d bearing transform is non-finite; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d bearing transform is non-finite; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -734,9 +738,9 @@ private:
                 if (fov_yaw.has_value())
                     yaw_deg = fov_yaw.value();
                 if (!std::isfinite(yaw_deg)) {
-                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                        "[%s] marker id=%d yaw is non-finite; skipping",
-                        camera_frame.c_str(), marker_id);
+                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                    //     "[%s] marker id=%d yaw is non-finite; skipping",
+                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
