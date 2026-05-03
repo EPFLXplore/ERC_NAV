@@ -240,7 +240,7 @@ private:
         {999999, 999999},       // id 55
         {999999, 999999},       // id 56
         {999999, 999999},       // id 57
-        {-1.56, 0.27},       // id 58
+        {-1.76, 0.27},       // id 58
         {999999, 999999},       // id 59
         {999999, 999999},       // id 60
         {999999, 999999},       // id 61
@@ -716,6 +716,47 @@ private:
         return meas;
     }
 
+    std::optional<std::pair<double, double>> solve_range_least_squares(
+        const std::vector<Measurement> &meas)
+    {
+        if (meas.size() < 3) {
+            return std::nullopt;
+        }
+
+        const auto &ref = meas.front();
+        Eigen::MatrixXd A(static_cast<int>(meas.size() - 1), 2);
+        Eigen::VectorXd b(static_cast<int>(meas.size() - 1));
+
+        for (size_t i = 1; i < meas.size(); ++i) {
+            const auto &m = meas[i];
+            A(static_cast<int>(i - 1), 0) = 2.0 * (m.ax - ref.ax);
+            A(static_cast<int>(i - 1), 1) = 2.0 * (m.ay - ref.ay);
+            b(static_cast<int>(i - 1)) =
+                ref.range * ref.range - m.range * m.range +
+                m.ax * m.ax - ref.ax * ref.ax +
+                m.ay * m.ay - ref.ay * ref.ay;
+        }
+
+        const Eigen::Vector2d xy =
+            A.colPivHouseholderQr().solve(b);
+        if (!xy.allFinite()) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "Range least-squares failed: non-finite xy");
+            return std::nullopt;
+        }
+        if (xy.x() < MAP_XMIN || xy.x() > MAP_XMAX ||
+            xy.y() < MAP_YMIN || xy.y() > MAP_YMAX) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "Range least-squares rejected: xy=(%.3f, %.3f) outside map bounds",
+                xy.x(), xy.y());
+            return std::nullopt;
+        }
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+            "Range least-squares fallback xy=(%.3f, %.3f)",
+            xy.x(), xy.y());
+        return std::make_pair(xy.x(), xy.y());
+    }
+
     /* ================================================================ */
     /*  SOCP solver (ECOS C API)                                        */
     /*                                                                  */
@@ -906,6 +947,11 @@ private:
         }
 
         ECOS_cleanup(w, 0);
+        if (!result.has_value()) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "ECOS failed for n>=3; using range least-squares fallback");
+            result = solve_range_least_squares(meas);
+        }
         return result;
 #endif
     }
@@ -1343,7 +1389,9 @@ private:
                             yaw_estimate_ * 180.0 / M_PI);
                     } else {
                         RCLCPP_WARN(get_logger(),
-                            "[UPDATE] Rejected jump: %.2f m", jump);
+                            "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
+                            jump, xy->first, xy->second,
+                            curr_map_base_x_, curr_map_base_y_);
                     }
                 } else {
                     RCLCPP_WARN(get_logger(),
