@@ -1,4 +1,6 @@
 #include "utility.h"
+#include <pcl/filters/voxel_grid.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -15,6 +17,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr pubLaserScan;
     // Point Cloud
     pcl::PointCloud<PointType>::Ptr laserCloudIn; // projected full velodyne cloud
+    pcl::PointCloud<PointType>::Ptr laserCloudWork; // optional voxel output (reused buffer)
     pcl::PointCloud<PointType>::Ptr laserCloudOut; // filtered and downsampled point cloud
     pcl::PointCloud<PointType>::Ptr laserCloudObstacles; // cloud for saving points that are classified as obstables, convert them to laser scan
     // Transform Listener
@@ -43,6 +46,10 @@ private:
     std::string base_frame_;
     std::string source_frame_;
     bool use_msg_frame_id_;
+    /// Process every k-th point after optional voxel (1 = all points). Cheap CPU win on dense LiDAR.
+    int point_stride_{1};
+    /// Voxel leaf in **sensor** frame (m); 0 = disabled. Runs before transform; use ~mapResolution–2× for speed.
+    float sensor_voxel_leaf_m_{0.0f};
 
 
 public:
@@ -57,6 +64,18 @@ public:
         base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
         source_frame_ = this->declare_parameter<std::string>("source_frame", "Lidar_v2_1");
         use_msg_frame_id_ = this->declare_parameter<bool>("use_msg_frame_id", true);
+        point_stride_ = static_cast<int>(this->declare_parameter<int>("point_stride", 1));
+        if (point_stride_ < 1) {
+            point_stride_ = 1;
+        }
+        sensor_voxel_leaf_m_ = static_cast<float>(this->declare_parameter<double>("sensor_voxel_leaf_m", 0.0));
+
+        if (point_stride_ > 1 || sensor_voxel_leaf_m_ > 1e-6f) {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Filter downsampling: point_stride=%d sensor_voxel_leaf_m=%.3f (0=off)",
+                point_stride_, static_cast<double>(sensor_voxel_leaf_m_));
+        }
 
         auto qos = rclcpp::SensorDataQoS();
 
@@ -76,6 +95,7 @@ public:
 
     void allocateMemory(){
         laserCloudIn.reset(new pcl::PointCloud<PointType>());
+        laserCloudWork.reset(new pcl::PointCloud<PointType>());
         laserCloudOut.reset(new pcl::PointCloud<PointType>());
         laserCloudObstacles.reset(new pcl::PointCloud<PointType>());
 
@@ -169,10 +189,21 @@ public:
         const float minR2 = sensorMinRangeLimit * sensorMinRangeLimit;
         const float maxR2 = sensorMaxRangeLimit * sensorMaxRangeLimit;
         const float invRes = 1.0f / mapResolution;
-        const size_t npts = laserCloudIn->points.size();
 
-        for (size_t i = 0; i < npts; ++i) {
-            const auto &p = laserCloudIn->points[i];
+        const pcl::PointCloud<PointType> *cloud_for_loop = laserCloudIn.get();
+        if (sensor_voxel_leaf_m_ > 1e-6f) {
+            pcl::VoxelGrid<PointType> vg;
+            vg.setInputCloud(laserCloudIn);
+            vg.setLeafSize(sensor_voxel_leaf_m_, sensor_voxel_leaf_m_, sensor_voxel_leaf_m_);
+            vg.filter(*laserCloudWork);
+            cloud_for_loop = laserCloudWork.get();
+        }
+
+        const size_t npts = cloud_for_loop->points.size();
+        const size_t stride = static_cast<size_t>(point_stride_);
+
+        for (size_t i = 0; i < npts; i += stride) {
+            const auto &p = cloud_for_loop->points[i];
             float r2 = p.x * p.x + p.y * p.y + p.z * p.z;
             if (r2 < minR2 || r2 > maxR2) continue;
 

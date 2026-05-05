@@ -172,37 +172,33 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     )
 
 
-    stack_boot_hint = TimerAction(
-        period=1.0,
-        actions=[
-            LogInfo(
-                msg=(
-                    f"{_C_BOLD_YELLOW}manual_stack: ArUco+lidar_aruco start in "
-                    f"{delay_str}s (arg aruco_stack_delay_sec). "
-                    f"Silence until then is normal; cameras SetBool at ~9s.{_C_RESET}"
-                )
-            ),
-        ],
-    )
-
+    # Must run after camera_node_nav.launch.py finishes stagger + activate + SetBool
+    # (nav_2 ~35s). Earlier ArUco start produced empty feeds and looked like a "hang".
+    # should be later than the activation of the oak1w at least 50 sec
     delayed_aruco_launch = TimerAction(
-        period=aruco_delay_s,
+        period=50.0,
         actions=[
             LogInfo(
                 msg=f"{_C_BOLD_GREEN}Launching ArUco + lidar_aruco stack...{_C_RESET}"
             ),
             aruco_launch,
-            LogInfo(
-                msg=f"{_C_BOLD_YELLOW}Aruco C++ launched; starting lidar_aruco...{_C_RESET}"
-            ),
+            LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
             aruco_lidar_detection_launch,
-        ],
+            LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node with lidar launched {_C_RESET}"),
+
+        ]
     )
+
+    LogInfo(msg=f"{_C_BOLD_YELLOW} Before jetson stats {_C_RESET}"),
+
     
     jetson_stats = launch_ros.actions.Node(
         package="jetson_stats",
         executable="launch_stats"
     )
+    LogInfo(msg=f"{_C_BOLD_YELLOW} After jetson stats {_C_RESET}"),
+    LogInfo(msg=f"{_C_BOLD_YELLOW} Before static transform erc map tf {_C_RESET}"),
+
 
 
     # Static transform from erc_map → map
@@ -218,12 +214,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen"
     )
 
+    LogInfo(msg=f"{_C_BOLD_YELLOW} After static transform erc map tf {_C_RESET}"),
+    LogInfo(msg=f"{_C_BOLD_YELLOW} Before slip control node {_C_RESET}"),
+
+
+
     slip_control_node = launch_ros.actions.Node(
         package="wheels_control",
         executable="NAV_steer_control",
         name="motor_steering_servoing",
         output="screen"
     )
+
+    LogInfo(msg=f"{_C_BOLD_YELLOW} After slip control node {_C_RESET}"),
+
 
 
     return [

@@ -47,6 +47,7 @@ public:
         this->declare_parameter<double>("hauteur_z_max", 0.5);
         this->declare_parameter<double>("camera_detection_ttl_sec", 0.8);
         // this->declare_parameter<double>("lidar_yaw_offset_deg", 270.0);
+        this->declare_parameter<std::vector<double>>("landmark_poses", std::vector<double>{});
 
         // this->get_parameter("lidar_yaw_offset_deg", lidar_yaw_offset_deg_);
         this->get_parameter("tolerance_deg", tolerance_deg_);
@@ -55,6 +56,15 @@ public:
         this->get_parameter("hauteur_z_max", hauteur_z_max);
         double camera_detection_ttl_sec = 0.8;
         this->get_parameter("camera_detection_ttl_sec", camera_detection_ttl_sec);
+        this->get_parameter("landmark_poses", flat);        
+        
+        landmark_poses_.clear();
+        for (size_t i = 0; i + 1 < flat.size(); i += 2) {
+            landmark_poses_.emplace_back(flat[i], flat[i + 1]);
+        }
+        RCLCPP_INFO(get_logger(), "Loaded %zu landmark poses", landmark_poses_.size());
+        
+
         camera_detection_ttl_ns_ = static_cast<int64_t>(camera_detection_ttl_sec * 1e9);
         input_cloud_topic_ = "/ouster/points";
         output_cloud_topic_ = "/ouster_points_aruco";
@@ -93,21 +103,7 @@ public:
     }
 
 private:
-    const vector<std::pair<double, double>> landmark_poses_ = {
-        {0.85, -0.8},          // id 51
-        {0.0, 1.2},             // id 52
-        {1.38, 1.08},       // id 53
-        {999999, 999999},       // id 54
-        {999999, 999999},       // id 55
-        {999999, 999999},       // id 56
-        {999999, 999999},       // id 57
-        {-1.76, 0.27},       // id 58
-        {999999, 999999},       // id 59
-        {999999, 999999},       // id 60
-        {999999, 999999},       // id 61
-        {999999, 999999},       // id 62
-        {999999, 999999},       // id 63
-    };
+    vector<std::pair<double, double>> landmark_poses_;
 
 
     vector<std::pair<double, double>> get_aruco_poses_in_frame(
@@ -302,6 +298,7 @@ private:
             const double a = wrap180(msg->ar_angles_list[i]);
 
             // Behind drill
+            const bool in_forbidden_sector = (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
             const bool in_forbidden_sector = (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
 
             if (!in_forbidden_sector) {
@@ -645,6 +642,7 @@ private:
     int64_t camera_detection_ttl_ns_;
     int64_t last_camera_update_ns_;
     std::vector<std::array<float, 3>> points_buf_;
+    std::vector<double> flat;
 
     string input_cloud_topic_;
     string output_cloud_topic_;

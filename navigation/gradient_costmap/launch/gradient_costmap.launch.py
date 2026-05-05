@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -46,6 +47,8 @@ def generate_launch_description():
     fixed_origin_x = LaunchConfiguration("fixed_origin_x")
     fixed_origin_y = LaunchConfiguration("fixed_origin_y")
     use_msg_frame_id = LaunchConfiguration("use_msg_frame_id")
+    filter_point_stride = LaunchConfiguration("filter_point_stride")
+    filter_sensor_voxel_leaf_m = LaunchConfiguration("filter_sensor_voxel_leaf_m")
     inflation_radius = PythonExpression(
         [
             '"',
@@ -95,6 +98,9 @@ def generate_launch_description():
     declare_gradient_mode = DeclareLaunchArgument(
         "gradient_mode",
         ### CHANGE LOCAL TO GLOBAL HEEEEEEEEEERE GRADIENT MODE ###
+        # Should be in local for autonomous navigation, the stack automatically takes the inflated_global_map you already computed.
+        # if you want to compute the global inflated map, change this gradient_mode to global, put your global pointcloud in saved_map/2026 and publish the point cloud on the topic /cloud_pcd
+        # then register the inflated map still in saved_map/2026 
         default_value="local",
         description="Gradient map mode: local (base_link local map) or global (map-frame fixed origin)",
     )
@@ -132,6 +138,27 @@ def generate_launch_description():
         "use_msg_frame_id",
         default_value="true",
         description="Use incoming pointcloud frame_id as source frame in filter transform",
+    )
+    # --- traversability_filter CPU / downsampling (see comment on Node below) ---
+    declare_filter_point_stride = DeclareLaunchArgument(
+        "filter_point_stride",
+        default_value="3",
+        description=(
+            "Only used by traversability_filter. After optional voxel downsampling, process "
+            "every k-th point in the cloud (k>=1). 1 = no stride. 2 or 3 cuts transform + height-bin "
+            "work with almost no extra code cost; very large k can miss thin obstacles. Applied in "
+            "sensor frame order (point index), not spatially uniform."
+        ),
+    )
+    declare_filter_sensor_voxel_leaf_m = DeclareLaunchArgument(
+        "filter_sensor_voxel_leaf_m",
+        default_value="0.05",
+        description=(
+            "Only used by traversability_filter. PCL voxel grid leaf size in meters in the "
+            "incoming lidar frame, before TF to map and before the 2D height map. 0.0 disables "
+            "voxel downsampling. Non-zero merges nearby returns into one point per voxel (typ. "
+            "0.15-0.2 m when map resolution is 0.1 m) to reduce CPU; smaller leaf preserves detail."
+        ),
     )
 
     declare_local_inflation_radius = DeclareLaunchArgument(
@@ -176,6 +203,10 @@ def generate_launch_description():
         description="Sigmoid midpoint parameter used when gradient_mode=global",
     )
 
+    # traversability_filter: raw cloud -> (optional voxel) -> (optional stride) -> range clip ->
+    # transform to map -> bin to local height grid -> publish /filtered_pointcloud.
+    # filter_sensor_voxel_leaf_m: spatial merge in lidar frame (0 = off). filter_point_stride:
+    # use every k-th point after that. Example: voxel 0.15 + stride 1, or voxel 0 + stride 2.
     traversability_filter = Node(
         package="gradient_costmap",
         executable="traversability_filter",
@@ -190,17 +221,21 @@ def generate_launch_description():
                 "base_frame": base_frame,
                 "source_frame": source_frame,
                 "use_msg_frame_id": use_msg_frame_id,
+                "point_stride": ParameterValue(filter_point_stride, value_type=int),
+                "sensor_voxel_leaf_m": ParameterValue(
+                    filter_sensor_voxel_leaf_m, value_type=float
+                ),
             }
         ],
     )
 
-    # TODO: remove this dangerous shit
-    static_transform_publisher = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        arguments=["0", "0", "0", "0", "0", "0", "base_link", "map"],
-        condition=IfCondition(PythonExpression(['"', gradient_mode, '" == "global"'])),
-    )
+    # TODO: remove this dangerous shit 
+    # static_transform_publisher = Node(
+    #     package="tf2_ros",
+    #     executable="static_transform_publisher",
+    #     arguments=["0", "0", "0", "0", "0", "0", "base_link", "map"],
+    #     condition=IfCondition(PythonExpression(['"', gradient_mode, '" == "global"'])),
+    # )
 
     traversability_map = Node(
         package="gradient_costmap",
@@ -238,6 +273,8 @@ def generate_launch_description():
             declare_fixed_origin_x,
             declare_fixed_origin_y,
             declare_use_msg_frame_id,
+            declare_filter_point_stride,
+            declare_filter_sensor_voxel_leaf_m,
             declare_local_inflation_radius,
             declare_global_inflation_radius,
             declare_local_inflation_factor,
@@ -247,7 +284,7 @@ def generate_launch_description():
             declare_local_sigmoid_x0,
             declare_global_sigmoid_x0,
             traversability_filter,
-            static_transform_publisher,
+            # static_transform_publisher,
             traversability_map,
         ]
     )

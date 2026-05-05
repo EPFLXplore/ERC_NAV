@@ -107,7 +107,7 @@ def generate_launch_description():
 
     declare_map_yaml_cmd = DeclareLaunchArgument(
         'map',
-        default_value='/home/paul/Documents/EPFL/ERC_NAV/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml',
+        default_value='/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/local_inflated_raw.yaml',
         description='Full path to map yaml file to load')
 
     declare_use_respawn_cmd = DeclareLaunchArgument(

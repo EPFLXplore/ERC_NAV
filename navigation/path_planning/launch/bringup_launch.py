@@ -193,6 +193,6 @@ def generate_launch_description():
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_cmd_group)
 
-    ld.add_action(static_transform_publisher)
+    # ld.add_action(static_transform_publisher)
 
     return ld

@@ -116,11 +116,11 @@ extern const float predictionKernalSize = 0.2; // predict elevation within x met
 // extern const float max_log_odds_for_belief = 20;
 
 // 2D Map Publish Params
-extern const int localMapLength = 24; // 12m radius covers sensorMaxRangeLimit (10m) + margin; Nav2 local costmap is only 6x6m
+extern const int localMapLength = 80; // 12m radius covers sensorMaxRangeLimit (10m) + margin; Nav2 local costmap is only 6x6m
 extern const int localMapArrayLength = localMapLength / mapResolution;
 
 // Visualization Params for visualizing the elevation pointcloud
-extern const float visualizationRadius = 10;
+extern const float visualizationRadius = 40;
 extern const float visualizationFrequency = 2; // n, skip n scans then publish, n=0, visualize at each scan
 
 // Robot Params

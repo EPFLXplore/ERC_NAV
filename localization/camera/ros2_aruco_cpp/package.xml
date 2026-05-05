@@ -18,6 +18,7 @@
   <depend>ros2_aruco_interfaces</depend>
   <depend>message_filters</depend>
   <depend>custom_msg</depend>
+  <depend>nlohmann-json-dev</depend>
 
   <build_depend>OpenCV</build_depend>
   <build_depend>eigen</build_depend>

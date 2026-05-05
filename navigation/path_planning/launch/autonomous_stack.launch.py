@@ -299,7 +299,7 @@ def generate_launch_description():
     )
 
     gradient_costmap_delay = TimerAction(
-        period=5.0,  # Start after Ouster TF is fully published (~28-30s), before Nav2 (35s)
+        period=5.0,  # Start after Ouster TF is fully published, before Nav2
         actions=[gradient_costmap_launch]
     )
 

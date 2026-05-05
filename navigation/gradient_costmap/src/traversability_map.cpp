@@ -92,6 +92,10 @@ public:
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+        // CHANGE ME:
+        // 1. If you want to use the gazebo pointcloud / or local pointcloud  use /filtered_pointcloud
+        // 2. If you want to use the marsyard pcd file, use /cloud_pcd (when computing the new .yaml and .pgm file in path_planning/saved_maps)
+
         pointcloud_topic_ = this->declare_parameter<std::string>("pointcloud_topic", "/cloud_pcd");
         output_local_topic_ = this->declare_parameter<std::string>("output_local_topic", "/occupancy_map_local");
         output_local_inflated_topic_ = this->declare_parameter<std::string>("output_local_inflated_topic", "/occupancy_map_local_inflated");
@@ -104,10 +108,6 @@ public:
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             pointcloud_topic_, 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
-        
-        // CHANGE ME:
-        // 1. If you want to use the gazebo pointcloud use /filtered_pointcloud
-        // 2. If you want to use the marsyard pcd file, use /cloud_pcd
 
         pubOccupancyMapLocal = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
             output_local_topic_,
@@ -197,10 +197,10 @@ public:
         updateElevationMap();
 
         auto t4 = std::chrono::high_resolution_clock::now();
-        updateOccupancyGrid();
+        // updateOccupancyGrid();
 
         auto t5 = std::chrono::high_resolution_clock::now();
-        publishMap();
+        // publishMap();
         auto end = std::chrono::high_resolution_clock::now();
         
         // Print timing breakdown
@@ -399,11 +399,17 @@ public:
             cellsToProcess.swap(observingList1);
         }
         
-            // Process without lock
-            for (auto cell : cellsToProcess) {
-                calculateTraversability(cell);
-            }
-            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Calculating traversability");
+        // Process without lock
+        for (auto cell : cellsToProcess) {
+            calculateTraversability(cell);
+        }
+
+        {
+        std::lock_guard<std::mutex> lock(mtx);
+        updateOccupancyGrid();
+        publishMap();
+        }
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Calculating traversability");
     }
 
     void calculateTraversability(mapCell_t *cell)

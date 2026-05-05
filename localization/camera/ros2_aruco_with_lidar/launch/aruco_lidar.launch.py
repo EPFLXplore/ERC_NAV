@@ -7,8 +7,31 @@ from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
 
 
+def _aruco_params_yaml_path():
+    """Same resolution as ros2_aruco_cpp/launch/aruco.launch.py (install or symlink-install)."""
+    share = get_package_share_directory('ros2_aruco_cpp')
+    in_install = os.path.join(share, 'config', 'aruco_params.yaml')
+    cpp_launch = os.path.join(share, 'launch', 'aruco.launch.py')
+    launch_dir = os.path.dirname(os.path.realpath(cpp_launch)) if os.path.isfile(cpp_launch) else ''
+    next_to_cpp_launch = (
+        os.path.normpath(os.path.join(launch_dir, '..', 'config', 'aruco_params.yaml'))
+        if launch_dir
+        else ''
+    )
+    for p in (in_install, next_to_cpp_launch):
+        if p and os.path.isfile(p):
+            return p
+    raise FileNotFoundError(
+        'aruco_params.yaml not found under ros2_aruco_cpp. Tried:\n'
+        f'  {in_install}\n'
+        f'  {next_to_cpp_launch or "(ros2_aruco_cpp launch not found)"}\n'
+        'Rebuild: colcon build --packages-select ros2_aruco_cpp && source install/setup.bash'
+    )
+
+
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco_with_lidar')
+    config = _aruco_params_yaml_path()
     # rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
 
     # rviz = LaunchConfiguration('rviz', default='false')
@@ -25,6 +48,7 @@ def generate_launch_description():
     max_lines = LaunchConfiguration('max_lines')
     max_distance_from_aruco = LaunchConfiguration('max_distance_from_aruco')
     angular_tolerance_deg = LaunchConfiguration('angular_tolerance_deg')
+
 
 
     return LaunchDescription([
@@ -63,7 +87,9 @@ def generate_launch_description():
             executable='lidar_phi_filter_node',
             name='lidar_phi_filter_node',
             output='screen',
-            parameters=[{
+            parameters=[
+                config,
+                {
                 'tolerance_deg': tolerance_deg,
                 'tolerance_radius': tolerance_radius,
                 'hauteur_z_min': hauteur_z_min,

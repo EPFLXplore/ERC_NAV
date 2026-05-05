@@ -18,6 +18,7 @@ find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(custom_msg REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # ---------- multiview_aruco_node ----------
 add_executable(multiview_aruco_node src/multiview_aruco_node.cpp)
@@ -25,7 +26,8 @@ ament_target_dependencies(multiview_aruco_node
   rclcpp sensor_msgs geometry_msgs
   tf2 tf2_ros tf2_geometry_msgs
   ros2_aruco_interfaces message_filters custom_msg)
-target_link_libraries(multiview_aruco_node ${OpenCV_LIBS} Eigen3::Eigen)
+target_link_libraries(multiview_aruco_node ${OpenCV_LIBS} Eigen3::Eigen nlohmann_json::nlohmann_json)
+
 
 # ---------- pose_estimator_lidar_node ----------
 add_executable(pose_estimator_lidar_node src/pose_estimator_lidar_node.cpp)
@@ -50,5 +52,9 @@ install(TARGETS multiview_aruco_node pose_estimator_lidar_node
 
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch)
+
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
 
 ament_package()

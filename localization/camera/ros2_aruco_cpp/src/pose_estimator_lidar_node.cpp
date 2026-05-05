@@ -136,6 +136,24 @@ public:
         time_of_last_pose_ = now();
         time_of_last_yaw_meas_ = now();
 
+        /* ---- landmark_poses_ positions ---- */
+        // In constructor, replace the hardcoded landmark_poses_ = {...} with:
+        declare_parameter<std::vector<double>>("landmark_poses", std::vector<double>{});
+        auto flat_landmarks = get_parameter("landmark_poses").as_double_array();
+
+        landmark_poses_.clear();
+        for (size_t i = 0; i + 1 < flat_landmarks.size(); i += 2) {
+            landmark_poses_.emplace_back(flat_landmarks[i], flat_landmarks[i + 1]);
+        }
+
+        declare_parameter<std::vector<double>>("erc_start_pos", {0.0, 0.0});
+        auto flat_erc = get_parameter("erc_start_pos").as_double_array();
+
+        if (flat_erc.size() == 2) {
+            erc_start_pos_ = {flat_erc[0], flat_erc[1]};
+        } else {
+            RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
+        }
         /* ---- init averaging ---- */
         init_phase_ = InitPhase::CAMERA;
         init_counter_phase1_ = 0;
@@ -230,23 +248,8 @@ private:
     static constexpr double MAP_YMIN = -60.0;
     static constexpr double MAP_YMAX =  60.0;
 
-    const std::array<double, 2> erc_start_pos_{0.0, 0.0};
-
-    const std::vector<std::pair<double, double>> landmark_poses_ = {
-        {0.85, -0.8},          // id 51
-        {0.0, 1.2},             // id 52
-        {1.38, 1.08},       // id 53
-        {999999, 999999},       // id 54
-        {999999, 999999},       // id 55
-        {999999, 999999},       // id 56
-        {999999, 999999},       // id 57
-        {-1.76, 0.27},       // id 58
-        {999999, 999999},       // id 59
-        {999999, 999999},       // id 60
-        {999999, 999999},       // id 61
-        {999999, 999999},       // id 62
-        {999999, 999999},       // id 63
-    };
+    std::array<double, 2> erc_start_pos_;
+    std::vector<std::pair<double, double>> landmark_poses_;
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
