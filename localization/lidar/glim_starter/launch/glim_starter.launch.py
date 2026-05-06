@@ -51,9 +51,19 @@ def generate_launch_description():
                                             0.0, 0.02, 0.0,
                                             0.0, 0.0, 0.04]},
 
-                {'reflect_x_after': True},     # set True only if a downstream consumer expects the old sign
-                {'rotation_sign': True},          # try +1 only if motion still looks “old-frame”
-                {'debug_logs': True},
+                # Keep init strategy (capture after 5s).
+                {'initial_align_yaw_offset_rad': 1.5707963267948966},
+                {'output_plane_rotation_rad': -1.5707963267948966},
+                # Use captured yaw for stable odom alignment.
+                {'use_initial_yaw_for_alignment': True},
+                # Your case: base_link +X appeared as odom -Y -> apply +pi/2 remap on XY.
+                {'remap_body_x_from_odom_neg_y': True},
+                {'remap_neg_y_to_plus_x_include_yaw': False},
+                {'zero_z': True},
+                {'reflect_x_after': False},
+                {'rotation_sign': False},
+                {'invert_output_x': False},
+                {'debug_logs': False},
             ]
         )
     ])
