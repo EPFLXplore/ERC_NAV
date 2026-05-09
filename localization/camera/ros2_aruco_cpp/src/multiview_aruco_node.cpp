@@ -106,6 +106,10 @@ public:
         declare_parameter("camera_frame_2", "OAK-1_v1_2");
         declare_parameter("image_topic_3", "/NAV/feed_camera_nav_2");
         declare_parameter("camera_frame_3", "OAK-1_v1_3");
+        // Cam 3 = OAK-D mono. Topic + frame configurable at launch; intrinsics
+        // are HARDCODED below in load_all_intrinsics() (no file / no service).
+        declare_parameter("image_topic_4", "/NAV/feed_camera_nav_3");
+        declare_parameter("camera_frame_4", "OAK-d");
         declare_parameter("marker_size", 0.144);
         /* Longer default: tags often arrive on different camera callbacks; short TTL drops the other. */
         declare_parameter("marker_cache_ttl_sec", 1.5);
@@ -124,8 +128,9 @@ public:
         declare_parameter("calib_mode", std::string("auto"));
         // Directory containing oak_calibration_depthai_{cam_id}.json files
         declare_parameter("calib_dir", std::string(""));
-        // Camera serial IDs, one per camera, in order (cam 0, 1, 2)
-        declare_parameter("cam_ids", std::vector<std::string>{"", "", ""});
+        // Camera serial IDs, one per camera, in order (cam 0, 1, 2, 3)
+        // Cam 3 (OAK-D) ignores its cam_ids entry — its intrinsics are hardcoded.
+        declare_parameter("cam_ids", std::vector<std::string>{"", "", "", ""});
         // JPEG / camera pipeline output size (camera_node_nav x,y). Used to scale file JSON
         // intrinsics from JSON image_width/height (factory cal resolution).
         declare_parameter("image_stream_width", 1280);
@@ -141,6 +146,7 @@ public:
         camera_frames_[0] = get_parameter("camera_frame_1").as_string();
         camera_frames_[1] = get_parameter("camera_frame_2").as_string();
         camera_frames_[2] = get_parameter("camera_frame_3").as_string();
+        camera_frames_[3] = get_parameter("camera_frame_4").as_string();
 
         dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_250);
         parameters_ = cv::aruco::DetectorParameters::create();
@@ -183,13 +189,14 @@ public:
 private:
     static constexpr double ARUCO_BOX_OFFSET    = 0.125;
     static constexpr double MAX_ARUCO_DIST       = 10.0;
-    static constexpr int    NUM_CAMERAS          = 3;
+    static constexpr int    NUM_CAMERAS          = 4;
+    static constexpr int    OAKD_CAM_INDEX       = 3;
     static constexpr int64_t MARKER_CACHE_TTL_NS = 500000000LL;
     static constexpr int64_t CB_MIN_PERIOD_NS    = 100000000LL;
     const std::string base_frame_{"base_link"};
 
     CameraIntrinsics cam_[NUM_CAMERAS];
-    std::array<bool, NUM_CAMERAS> intrinsics_ready_{false, false, false};
+    std::array<bool, NUM_CAMERAS> intrinsics_ready_{false, false, false, false};
     std::string camera_frames_[NUM_CAMERAS];
     std::string calib_mode_;
     std::string calib_dir_;
@@ -217,12 +224,65 @@ private:
     rclcpp::TimerBase::SharedPtr retry_timer_;
 
     /* ============================================================== */
-    /*  Top-level intrinsics loader: dispatches to file or service     */
+    /*  Hardcoded OAK-D (cam 3) intrinsics                             */
+    /*  Provided by user — calibration resolution implied by cx,cy.    */
+    /*  NOT rescaled to image_stream_*; the OAK-D feed must arrive at  */
+    /*  the native calibration resolution (~1280x640 here).            */
+    /* ============================================================== */
+    bool load_oakd_hardcoded_intrinsics(int camera_index)
+    {
+        static constexpr double kFx = 795.8676147460938;
+        static constexpr double kFy = 795.8676147460938;
+        static constexpr double kCx = 628.2177124023438;
+        static constexpr double kCy = 318.68402099609375;
+
+        // OpenCV 14-coeff rational + thin-prism layout:
+        //   k1 k2 p1 p2 k3 k4 k5 k6 s1 s2 s3 s4 τx τy
+        static const double kDist[14] = {
+             9.151253700256348,
+             2.9740264415740967,
+            -0.0008457531803287566,
+             0.00016617916116956621,
+           -24.41039276123047,
+             8.823257446289062,
+             4.046622276306152,
+           -25.269325256347656,
+             0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        };
+
+        cam_[camera_index].intrinsic = (cv::Mat_<double>(3, 3) <<
+            kFx, 0.0, kCx,
+            0.0, kFy, kCy,
+            0.0, 0.0, 1.0);
+
+        cv::Mat D(1, 14, CV_64F);
+        for (int k = 0; k < 14; ++k) D.at<double>(0, k) = kDist[k];
+        cam_[camera_index].distortion = D;
+
+        RCLCPP_INFO(get_logger(),
+            "Camera %d (OAK-D): HARDCODED intrinsics loaded "
+            "fx=%.4f fy=%.4f cx=%.4f cy=%.4f dist_coeffs=14",
+            camera_index, kFx, kFy, kCx, kCy);
+        return true;
+    }
+
+    /* ============================================================== */
+    /*  Top-level intrinsics loader                                    */
+    /*  Cam 0/1/2 (Oak1W): file or service per calib_mode.             */
+    /*  Cam 3       (OAK-D): hardcoded values above (one-shot, no I/O).*/
     /* ============================================================== */
     void load_all_intrinsics()
     {
+        // --- OAK-D (cam 3): hardcoded, no file / no service -----------
+        if (!intrinsics_ready_[OAKD_CAM_INDEX]) {
+            intrinsics_ready_[OAKD_CAM_INDEX] =
+                load_oakd_hardcoded_intrinsics(OAKD_CAM_INDEX);
+        }
+
+        // --- Cams 0/1/2 (Oak1W): original file/service path ----------
         if (calib_mode_ == "file") {
             for (int i = 0; i < NUM_CAMERAS; ++i) {
+                if (i == OAKD_CAM_INDEX) continue;
                 if (!intrinsics_ready_[i])
                     intrinsics_ready_[i] = load_intrinsics_from_file(i);
             }
@@ -335,6 +395,8 @@ private:
         auto client_node = std::make_shared<rclcpp::Node>("intrinsics_client_tmp_0", opts);
 
         for (int i = 0; i < NUM_CAMERAS; ++i) {
+            // OAK-D (cam 3) is hardcoded — never query a service for it.
+            if (i == OAKD_CAM_INDEX) continue;
             if (intrinsics_ready_[i]) continue;
 
             auto client = client_node->create_client<custom_msg::srv::CameraParams>(
@@ -345,8 +407,6 @@ private:
                 continue;
             }
 
-            auto req    = std::make_shared<custom_msg::srv::CameraParams::Request>();
-            auto future = client->async_send_request(req);
             auto req    = std::make_shared<custom_msg::srv::CameraParams::Request>();
             auto future = client->async_send_request(req);
 
@@ -384,7 +444,8 @@ private:
         const std::string topics[NUM_CAMERAS] = {
             get_parameter("image_topic_1").as_string(),
             get_parameter("image_topic_2").as_string(),
-            get_parameter("image_topic_3").as_string()
+            get_parameter("image_topic_3").as_string(),
+            get_parameter("image_topic_4").as_string()
         };
         for (int c = 0; c < NUM_CAMERAS; ++c) {
             image_subs_[c] = create_subscription<CompImg>(
