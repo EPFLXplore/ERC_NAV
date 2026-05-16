@@ -101,8 +101,8 @@ fi
 
 ################################# WIFI ACTIVE WARNING ##########################################
 # Example active WiFi (nmcli): "S24PlusArno 1 … d5ed70ae-d5f3-4018-8f8a-4497bd1a0df8 … wifi … wlx3460f90fdc9c"
-if sudo nmcli -t -f TYPE,STATE device status 2>/dev/null | awk -F: '$1 == "wifi" && $2 ~ /^connected/ { exit 0 } END { exit 1 }'; then
-  echo -e "${BOLD_ORANGE}watch out: the is a hotspot active !!!!${NC}"
+if nmcli -t -f TYPE,DEVICE connection show 2>/dev/null | awk -F: '($1 == "wifi" || $1 == "802-11-wireless") && $2 != "" && $2 != "--" { found = 1 } END { exit !found }'; then
+  echo -e "${BOLD_ORANGE}watch out: there is a wifi network active !!!!${NC}"
 fi
 ################################# END WIFI ACTIVE WARNING ##########################################
 
