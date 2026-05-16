@@ -53,7 +53,8 @@ def generate_launch_description():
                                             0.0, 0.02, 0.0,
                                             0.0, 0.0, 0.04]},
 
-                # Keep init strategy (capture after 5s).
+                # Wait for GLIM IMU initialization and first stable poses before publishing.
+                {'startup_capture_delay_sec': 8.0},
                 {'initial_align_yaw_offset_rad': 1.5707963267948966},
                 {'output_plane_rotation_rad': -1.5707963267948966},
                 # Use captured yaw for stable odom alignment.

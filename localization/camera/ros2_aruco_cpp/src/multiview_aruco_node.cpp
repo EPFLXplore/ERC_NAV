@@ -162,8 +162,8 @@ public:
         parameters_ = cv::aruco::DetectorParameters::create();
         parameters_->minMarkerPerimeterRate = std::max(
             0.0, get_parameter("aruco_min_marker_perimeter_rate").as_double());
-        parameters_->adaptiveThreshWinSizeMax = std::max(
-            3, get_parameter("aruco_adaptive_thresh_win_size_max").as_int());
+        parameters_->adaptiveThreshWinSizeMax = static_cast<int>(std::max<int64_t>(
+            3, get_parameter("aruco_adaptive_thresh_win_size_max").as_int()));
         parameters_->errorCorrectionRate = std::clamp(
             get_parameter("aruco_error_correction_rate").as_double(), 0.0, 1.0);
         parameters_->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;

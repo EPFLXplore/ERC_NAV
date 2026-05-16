@@ -32,11 +32,11 @@ class GlimOdomRepublisher(Node):
     """
     Re-publish GLIM pose as odometry with one-shot origin capture.
 
-    Initialization strategy is kept:
-      - wait 5s
+    Initialization strategy:
+      - wait startup_capture_delay_sec
       - arm capture
       - first pose after arm sets (x0, y0, z0, yaw0)
-      - all subsequent poses are expressed relative to that captured origin
+      - only subsequent poses are published, expressed relative to that captured origin
     """
 
     def __init__(self):
@@ -47,6 +47,7 @@ class GlimOdomRepublisher(Node):
         self.declare_parameter("odom_topic", "/odom_glim_repub")
         self.declare_parameter("odom_frame_id", "odom")
         self.declare_parameter("child_frame_id", "base_link")
+        self.declare_parameter("startup_capture_delay_sec", 8.0)
 
         # Covariances (3x3 blocks flattened)
         self.declare_parameter(
@@ -78,6 +79,9 @@ class GlimOdomRepublisher(Node):
         self.odom_topic = self.get_parameter("odom_topic").value
         self.odom_frame_id = self.get_parameter("odom_frame_id").value
         self.child_frame_id = self.get_parameter("child_frame_id").value
+        self.startup_capture_delay_sec = max(
+            0.0, float(self.get_parameter("startup_capture_delay_sec").value)
+        )
         self.position_covariance = list(self.get_parameter("position_covariance").value)
         self.orientation_covariance = list(self.get_parameter("orientation_covariance").value)
 
@@ -121,9 +125,9 @@ class GlimOdomRepublisher(Node):
             PoseStamped, self.pose_topic, self.pose_callback, qos
         )
 
-        # Initialization strategy (kept)
+        # Gate publishing until GLIM has initialized and the origin is captured.
         self._capture_next = False
-        self._timer = self.create_timer(5.0, self._arm_capture_once)
+        self._timer = self.create_timer(self.startup_capture_delay_sec, self._arm_capture_once)
 
         self._x0 = 0.0
         self._y0 = 0.0
@@ -131,7 +135,10 @@ class GlimOdomRepublisher(Node):
         self._yaw0 = 0.0
         self._zeroed = False
 
-        self.get_logger().info("Waiting 5s to capture (x0,y0,z0,yaw0) and re-zero.")
+        self.get_logger().info(
+            f"Waiting {self.startup_capture_delay_sec:.1f}s before origin capture; "
+            "not publishing odometry until capture completes."
+        )
         self.get_logger().info(
             "Transform params: "
             f"init_offset={self.initial_align_yaw_offset_rad:.4f}, "
@@ -217,6 +224,10 @@ class GlimOdomRepublisher(Node):
                 f"Captured origin x0={self._x0:.3f}, y0={self._y0:.3f}, "
                 f"z0={self._z0:.3f}, yaw0={self._yaw0:.3f} rad"
             )
+            return
+
+        if not self._zeroed:
+            return
 
         xo, yo, zo, yaw_o = self._apply_main_rigid_transform(x, y, z, yaw)
         xo, yo, yaw_o = self._apply_legacy_compat(xo, yo, yaw_o)

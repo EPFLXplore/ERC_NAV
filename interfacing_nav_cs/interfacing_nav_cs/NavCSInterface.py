@@ -113,6 +113,7 @@ CAMERA_NAV_3 = 'camera_nav_3'
 CAMERA_FRONT = 'Front'
 CAMERA_UP1 = 'Up1'
 CAMERA_UP2 = 'Up2'
+CAMERA_OAKD = 'OakD'
 
 # Motor lifecycle service paths
 MOTOR_CHANGE_STATE_SERVICE = '/NAV_motor_cmds/change_state'
@@ -443,7 +444,7 @@ class NavCSInterface(Node):
                 "status": False,
                 "node": False,
                 "data_rate": "0"
-            }
+            },
             CAMERA_OAKD: {                    # ← add
                 "name": CAMERA_NAV_3,
                 "status": False,
@@ -479,7 +480,7 @@ class NavCSInterface(Node):
         self.camera_3_status_sub = self.create_subscription(
             Bool,
             CAMERA_3_STATUS_TOPIC,
-            lambda msg: self.update_camera_status(CAMERA_UP3, msg.data),
+            lambda msg: self.update_camera_status(CAMERA_OAKD, msg.data),
             qos_profile=self.qos_profile
         )
 
@@ -577,6 +578,7 @@ class NavCSInterface(Node):
             CAMERA_NAV_0: self.camera_nav_0,
             CAMERA_NAV_1: self.camera_nav_1,
             CAMERA_NAV_2: self.camera_nav_2,
+            CAMERA_NAV_3: self.camera_nav_3,
         }
         
         if topic_camera_name in camera_clients:

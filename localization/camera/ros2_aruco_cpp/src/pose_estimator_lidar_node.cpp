@@ -771,7 +771,7 @@ private:
     /* ================================================================ */
     std::optional<std::pair<double, double>> solve_ecos(
         const std::vector<Measurement> &meas,
-        const char *log_ctx = nullptr) const
+        const char *log_ctx = nullptr)
     {
 #ifndef HAS_ECOS
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -1296,7 +1296,8 @@ private:
                     RCLCPP_WARN(get_logger(),
                         "[%s INIT n>=%d] build_measurements: valid_markers=%d "
                         "but SOCP M=%zu (markers with range<1e-3 are dropped)",
-                        src_tag, n, measurements.size());
+                        src_tag, n, static_cast<int>(valid_markers.size()),
+                        measurements.size());
                 }
                 RCLCPP_INFO(get_logger(),
                     "[%s INIT n>=%d] running solver with %zu measurements",
@@ -1356,7 +1357,8 @@ private:
                     RCLCPP_WARN(get_logger(),
                         "[UPDATE n>=%d] build_measurements: valid_markers=%d "
                         "but SOCP M=%zu (markers with range<1e-3 are dropped)",
-                        n, measurements.size());
+                        n, static_cast<int>(valid_markers.size()),
+                        measurements.size());
                 }
                 RCLCPP_INFO(get_logger(),
                     "[UPDATE n>=%d] running solver with %zu measurements",
