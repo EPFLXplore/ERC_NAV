@@ -49,6 +49,7 @@ def generate_launch_description():
     use_msg_frame_id = LaunchConfiguration("use_msg_frame_id")
     filter_point_stride = LaunchConfiguration("filter_point_stride")
     filter_sensor_voxel_leaf_m = LaunchConfiguration("filter_sensor_voxel_leaf_m")
+    filter_max_lidar_z_m = LaunchConfiguration("filter_max_lidar_z_m")
     inflation_radius = PythonExpression(
         [
             '"',
@@ -93,6 +94,11 @@ def generate_launch_description():
             '"',
         ]
     )
+    # Traversability PCA / slope (traversability_map) — same for local and global mode
+    neighbor_search_radius_m = LaunchConfiguration("neighbor_search_radius_m")
+    slope_angle_limit_deg = LaunchConfiguration("slope_angle_limit_deg")
+    roughness_norm_m = LaunchConfiguration("roughness_norm_m")
+    min_neighbor_points = LaunchConfiguration("min_neighbor_points")
 
     declare_use_sim_time = DeclareLaunchArgument("use_sim_time", default_value="false")
     declare_gradient_mode = DeclareLaunchArgument(
@@ -152,7 +158,7 @@ def generate_launch_description():
     )
     declare_filter_sensor_voxel_leaf_m = DeclareLaunchArgument(
         "filter_sensor_voxel_leaf_m",
-        default_value="0.05",
+        default_value="0.1",
         description=(
             "Only used by traversability_filter. PCL voxel grid leaf size in meters in the "
             "incoming lidar frame, before TF to map and before the 2D height map. 0.0 disables "
@@ -160,47 +166,79 @@ def generate_launch_description():
             "0.15-0.2 m when map resolution is 0.1 m) to reduce CPU; smaller leaf preserves detail."
         ),
     )
+    declare_filter_max_lidar_z_m = DeclareLaunchArgument(
+        "filter_max_lidar_z_m",
+        default_value="1.0",
+        description=(
+            "Only used by traversability_filter. Maximum accepted point z in LiDAR frame "
+            "(meters). Points above this are discarded before voxelization and mapping."
+        ),
+    )
 
     declare_local_inflation_radius = DeclareLaunchArgument(
         "local_inflation_radius",
-        default_value="1",
+        default_value="2",
         description="Inflation radius (cells) used when gradient_mode=local",
     )
     declare_local_inflation_factor = DeclareLaunchArgument(
         "local_inflation_factor",
-        default_value="10.0",
+        default_value="6.0",
         description="Inflation decay factor used when gradient_mode=local",
     )
     declare_local_sigmoid_k = DeclareLaunchArgument(
         "local_sigmoid_k",
-        default_value="15.0",
+        default_value="4.0",
         description="Sigmoid slope parameter used when gradient_mode=local",
     )
     declare_local_sigmoid_x0 = DeclareLaunchArgument(
         "local_sigmoid_x0",
-        default_value="0.70",
+        default_value="0.95",
         description="Sigmoid midpoint parameter used when gradient_mode=local",
     )
 
     declare_global_inflation_radius = DeclareLaunchArgument(
         "global_inflation_radius",
-        default_value="3",
+        default_value="1",
         description="Inflation radius (cells) used when gradient_mode=global",
     )
     declare_global_inflation_factor = DeclareLaunchArgument(
         "global_inflation_factor",
-        default_value="5.0",
+        default_value="1.0",
         description="Inflation decay factor used when gradient_mode=global",
     )
     declare_global_sigmoid_k = DeclareLaunchArgument(
         "global_sigmoid_k",
-        default_value="15.0",
+        default_value="1.0",
         description="Sigmoid slope parameter used when gradient_mode=global",
     )
     declare_global_sigmoid_x0 = DeclareLaunchArgument(
         "global_sigmoid_x0",
-        default_value="0.70",
+        default_value="0.60",
         description="Sigmoid midpoint parameter used when gradient_mode=global",
+    )
+    # --- traversability_map: slope / roughness (feed Nav2 local costmap via /occupancy_map_local_inflated) ---
+    declare_neighbor_search_radius_m = DeclareLaunchArgument(
+        "neighbor_search_radius_m",
+        default_value="1.2",
+        description=(
+            "Meters: neighborhood radius for plane fit per cell. Larger values smooth noise near lidar min-range "
+            "(often reduces spurious high cost around the robot). Typical 0.5-1.0."
+        ),
+    )
+    declare_slope_angle_limit_deg = DeclareLaunchArgument(
+        "slope_angle_limit_deg",
+        default_value="35.0",
+        description="Degrees at which slope cost saturates (same role as utility.h filterAngleLimit).",
+    )
+    declare_roughness_norm_m = DeclareLaunchArgument(
+        "roughness_norm_m",
+        default_value="0.1",
+        description="Meters: roughness normalization (same role as utility.h filterMaxRoughness).",
+    )
+    declare_min_neighbor_points = DeclareLaunchArgument(
+        "min_neighbor_points",
+        default_value="3",
+        description="Minimum neighbor samples for traversability PCA (≥3).",
     )
 
     # traversability_filter: raw cloud -> (optional voxel) -> (optional stride) -> range clip ->
@@ -225,6 +263,7 @@ def generate_launch_description():
                 "sensor_voxel_leaf_m": ParameterValue(
                     filter_sensor_voxel_leaf_m, value_type=float
                 ),
+                "max_lidar_z_m": ParameterValue(filter_max_lidar_z_m, value_type=float),
             }
         ],
     )
@@ -254,10 +293,14 @@ def generate_launch_description():
                 "use_robot_centered_origin": use_robot_centered_origin,
                 "fixed_origin_x": fixed_origin_x,
                 "fixed_origin_y": fixed_origin_y,
-                "inflation_radius": inflation_radius,
-                "inflation_factor": inflation_factor,
-                "sigmoid_k": sigmoid_k,
-                "sigmoid_x0": sigmoid_x0,
+                "inflation_radius": ParameterValue(inflation_radius, value_type=int),
+                "inflation_factor": ParameterValue(inflation_factor, value_type=float),
+                "sigmoid_k": ParameterValue(sigmoid_k, value_type=float),
+                "sigmoid_x0": ParameterValue(sigmoid_x0, value_type=float),
+                "neighbor_search_radius_m": ParameterValue(neighbor_search_radius_m, value_type=float),
+                "slope_angle_limit_deg": ParameterValue(slope_angle_limit_deg, value_type=float),
+                "roughness_norm_m": ParameterValue(roughness_norm_m, value_type=float),
+                "min_neighbor_points": ParameterValue(min_neighbor_points, value_type=int),
             }
         ],
     )
@@ -275,6 +318,7 @@ def generate_launch_description():
             declare_use_msg_frame_id,
             declare_filter_point_stride,
             declare_filter_sensor_voxel_leaf_m,
+            declare_filter_max_lidar_z_m,
             declare_local_inflation_radius,
             declare_global_inflation_radius,
             declare_local_inflation_factor,
@@ -283,6 +327,10 @@ def generate_launch_description():
             declare_global_sigmoid_k,
             declare_local_sigmoid_x0,
             declare_global_sigmoid_x0,
+            declare_neighbor_search_radius_m,
+            declare_slope_angle_limit_deg,
+            declare_roughness_norm_m,
+            declare_min_neighbor_points,
             traversability_filter,
             # static_transform_publisher,
             traversability_map,

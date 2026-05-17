@@ -109,12 +109,12 @@ motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v
             current_motors_cmds.info = "self rotation";
 
             alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
-            alpha_ext = alpha_ext * (-1.0);
+            alpha_ext = alpha_ext;
             alpha_int = -alpha_ext;
 
 
-            v_ext = -(std::abs(omega_z));
-            v_int = (std::abs(omega_z));
+            v_ext = (std::abs(omega_z));
+            v_int = -(std::abs(omega_z));
         }
         else
         {

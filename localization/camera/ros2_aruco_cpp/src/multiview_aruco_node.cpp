@@ -137,6 +137,16 @@ public:
         declare_parameter("image_stream_height", 720);
 
         marker_size_ = get_parameter("marker_size").as_double();
+        const double marker_cache_ttl_sec =
+            get_parameter("marker_cache_ttl_sec").as_double();
+        marker_cache_ttl_ns_ = static_cast<int64_t>(
+            std::max(0.0, marker_cache_ttl_sec) * 1e9);
+        bearing_jump_warn_deg_ =
+            get_parameter("aruco_bearing_jump_warn_deg").as_double();
+        cache_pose_smooth_alpha_ = std::clamp(
+            get_parameter("cache_pose_smooth_alpha").as_double(), 0.0, 1.0);
+        aruco_min_tvec_norm_ = std::max(
+            0.0, get_parameter("aruco_min_tvec_norm").as_double());
         calib_mode_  = get_parameter("calib_mode").as_string();
         calib_dir_   = get_parameter("calib_dir").as_string();
         cam_ids_     = get_parameter("cam_ids").as_string_array();
@@ -150,6 +160,12 @@ public:
 
         dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_250);
         parameters_ = cv::aruco::DetectorParameters::create();
+        parameters_->minMarkerPerimeterRate = std::max(
+            0.0, get_parameter("aruco_min_marker_perimeter_rate").as_double());
+        parameters_->adaptiveThreshWinSizeMax = std::max(
+            3, get_parameter("aruco_adaptive_thresh_win_size_max").as_int());
+        parameters_->errorCorrectionRate = std::clamp(
+            get_parameter("aruco_error_correction_rate").as_double(), 0.0, 1.0);
         parameters_->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
 
         declare_parameter<std::vector<double>>("landmark_poses", std::vector<double>{});
@@ -207,6 +223,10 @@ private:
     cv::Ptr<cv::aruco::Dictionary>         dictionary_;
     cv::Ptr<cv::aruco::DetectorParameters> parameters_;
     double marker_size_{};
+    int64_t marker_cache_ttl_ns_{MARKER_CACHE_TTL_NS};
+    double bearing_jump_warn_deg_{30.0};
+    double cache_pose_smooth_alpha_{0.25};
+    double aruco_min_tvec_norm_{0.12};
 
     std::vector<std::pair<double, double>> landmark_poses_;
 
@@ -231,6 +251,12 @@ private:
     /* ============================================================== */
     bool load_oakd_hardcoded_intrinsics(int camera_index)
     {
+        if (camera_index < 0 || camera_index >= NUM_CAMERAS) {
+            RCLCPP_ERROR(get_logger(),
+                "OAK-D hardcoded loader: invalid camera index %d", camera_index);
+            return false;
+        }
+
         static constexpr double kFx = 795.8676147460938;
         static constexpr double kFy = 795.8676147460938;
         static constexpr double kCx = 628.2177124023438;
@@ -297,6 +323,11 @@ private:
     /* ============================================================== */
     bool load_intrinsics_from_file(int camera_index)
     {
+        // Safety net: cam 3 must never depend on cam_id/file calibration.
+        if (camera_index == OAKD_CAM_INDEX) {
+            return load_oakd_hardcoded_intrinsics(camera_index);
+        }
+
         if (camera_index >= static_cast<int>(cam_ids_.size()) ||
             cam_ids_[camera_index].empty()) {
             RCLCPP_WARN(get_logger(),

@@ -57,10 +57,23 @@ public:
         this->declare_parameter<std::string>("map_frame", "map");
         // Angular gate vs ref_angle (camera bearing + offset); wide default while upstream filter is tight.
         this->declare_parameter<double>("angular_tolerance_deg", 45.0);
+        /* Segment midpoints closer than this (m): treat as duplicate hypotheses on one
+         * feature (same place). Opposite face edges are ~t (~0.25 m) apart and never
+         * enter here. If |cos θ| is high, refine one line (parallel duplicate); otherwise
+         * keep the line whose centre bearing best matches ref_angle (perpendicular /
+         * corner / noisy parallel RANSAC). */
+        this->declare_parameter<double>("merge_duplicate_2d_line_mid_max_m", 0.10);
+        this->declare_parameter<double>("merge_duplicate_2d_parallel_min_dir_dot", 0.96);
+        /* Two 2D lines must look like opposite edges of the t×t face: nearly parallel
+         * and midpoint spacing ~t. Otherwise RANSAC often fits clutter + edge; averaging
+         * centres collapses bearing (e.g. toward +x). */
+        this->declare_parameter<double>("opposite_2d_pair_min_dir_dot", 0.82);
+        this->declare_parameter<double>("opposite_2d_mid_sep_min_frac", 0.40);
+        this->declare_parameter<double>("opposite_2d_mid_sep_max_frac", 2.00);
 
         input_cloud_topic_ = "/ouster_points_aruco";
         output_cloud_topic_ = "/cloud_with_lines";
-        aruco_topic_ = "aruco_markers";
+        aruco_topic_ = "aruco_markers_lidar_assoc";
 
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(tf_buffer_);
 
@@ -72,6 +85,16 @@ public:
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
         this->get_parameter("map_frame", map_frame_);
         this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
+        this->get_parameter("merge_duplicate_2d_line_mid_max_m",
+            merge_duplicate_2d_line_mid_max_m_);
+        this->get_parameter("merge_duplicate_2d_parallel_min_dir_dot",
+            merge_duplicate_2d_parallel_min_dir_dot_);
+        this->get_parameter("opposite_2d_pair_min_dir_dot",
+            opposite_2d_pair_min_dir_dot_);
+        this->get_parameter("opposite_2d_mid_sep_min_frac",
+            opposite_2d_mid_sep_min_frac_);
+        this->get_parameter("opposite_2d_mid_sep_max_frac",
+            opposite_2d_mid_sep_max_frac_);
         min_process_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max
         last_process_time_ns_ = 0;
         full_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>());
@@ -239,6 +262,14 @@ private:
         //    "[detect_cube CLOUD] processing cloud frame=%s with aruco_ids=%zu points=%zu",
         //    cloud_msg.header.frame_id.c_str(), aruco_ids.size(), full_cloud_->points.size());
 
+        size_t run_tags_pre3d_skip = 0;
+        size_t run_sum_3d_lines = 0;
+        size_t run_sum_2d_before_merge = 0;
+        size_t run_sum_2d_after_merge = 0;
+        unsigned run_tags_reached_line_detect = 0;
+        unsigned run_duplicate_2d_merge_count = 0;
+        unsigned run_pruned_implausible_2d_pair = 0;
+
         for (size_t aruco_idx = 0; aruco_idx < aruco_ids.size(); ++aruco_idx) {
             pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers(new pcl::PointCloud<pcl::PointXYZ>());
             pcl::PointCloud<pcl::PointXYZ>::Ptr all_inliers_2d(new pcl::PointCloud<pcl::PointXYZ>());
@@ -320,6 +351,7 @@ private:
                 //     angular_tolerance_deg_,
                 //     have_expected_range ? expected_range_xy : -1.0,
                 //     radial_tol);
+                ++run_tags_pre3d_skip;
                 continue;
             }
 
@@ -539,6 +571,206 @@ private:
                 extract_2d.filter(*remainder_2d);
                 projected_cloud_temp.swap(remainder_2d);
             }
+
+            auto centre_from_2d_line = [&](const LineDetection &L1) {
+                geometry_msgs::msg::Point p_centre;
+                geometry_msgs::msg::Point mid1;
+                mid1.x = 0.5 * (L1.p_first.x + L1.p_last.x);
+                mid1.y = 0.5 * (L1.p_first.y + L1.p_last.y);
+                mid1.z = 0.5 * (L1.p_first.z + L1.p_last.z);
+                const float norm_dir = std::sqrt(
+                    L1.dx * L1.dx + L1.dy * L1.dy + L1.dz * L1.dz);
+                if (norm_dir < 1e-6f) {
+                    p_centre = mid1;
+                    return p_centre;
+                }
+                float ndx = -L1.dy / norm_dir;
+                float ndy = L1.dx / norm_dir;
+                const float dot_product = ndx * mid1.x + ndy * mid1.y;
+                if (dot_product < 0.0f) {
+                    ndx = -ndx;
+                    ndy = -ndy;
+                }
+                p_centre.x = mid1.x + ndx * static_cast<float>(t) / 2.0f;
+                p_centre.y = mid1.y + ndy * static_cast<float>(t) / 2.0f;
+                p_centre.z = L1.z0;
+                return p_centre;
+            };
+
+            /* Same-place duplicate 2D lines (d_mid small): collapse to one line. */
+            const size_t lines_2d_before_merge = lines_2d.size();
+            bool merged_duplicate_2d = false;
+            bool pruned_implausible_2d_pair = false;
+            double pair_dmid = 0.0;
+            double pair_dir_dot = 0.0;
+
+            if (lines_2d.size() == 2) {
+                const auto &L0 = lines_2d[0];
+                const auto &L1 = lines_2d[1];
+                const float mx0 = 0.5f * (L0.p_first.x + L0.p_last.x);
+                const float my0 = 0.5f * (L0.p_first.y + L0.p_last.y);
+                const float mx1 = 0.5f * (L1.p_first.x + L1.p_last.x);
+                const float my1 = 0.5f * (L1.p_first.y + L1.p_last.y);
+                const double dmid = std::hypot(
+                    static_cast<double>(mx0 - mx1),
+                    static_cast<double>(my0 - my1));
+                const float n0 = std::sqrt(
+                    L0.dx * L0.dx + L0.dy * L0.dy + L0.dz * L0.dz);
+                const float n1 = std::sqrt(
+                    L1.dx * L1.dx + L1.dy * L1.dy + L1.dz * L1.dz);
+                double dir_dot = 0.0;
+                if (n0 > 1e-6f && n1 > 1e-6f) {
+                    dir_dot = std::fabs(static_cast<double>(
+                        L0.dx * L1.dx + L0.dy * L1.dy + L0.dz * L1.dz) /
+                        (static_cast<double>(n0) * static_cast<double>(n1)));
+                }
+                pair_dmid = dmid;
+                pair_dir_dot = dir_dot;
+                if (dmid < merge_duplicate_2d_line_mid_max_m_) {
+                    merged_duplicate_2d = true;
+                    if (dir_dot >= merge_duplicate_2d_parallel_min_dir_dot_) {
+                        LineDetection &L = lines_2d[0];
+                        const float avx = 0.5f * (mx0 + mx1);
+                        const float avy = 0.5f * (my0 + my1);
+                        float bx = L.dx / n0;
+                        float by = L.dy / n0;
+                        const float tproj =
+                            (avx - L.x0) * bx + (avy - L.y0) * by;
+                        L.x0 = L.x0 + tproj * bx;
+                        L.y0 = L.y0 + tproj * by;
+                        L.z0 = 0.0f;
+                        const float norm_m = std::sqrt(
+                            L.dx * L.dx + L.dy * L.dy + L.dz * L.dz);
+                        if (norm_m > 1e-6f) {
+                            L.p_first.x =
+                                L.x0 - L.dx * static_cast<float>(t) / norm_m / 2.0f;
+                            L.p_first.y =
+                                L.y0 - L.dy * static_cast<float>(t) / norm_m / 2.0f;
+                            L.p_first.z = 0.0f;
+                            L.p_last.x =
+                                L.p_first.x + L.dx * static_cast<float>(t) / norm_m;
+                            L.p_last.y =
+                                L.p_first.y + L.dy * static_cast<float>(t) / norm_m;
+                            L.p_last.z = 0.0f;
+                        }
+                    } else {
+                        const auto c0 = centre_from_2d_line(L0);
+                        const auto c1 = centre_from_2d_line(L1);
+                        const double b0 = std::atan2(
+                            static_cast<double>(c0.y),
+                            static_cast<double>(c0.x)) *
+                            180.0 / M_PI;
+                        const double b1 = std::atan2(
+                            static_cast<double>(c1.y),
+                            static_cast<double>(c1.x)) *
+                            180.0 / M_PI;
+                        if (angDeltaDeg(b1, ref_angle) < angDeltaDeg(b0, ref_angle)) {
+                            lines_2d[0] = lines_2d[1];
+                        }
+                    }
+                    lines_2d.resize(1);
+                }
+            }
+
+            if (lines_2d.size() == 2) {
+                const auto &L0 = lines_2d[0];
+                const auto &L1 = lines_2d[1];
+                const float mx0 = 0.5f * (L0.p_first.x + L0.p_last.x);
+                const float my0 = 0.5f * (L0.p_first.y + L0.p_last.y);
+                const float mx1 = 0.5f * (L1.p_first.x + L1.p_last.x);
+                const float my1 = 0.5f * (L1.p_first.y + L1.p_last.y);
+                const double dmid = std::hypot(
+                    static_cast<double>(mx0 - mx1),
+                    static_cast<double>(my0 - my1));
+                const float n0 = std::sqrt(
+                    L0.dx * L0.dx + L0.dy * L0.dy + L0.dz * L0.dz);
+                const float n1 = std::sqrt(
+                    L1.dx * L1.dx + L1.dy * L1.dy + L1.dz * L1.dz);
+                double dir_dot = 0.0;
+                if (n0 > 1e-6f && n1 > 1e-6f) {
+                    dir_dot = std::fabs(static_cast<double>(
+                        L0.dx * L1.dx + L0.dy * L1.dy + L0.dz * L1.dz) /
+                        (static_cast<double>(n0) * static_cast<double>(n1)));
+                }
+                pair_dmid = dmid;
+                pair_dir_dot = dir_dot;
+                const double sep_lo = std::max(
+                    0.08,
+                    static_cast<double>(t) * opposite_2d_mid_sep_min_frac_);
+                const double sep_hi =
+                    static_cast<double>(t) * opposite_2d_mid_sep_max_frac_;
+                const bool plausible_opposite =
+                    (dir_dot >= opposite_2d_pair_min_dir_dot_) &&
+                    (dmid >= sep_lo) && (dmid <= sep_hi);
+                if (!plausible_opposite) {
+                    pruned_implausible_2d_pair = true;
+                    const auto c0 = centre_from_2d_line(L0);
+                    const auto c1 = centre_from_2d_line(L1);
+                    const double b0 = std::atan2(
+                        static_cast<double>(c0.y),
+                        static_cast<double>(c0.x)) *
+                        180.0 / M_PI;
+                    const double b1 = std::atan2(
+                        static_cast<double>(c1.y),
+                        static_cast<double>(c1.x)) *
+                        180.0 / M_PI;
+                    if (angDeltaDeg(b0, ref_angle) <= angDeltaDeg(b1, ref_angle)) {
+                        lines_2d.resize(1);
+                    } else {
+                        lines_2d[0] = lines_2d[1];
+                        lines_2d.resize(1);
+                    }
+                    RCLCPP_INFO_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 2000,
+                        "[detect_cube] id=%ld: pruned implausible 2D pair "
+                        "(d_mid=%.3f m dir_dot=%.3f; need d_mid in [%.3f, %.3f] "
+                        "and dir_dot>=%.3f) — kept line best matching ref_angle=%.2f deg",
+                        aruco_ids[aruco_idx], dmid, dir_dot, sep_lo, sep_hi,
+                        opposite_2d_pair_min_dir_dot_, ref_angle);
+                }
+            }
+
+            ++run_tags_reached_line_detect;
+            run_sum_3d_lines += lines.size();
+            run_sum_2d_before_merge += lines_2d_before_merge;
+            run_sum_2d_after_merge += lines_2d.size();
+            if (merged_duplicate_2d) {
+                ++run_duplicate_2d_merge_count;
+            }
+            if (pruned_implausible_2d_pair) {
+                ++run_pruned_implausible_2d_pair;
+            }
+
+            if (lines_2d_before_merge == 2) {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "[detect_cube LINES] id=%ld 3d_lines=%zu 2d_before_merge=%zu "
+                    "2d_after_merge=%zu merged_duplicate_2d=%s pruned_bad_pair=%s "
+                    "(pair d_mid=%.3f m dir_dot=%.3f; dup merge if d_mid<%.3f "
+                    "then parallel-refine if dir_dot>=%.3f else best ref_angle)",
+                    aruco_ids[aruco_idx],
+                    lines.size(),
+                    lines_2d_before_merge,
+                    lines_2d.size(),
+                    merged_duplicate_2d ? "yes" : "no",
+                    pruned_implausible_2d_pair ? "yes" : "no",
+                    pair_dmid,
+                    pair_dir_dot,
+                    merge_duplicate_2d_line_mid_max_m_,
+                    merge_duplicate_2d_parallel_min_dir_dot_);
+            } else {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "[detect_cube LINES] id=%ld 3d_lines=%zu 2d_before_merge=%zu "
+                    "2d_after_merge=%zu merged_duplicate_2d=%s pruned_bad_pair=%s",
+                    aruco_ids[aruco_idx],
+                    lines.size(),
+                    lines_2d_before_merge,
+                    lines_2d.size(),
+                    merged_duplicate_2d ? "yes" : "no",
+                    pruned_implausible_2d_pair ? "yes" : "no");
+            }
+
             sensor_msgs::msg::PointCloud2 cloud_with_all_lines;
             pcl::toROSMsg(*all_inliers_2d, cloud_with_all_lines);
             cloud_with_all_lines.header = cloud_msg.header;
@@ -600,6 +832,8 @@ private:
                     cube_centres.push_back(p_centre);
 
                 }
+
+                
 
 
                 // calculer le centre moyen calcule pour chaque ligne
@@ -802,15 +1036,36 @@ private:
 
         }
 
+        RCLCPP_INFO(
+            this->get_logger(),
+            "[detect_cube RUN] frame=%s stamp=%d.%09u tags_in_assoc=%zu "
+            "tags_skipped_pre3d=%zu tags_reached_line_detect=%u "
+            "sum_3d_lines=%zu sum_2d_lines_before_merge=%zu sum_2d_lines_after_merge=%zu "
+            "n_duplicate_2d_merges=%u n_pruned_implausible_2d_pair=%u",
+            cloud_msg.header.frame_id.c_str(),
+            cloud_msg.header.stamp.sec,
+            static_cast<unsigned>(cloud_msg.header.stamp.nanosec),
+            aruco_ids.size(),
+            run_tags_pre3d_skip,
+            run_tags_reached_line_detect,
+            run_sum_3d_lines,
+            run_sum_2d_before_merge,
+            run_sum_2d_after_merge,
+            run_duplicate_2d_merge_count,
+            run_pruned_implausible_2d_pair);
+
         /* One publish per cloud: pose_estimator_lidar_node rate-limits /cube_markers after
          * init; multiple publishes in the same callback caused only the first (partial)
          * message to be processed, so valid_markers stayed 1 with the same id. */
         if (!cube_msg.marker_ids.empty()) {
             cube_msg.header.stamp = cloud_msg.header.stamp;
             cube_msg.header.frame_id = "base_link";
-            RCLCPP_INFO(this->get_logger(),
-                "[detect_cube PUBLISH BATCH] markers=%zu (one message per cloud)",
-                cube_msg.marker_ids.size());
+            // RCLCPP_INFO(this->get_logger(),
+            //     "[detect_cube PUBLISH BATCH] markers=%zu (one message per cloud)",
+            //     cube_msg.marker_ids.size());
+
+
+
             cube_markers_pub_->publish(cube_msg);
         }
     }
@@ -826,6 +1081,11 @@ private:
     double t;
     double max_distance_from_aruco_;
     double angular_tolerance_deg_;
+    double merge_duplicate_2d_line_mid_max_m_;
+    double merge_duplicate_2d_parallel_min_dir_dot_;
+    double opposite_2d_pair_min_dir_dot_;
+    double opposite_2d_mid_sep_min_frac_;
+    double opposite_2d_mid_sep_max_frac_;
     std::string map_frame_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscriber_;

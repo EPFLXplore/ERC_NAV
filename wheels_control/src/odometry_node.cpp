@@ -165,7 +165,7 @@ private:
         Eigen::Vector3d twist = A.colPivHouseholderQr().solve(b);
         double v_x     = twist(0);     // body-frame forward
         double v_y     = twist(1);     // body-frame left
-        double omega_z = twist(2);     // yaw rate
+        double omega_z = -twist(2);     // yaw rate
 
         auto now = this->get_clock()->now();
         double dt = (now - prev_time_).seconds();

@@ -170,6 +170,15 @@ RUN git clone --depth 1 https://github.com/embotech/ecos.git /tmp/ecos && \
     cp external/ldl/include/ldl.h /usr/local/include/ && \
     rm -rf /tmp/ecos
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-gi \
+    python3-gi-cairo \
+    gir1.2-gstreamer-1.0 \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    && rm -rf /var/lib/apt/lists/*
+
 USER $USERNAME
 
 # sudo is required for this package (documentation)

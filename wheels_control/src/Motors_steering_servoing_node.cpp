@@ -20,7 +20,8 @@ description:
 
 
 #define ANGLE_TOLERANCE 0.2 // radians
-const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
+// const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
+const double incr_to_rad = M_PI/12/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
 const double ANGLE_TOLERANCE_INCR = ANGLE_TOLERANCE / incr_to_rad; // convert to increments
 
 class MotorSteeringServoingNode : public rclcpp::Node

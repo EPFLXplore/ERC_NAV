@@ -32,7 +32,7 @@
     "so_name": "libsub_mapping.so",
     // General settings
     "enable_imu": true,
-    "enable_optimization": true,
+    "enable_optimization": false,
     // Keyframe update strategy
     "max_num_keyframes": 15,
     "keyframe_update_strategy": "OVERLAP",
@@ -52,6 +52,6 @@
     // Post processing
     "submap_downsample_resolution": 0.1,
     "submap_voxel_resolution": 0.5,
-    "submap_target_num_points": 30000
+    "submap_target_num_points": 8500
   }
 }

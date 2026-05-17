@@ -100,7 +100,7 @@ static_assert(
 // Filter Threshold Params
 extern const float maxObstacleHeight = 2.0;     // maximum obstacle height of 2 meters 
 extern const float sensorMaxRangeLimit = 10; // only keep points with in a radius of x meters   
-extern const float sensorMinRangeLimit = 0.6; // remove points within a radius of 0.6 meters of Lidar
+extern const float sensorMinRangeLimit = 1.5; // remove points within a radius of 0.6 meters of Lidar
 extern const float filterAngleLimit = 35; // slope angle threshold     
 extern const float filterMaxRoughness = 0.1;      
 extern const int filterHeightMapArrayLength = sensorMaxRangeLimit*2 / mapResolution;    // size of the local height mat grid

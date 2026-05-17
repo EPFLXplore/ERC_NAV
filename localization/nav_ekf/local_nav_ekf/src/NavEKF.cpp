@@ -1,6 +1,6 @@
 
 // Extended Kalman Filter for Navigation
-// Fusing Wheel Odometry, IMU (9-axis), (and LiDAR-based odometry (not for now))
+// Fusing Wheel Odometry, IMU (9-axis), and LiDAR-based odometry
 // author: Arno Laurie
 
 
@@ -13,10 +13,10 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <Eigen/Dense>
 #include <cmath>
-#include "custom_msg/msg/motor_status.hpp"
-#include "vector"
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <builtin_interfaces/msg/time.hpp>
 
 
 #define IDX_X    0
@@ -29,19 +29,6 @@
 #define COV_XX   0
 #define COV_YY   7
 #define COV_YAW  35
-
-#define STEERING_RESOLUTION_BITS 14
-#define WIDTH 0.75
-#define LENGTH 0.87
-const double WHEEL_RADIUS = 0.12; //measured experimentally
-const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
-const double gear_ratio = 1.0/53;
-const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
-const double deg_to_rad = M_PI/(180.0);
-const double ANGLE_THRESHOLD = 0.8 * deg_to_rad;
-const double ROTATION_ANGLE_THRESHOLD = 0.642;//max mean ackerman angle is 36.6°=0.639
-const double SPEED_EPSILON = 0.02; // m/s
-
 
 class ExtendedKalmanFilter2D {
 public:
@@ -62,17 +49,17 @@ public:
     x.setZero();
     P = Eigen::Matrix<double,5,5>::Identity() * 1e-2;
     Q.setZero();
-    Q(IDX_X,IDX_X)     = 0.01;
-    Q(IDX_Y,IDX_Y)     = 0.01;
-    Q(IDX_YAW,IDX_YAW) = 0.01;
-    Q(IDX_VX,IDX_VX)   = 0.1;
-    Q(IDX_VY,IDX_VY)   = 0.2;
-    R_yaw   = 0.0001;
-    R_accel = Eigen::Matrix2d::Identity() * 0.1;  // default, override per IMU msg
+    Q(IDX_X,IDX_X)     = 1e-4; // position is driven by wheel velocity, so keep direct drift small
+    Q(IDX_Y,IDX_Y)     = 1e-4;
+    Q(IDX_YAW,IDX_YAW) = 0.001; // process noise for yaw
+    Q(IDX_VX,IDX_VX)   = 0.1; // process noise for vx : from wheel odometry
+    Q(IDX_VY,IDX_VY)   = 0.2; // process noise for vy : from wheel odometry
+    R_yaw   = 0.0001; // measurement noise for yaw
+    R_accel = Eigen::Matrix2d::Identity() * 0.15;  // default, override per IMU msg
     R_xy    = Eigen::Matrix2d::Identity() * 0.08;
     R_xy_lidar    = Eigen::Matrix2d::Identity() * 0.01; // Var of 0.01 => std of 0.1: 10cm 
-    R_xy_aruco    = Eigen::Matrix2d::Identity() * 0.0025; // Var of 0.0025 => std of 0.05: 5cm 
-    R_xy_vio      = Eigen::Matrix2d::Identity() * 0.0025; // Var of 0.0025 => std of 0.05: 5cm
+    R_xy_aruco    = Eigen::Matrix2d::Identity() * 0.01; // Var of 0.0025 => std of 0.05: 5cm 
+    R_xy_vio      = Eigen::Matrix2d::Identity() * 0.01; // Var of 0.0025 => std of 0.05: 5cm
     R_wheel_vel   = Eigen::Matrix3d::Identity() * 0.1;  // wheel velocity measurement noise
 
     prev_vx = 0.0;
@@ -89,135 +76,7 @@ public:
     return a;
   }
 
-  std::vector<double> calculate_wheel_odom(double a_fr, double a_br, double a_fl, double a_bl, 
-               double v_fr, double v_br, double v_fl, double v_bl, double gyro_z){
-
-    double avg_abs_angle = (std::fabs(a_fl) + std::fabs(a_fr) + std::fabs(a_br) + std::fabs(a_bl)) / 4.0;
-    double avg_speed = (v_fl + v_fr + v_br + v_bl) / 4.0;
-    bool going_right = false;
-    bool going_left = false;
-
-    double v_x = 0.0;
-    double v_y = 0.0;
-    double omega_z = 0.0;
-    // Check for straight driving       
-    bool all_angles_small = avg_abs_angle < ANGLE_THRESHOLD;
-    bool possible_rotation = (avg_abs_angle > ROTATION_ANGLE_THRESHOLD);
-
-    if(all_angles_small){
-    //RCLCPP_INFO(this->get_logger(), "translation");
-      // Straight motion
-      double v_avg = (v_fl + v_fr + v_bl + v_br) / 4.0;
-      v_x = v_avg;
-      v_y = 0.0;
-      omega_z = 0.0;
-      //RCLCPP_INFO(this->get_logger(), "speed %f", v_avg);
-    }else if (possible_rotation){
-      //RCLCPP_INFO(this->get_logger(), "rotation sur place");
-
-      // In-place rotation
-      double v_rot = (v_fr - v_fl + v_br - v_bl) / 4.0;
-      
-      // Estimate radius of rotation circle
-      double r = std::sqrt((LENGTH / 2.0) * (LENGTH / 2.0) + (WIDTH / 2.0) * (WIDTH / 2.0));
-      omega_z = v_rot / r;
-      //RCLCPP_INFO(this->get_logger(), "omega z: %f", omega_z);
-      //RCLCPP_INFO(this->get_logger(), "v_rot: %f", v_rot);
-
-      v_x = 0.0;
-      v_y = 0.0;
-    }else{
-        // Curved translation (double Ackermann)
-        // Four cases: forwards curving right, forwards curving left, backwards curving left, backwards curving right
-        double alpha_ext = a_fr;
-        double alpha_int = -a_fl;
-        double v_ext = v_fr;
-        double v_int = v_fl;
-
-        if(a_fl >= 0 && a_fr >= 0 && a_fr > a_fl &&
-            a_bl <= 0 && a_br <= 0 && a_br < a_bl){
-            //going forwards right or backwards right
-            going_right = true;
-            going_left=false;
-
-            v_ext = (0.5) * (v_fl + v_bl);
-            v_int = (0.5) * (v_fr + v_br);
-
-            alpha_int = (0.5) * (a_fl - a_bl);
-            alpha_ext = (0.5) * (a_fr - a_br);
-
-        }else if(a_bl >= 0 && a_br >= 0 && a_br < a_bl &&
-            a_fl <= 0 && a_fr <= 0 && a_fr > a_fl){
-            //going forwards left or backwards left
-            going_left = true;
-            going_right=false;
-
-            v_int = (0.5) * (v_fl + v_bl);
-            v_ext = (0.5) * (v_fr + v_br);
-
-            alpha_ext = (0.5) * (a_fl - a_bl);
-            alpha_int = (0.5) * (a_fr - a_br);
-        }
-
-      if(std::abs(alpha_ext)>0 && std::abs(alpha_int)>0){
-            //RCLCPP_INFO(this->get_logger(), "ackerman");
-
-            double r_ext = std::sqrt(std::pow(WIDTH / 2.0 + LENGTH / (2.0 * std::tan(alpha_ext)), 2) + std::pow(LENGTH / 2.0, 2));
-            double r_int = std::sqrt(std::pow(WIDTH / 2.0 - LENGTH / (2.0 * std::tan(alpha_int)), 2) + std::pow(LENGTH / 2.0, 2));
-            
-            double R_geo = 0.25 * LENGTH * (1.0 / std::tan(alpha_ext) + 1.0 / std::tan(alpha_int));
-
-            double omega_ext = v_ext / r_ext;
-            double omega_int = v_int / r_int;
-
-            omega_z = (omega_ext + omega_int) / 2.0;
-            //RCLCPP_INFO(this->get_logger(), "omega z ackerman: %f", omega_z);
-
-            double R_vel = 0.0;
-
-            if(std::abs(omega_z)<1e-6){
-                omega_z = 1e-6;
-                R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-            }else{
-                R_vel = (v_ext / omega_z + v_int / omega_z) / 2.0;
-            }
-                
-            double R = 0.5*(R_geo + R_vel);
-
-            v_x = omega_z * R;
-            v_y = 0.0;
-      }
-    }
-
-    if(going_left){
-        v_x = -v_x;
-    }
-
-    double world_vx = v_x * std::cos(x(IDX_YAW)) - v_y * std::sin(x(IDX_YAW));
-    double world_vy = v_x * std::sin(x(IDX_YAW)) + v_y * std::cos(x(IDX_YAW));
-
-    if(going_left && avg_speed>=0){
-      omega_z = (-1.0)*omega_z;
-    }
-
-    if(going_left){
-        if(avg_speed<0){
-            omega_z = (-1.0)*omega_z;
-        }
-    }else if(going_right){
-        if(avg_speed>=0){
-            omega_z = (-1.0)*omega_z;
-        }
-    }
-
-    std::vector<double>forward_kinematics = {world_vx, world_vy, omega_z};
-
-    return forward_kinematics;
-  }
-
-  void predict(double dt, double gyro_z, 
-               double steer_fr, double steer_br, double steer_fl, double steer_bl, 
-               double vel_fr, double vel_br, double vel_fl, double vel_bl) {
+  void predict(double dt, double gyro_z) {
     if (dt <= 0.0) return;
     double yaw    = x(IDX_YAW);
     double yaw_n  = normalize_angle(yaw + gyro_z * dt);
@@ -227,30 +86,17 @@ public:
       return;
     }
 
-    //calculate wheel odometry
-    //double odom_vx = 0.0;
-    //double odom_vy = 0.0;
-    //double odom_omega = 0.0;
-    std::vector<double> odom_output = calculate_wheel_odom(steer_fr, steer_br, steer_fl, steer_bl, vel_fr, vel_br, vel_fl, vel_bl, gyro_z);
-    double odom_vx = odom_output[0];
-    double odom_vy = odom_output[1];
-
-    //rotate body-frame to odom frame
+    // Wheel odometry publishes body-frame twist. Rotate it once into odom.
     Eigen::Matrix2d R;
     R << std::cos(yaw), -std::sin(yaw),
          std::sin(yaw), std::cos(yaw);
 
-    Eigen::Vector2d d_body(odom_vx*dt, odom_vy*dt);
-
-    //rotate to odom frame
+    Eigen::Vector2d d_body(vx*dt, vy*dt);
     Eigen::Vector2d d_world = R * d_body;
-    //Eigen::Vector2d a_world = R * Eigen::Vector2d(a_x, a_y);
 
-    x(IDX_X)   += (d_world.x());// + 0.5*a_world.x()*dt*dt);
-    x(IDX_Y)   += (d_world.y());// + 0.5*a_world.y()*dt*dt);
+    x(IDX_X)   += d_world.x();
+    x(IDX_Y)   += d_world.y();
     x(IDX_YAW)  = yaw_n;
-    // x(IDX_VX) += a_world.x() * dt;
-    // x(IDX_VY) += a_world.y() * dt;
     x(IDX_VX) = vx;
     x(IDX_VY) = vy;
 
@@ -258,9 +104,9 @@ public:
     F(IDX_X, IDX_VX) = std::cos(yaw)*dt;
     F(IDX_X, IDX_VY) = (-1.0)*std::sin(yaw)*dt;
     F(IDX_Y, IDX_VX) = std::sin(yaw)*dt;
-    F(IDX_Y, IDX_VY) = (-1.0)*std::cos(yaw)*dt;
+    F(IDX_Y, IDX_VY) = std::cos(yaw)*dt;
     F(IDX_X, IDX_YAW) = -vx * dt * std::sin(yaw) - vy*std::cos(yaw)*dt;
-    F(IDX_Y, IDX_YAW) = vx * dt * std::cos(yaw) + vy*std::sin(yaw)*dt;
+    F(IDX_Y, IDX_YAW) = vx * dt * std::cos(yaw) - vy*std::sin(yaw)*dt;
 
     Eigen::Matrix<double, 5, 5> Qdt = Q * dt;
     P = F * P * F.transpose() + Qdt;
@@ -274,7 +120,10 @@ public:
     Eigen::Vector<double,5> K = P * H.transpose() / S;
     x += K * innov;
     x(IDX_YAW) = normalize_angle(x(IDX_YAW));
-    P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
+    const Eigen::Matrix<double,5,5> I = Eigen::Matrix<double,5,5>::Identity();
+    const Eigen::Matrix<double,5,5> IKH = I - K * H;
+    P = IKH * P * IKH.transpose() + K * meas_var * K.transpose();
+    P = 0.5 * (P + P.transpose());
   }
 
   void updatePosition(double meas_x, double meas_y, Eigen::Matrix2d R_cov) {
@@ -288,7 +137,10 @@ public:
     Eigen::Matrix2d S   = H * P * H.transpose() + R_cov;
     Eigen::Matrix<double,5,2> K = P * H.transpose() * S.inverse();
     x += K * innov;
-    P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
+    const Eigen::Matrix<double,5,5> I = Eigen::Matrix<double,5,5>::Identity();
+    const Eigen::Matrix<double,5,5> IKH = I - K * H;
+    P = IKH * P * IKH.transpose() + K * R_cov * K.transpose();
+    P = 0.5 * (P + P.transpose());
   }
 
   void updateWheelVelocities(double vx_meas, double vy_meas) {
@@ -307,7 +159,10 @@ public:
     Eigen::Matrix<double,5,2> K = P * H.transpose() * S.inverse();
 
     x += K * innov;
-    P = (Eigen::Matrix<double,5,5>::Identity() - K * H) * P;
+    const Eigen::Matrix<double,5,5> I = Eigen::Matrix<double,5,5>::Identity();
+    const Eigen::Matrix<double,5,5> IKH = I - K * H;
+    P = IKH * P * IKH.transpose() + K * R_wheel_vel.topLeftCorner<2,2>() * K.transpose();
+    P = 0.5 * (P + P.transpose());
   }
 
   // void updateAccel(double ax, double ay, double dt){
@@ -370,12 +225,12 @@ public:
     include_lidar_ = this->get_parameter("include_lidar").as_bool();
     RCLCPP_INFO(this->get_logger(), "Lidar included in EKF ? : %s", include_lidar_ ? "True" : "False");
 
-    this->declare_parameter<bool>("include_aruco  ", false);
-    include_aruco_ = this->get_parameter("include_aruco  ").as_bool();
+    this->declare_parameter<bool>("include_aruco", false);
+    include_aruco_ = this->get_parameter("include_aruco").as_bool();
     RCLCPP_INFO(this->get_logger(), "ArUco included in EKF ? : %s", include_aruco_ ? "True" : "False");
 
-    this->declare_parameter<bool>("include_vio  ", false);
-    include_vio_ = this->get_parameter("include_aruco  ").as_bool();
+    this->declare_parameter<bool>("include_vio", false);
+    include_vio_ = this->get_parameter("include_vio").as_bool();
     RCLCPP_INFO(this->get_logger(), "VIO included in EKF ? : %s", include_vio_ ? "True" : "False");
 
 
@@ -406,16 +261,18 @@ public:
       "/aruco_rover_pos", sensor_qos,
       std::bind(&NavEKFNode::aruco_callback, this, std::placeholders::_1));
 
-    wheel_info_sub_ = create_subscription<custom_msg::msg::MotorStatus>(
-      "/NAV/motor_nav_status", sensor_qos,
-      std::bind(&NavEKFNode::wheel_info_callback, this, std::placeholders::_1));
+    vio_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "/zed/zed_node/pose_with_covariance_restamped", sensor_qos,
+      std::bind(&NavEKFNode::vio_callback, this, std::placeholders::_1));
 
     wheel_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/wheel_odom", sensor_qos,
-      std::bind(&NavEKFNode::odom_callback, this, std::placeholders::_1));
+      std::bind(&NavEKFNode::wheel_odom_callback, this, std::placeholders::_1));
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       "/fused_nav_ekf_odom", pub_qos);
+    ros_time_pub_ = create_publisher<builtin_interfaces::msg::Time>(
+      "/NAV/ros_time", pub_qos);
 
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -482,11 +339,15 @@ private:
 
   }
 
-  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    ekf_->updatePosition(msg->pose.pose.position.x,
-                         msg->pose.pose.position.y, ekf_->R_xy);
+  void wheel_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    const double vx_body = msg->twist.twist.linear.x;
+    const double vy_body = msg->twist.twist.linear.y;
+    if (!std::isfinite(vx_body) || !std::isfinite(vy_body)) {
+      return;
+    }
 
-    last_vel_ = msg->twist.twist.linear.x;
+    ekf_->updateWheelVelocities(vx_body, vy_body);
+    last_vel_ = vx_body;
   }
 
 
@@ -495,15 +356,6 @@ private:
       return;
     }
 
-    const rclcpp::Time t_meas = msg->header.stamp;
-    double dt = (t_meas - last_time_).seconds();
-
-    if (std::isfinite(dt) && dt > 0.0 && dt < 1.0) {
-      ekf_->predict(dt, last_gyro_z_,
-                    steer_fr_, steer_br_, steer_fl_, steer_bl_,
-                    vel_fr_,  vel_br_,  vel_fl_,  vel_bl_);
-      last_time_ = t_meas;
-    }
     double mx = msg->pose.pose.position.x;
     double my = msg->pose.pose.position.y;
 
@@ -533,15 +385,6 @@ private:
       return;
     }
 
-    const rclcpp::Time t_meas = msg->header.stamp;
-    double dt = (t_meas - last_time_).seconds();
-
-    if (std::isfinite(dt) && dt > 0.0 && dt < 1.0) {
-      ekf_->predict(dt, last_gyro_z_,
-                    steer_fr_, steer_br_, steer_fl_, steer_bl_,
-                    vel_fr_,  vel_br_,  vel_fl_,  vel_bl_);
-      last_time_ = t_meas;
-    }
     double mx = msg->pose.pose.position.x;
     double my = msg->pose.pose.position.y;
 
@@ -566,20 +409,11 @@ private:
 
   }
 
-  void vio_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  void vio_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
     if(!this->include_vio_){
       return;
     }
 
-    const rclcpp::Time t_meas = msg->header.stamp;
-    double dt = (t_meas - last_time_).seconds();
-
-    if (std::isfinite(dt) && dt > 0.0 && dt < 1.0) {
-      ekf_->predict(dt, last_gyro_z_,
-                    steer_fr_, steer_br_, steer_fl_, steer_bl_,
-                    vel_fr_,  vel_br_,  vel_fl_,  vel_bl_);
-      last_time_ = t_meas;
-    }
     double mx = msg->pose.pose.position.x;
     double my = msg->pose.pose.position.y;
 
@@ -604,67 +438,18 @@ private:
 
   }
 
-  void wheel_info_callback(const custom_msg::msg::MotorStatus::SharedPtr msg){
-    if (msg->velocity.size() != 4 || msg->position.size() != 4) {
-      RCLCPP_ERROR(this->get_logger(), "Invalid input data! Expecting 4 velocities and 4 positions.");
-      return;
-    }
-
-    // MotorStatus position/velocity are published in wheel-corner order:
-    // [front-left, front-right, back-right, back-left].
-    std::vector<double> wheel_speeds_;
-    std::vector<double> wheel_angles_;
-    wheel_speeds_.reserve(4);
-    wheel_speeds_.resize(4);
-
-    wheel_angles_.reserve(4);
-    wheel_angles_.reserve(4);
-
-
-
-    wheel_speeds_[0] = msg->velocity[0] * rpm_to_ms * gear_ratio;
-    wheel_speeds_[1] = msg->velocity[1] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
-    wheel_speeds_[2] = msg->velocity[2] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
-    wheel_speeds_[3] = msg->velocity[3] * rpm_to_ms * gear_ratio;
-    wheel_angles_[0] = (msg->position[0] * incr_to_rad);// * deg_to_rad;
-    wheel_angles_[1] = (msg->position[1] * incr_to_rad);// * deg_to_rad;
-    wheel_angles_[2] = (msg->position[2] * incr_to_rad);// * deg_to_rad;
-    wheel_angles_[3] = (msg->position[3] * incr_to_rad);// * deg_to_rad;
-
-    for(unsigned int i=0; i<4; i++){
-      if(wheel_angles_[i] > M_PI){
-        wheel_angles_[i] -= 2*M_PI;
-      }else if (wheel_angles_[i] < -M_PI){
-        wheel_angles_[i] +=2*M_PI;
-      }
-    }
-
-    steer_fl_ = wheel_angles_[0];
-    steer_fr_ = wheel_angles_[1];
-    steer_br_ = wheel_angles_[2];
-    steer_bl_ = wheel_angles_[3];
-
-    vel_fl_ = wheel_speeds_[0];
-    vel_fr_ = wheel_speeds_[1];
-    vel_br_ = wheel_speeds_[2];
-    vel_bl_ = wheel_speeds_[3];
-  }
-
   void timer_callback() {
     auto now = this->now();
+    builtin_interfaces::msg::Time ros_time_msg;
+    ros_time_msg.sec = static_cast<int32_t>(now.seconds());
+    ros_time_msg.nanosec = static_cast<uint32_t>(now.nanoseconds() % 1000000000LL);
+    ros_time_pub_->publish(ros_time_msg);
+
     double dt = (now - last_time_).seconds();
     last_time_ = now;
     if (dt < 0.0 || dt > 1.0) return;
 
-    // ekf_->predict(dt, last_gyro_z_, last_accel_x, last_accel_y);
-    ekf_->predict(dt, last_gyro_z_, steer_fr_, steer_br_, steer_fl_, steer_bl_, vel_fr_, vel_br_, vel_fl_, vel_bl_);
-    
-    std::vector<double> odom = ekf_->calculate_wheel_odom(steer_fr_, steer_br_, steer_fl_, steer_bl_, vel_fr_, vel_br_, vel_fl_, vel_bl_, last_gyro_z_);
-    double cos_yaw = std::cos(ekf_->x(IDX_YAW));
-    double sin_yaw = std::sin(ekf_->x(IDX_YAW));
-    double odom_vx_world = cos_yaw * odom[0] - sin_yaw*odom[1];
-    double odom_vy_world = sin_yaw * odom[0] + cos_yaw*odom[1];
-    ekf_->updateWheelVelocities(odom_vx_world, odom_vy_world);
+    ekf_->predict(dt, last_gyro_z_);
     
     nav_msgs::msg::Odometry out;
     out.header.stamp    = now;
@@ -681,6 +466,13 @@ private:
     out.pose.covariance[COV_XX]  = ekf_->P(IDX_X,IDX_X);
     out.pose.covariance[COV_YY]  = ekf_->P(IDX_Y,IDX_Y);
     out.pose.covariance[COV_YAW] = ekf_->P(IDX_YAW,IDX_YAW);
+
+    out.twist.twist.linear.x = ekf_->x(IDX_VX);
+    out.twist.twist.linear.y = ekf_->x(IDX_VY);
+    out.twist.twist.angular.z = last_gyro_z_;
+    out.twist.covariance[COV_XX] = ekf_->P(IDX_VX, IDX_VX);
+    out.twist.covariance[COV_YY] = ekf_->P(IDX_VY, IDX_VY);
+    out.twist.covariance[COV_YAW] = ekf_->R_yaw;
 
     ekf_pub_->publish(out);
 
@@ -705,13 +497,14 @@ private:
 
   std::shared_ptr<ExtendedKalmanFilter2D> ekf_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
-  rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr wheel_info_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr wheel_odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lidar_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr aruco_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr vio_sub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    ekf_pub_;
+  rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr ros_time_pub_;
   rclcpp::TimerBase::SharedPtr                             timer_;
   rclcpp::Time                                             last_time_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr        bias_client_, zero_quat_client_, zero_pose_client_;
@@ -727,7 +520,6 @@ private:
   // double last_accel_y = 0.0;
   rclcpp::Time last_imu_stamp_;
 
-  double steer_fr_, steer_br_, steer_fl_, steer_bl_, vel_fr_, vel_br_, vel_fl_, vel_bl_;
 };
 
 int main(int argc, char **argv) {

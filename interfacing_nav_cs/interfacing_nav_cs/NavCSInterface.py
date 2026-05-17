@@ -92,6 +92,7 @@ NAV_JETSON_STATS_TOPIC = "/NAV/jetson_stats"
 CAMERA_NAV_0_SERVICE = '/NAV/req_camera_nav_0'
 CAMERA_NAV_1_SERVICE = '/NAV/req_camera_nav_1'
 CAMERA_NAV_2_SERVICE = '/NAV/req_camera_nav_2'
+CAMERA_NAV_3_SERVICE = '/NAV/req_camera_nav_3'
 RGBD_DEPTH_SERVICE = '/NAV/depth_req_camera_nav_0'
 SCREENSHOT_SERVICE = '/NAV/screenshot_camera_nav_0'
 
@@ -99,12 +100,14 @@ SCREENSHOT_SERVICE = '/NAV/screenshot_camera_nav_0'
 CAMERA_0_STATUS_TOPIC = '/NAV/status_camera_nav_0'
 CAMERA_1_STATUS_TOPIC = '/NAV/status_camera_nav_1'
 CAMERA_2_STATUS_TOPIC = '/NAV/status_camera_nav_2'
+CAMERA_3_STATUS_TOPIC = '/NAV/status_camera_nav_3'
 DEPTH_STATUS_TOPIC = '/NAV/state_depth_camera_nav_0'
 
 # Camera identifiers
 CAMERA_NAV_0 = 'camera_nav_0'
 CAMERA_NAV_1 = 'camera_nav_1'
 CAMERA_NAV_2 = 'camera_nav_2'
+CAMERA_NAV_3 = 'camera_nav_3'
 
 # Camera display names
 CAMERA_FRONT = 'Front'
@@ -411,6 +414,8 @@ class NavCSInterface(Node):
         self.camera_nav_0 = self.create_client(SetBool, CAMERA_NAV_0_SERVICE)
         self.camera_nav_1 = self.create_client(SetBool, CAMERA_NAV_1_SERVICE)
         self.camera_nav_2 = self.create_client(SetBool, CAMERA_NAV_2_SERVICE)
+        self.camera_nav_3 = self.create_client(SetBool, CAMERA_NAV_3_SERVICE)
+
         
         # RGBD and screenshot clients
         self.rgbd_client = self.create_client(SetBool, RGBD_DEPTH_SERVICE)
@@ -439,6 +444,13 @@ class NavCSInterface(Node):
                 "node": False,
                 "data_rate": "0"
             }
+            CAMERA_OAKD: {                    # ← add
+                "name": CAMERA_NAV_3,
+                "status": False,
+                "node": False,
+                "data_rate": "0",
+                "depth": False                # OakD has depth
+            },
         }
 
         # Subscribe to camera status topics (if they exist)
@@ -461,6 +473,13 @@ class NavCSInterface(Node):
             Bool,
             CAMERA_2_STATUS_TOPIC,
             lambda msg: self.update_camera_status(CAMERA_UP2, msg.data),
+            qos_profile=self.qos_profile
+        )
+
+        self.camera_3_status_sub = self.create_subscription(
+            Bool,
+            CAMERA_3_STATUS_TOPIC,
+            lambda msg: self.update_camera_status(CAMERA_UP3, msg.data),
             qos_profile=self.qos_profile
         )
 
@@ -543,10 +562,12 @@ class NavCSInterface(Node):
             CAMERA_FRONT: CAMERA_NAV_0,
             CAMERA_UP1: CAMERA_NAV_1,
             CAMERA_UP2: CAMERA_NAV_2,
+            CAMERA_OAKD:  CAMERA_NAV_3,       
             # Also support direct topic names for backwards compatibility
             CAMERA_NAV_0: CAMERA_NAV_0,
             CAMERA_NAV_1: CAMERA_NAV_1,
             CAMERA_NAV_2: CAMERA_NAV_2,
+            CAMERA_NAV_3: CAMERA_NAV_3,      
         }
         # Translate frontend name to topic name
         topic_camera_name = camera_name_map.get(camera_name, camera_name)

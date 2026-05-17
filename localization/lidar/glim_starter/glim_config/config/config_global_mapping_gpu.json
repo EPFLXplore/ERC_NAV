@@ -27,10 +27,10 @@
     "so_name": "libglobal_mapping.so",
     // General settings
     "enable_imu": true,
-    "enable_optimization": true,
+    "enable_optimization": false,
     "init_pose_damping_scale": 1e10,
     // Relative pose factors
-    "create_between_factors": false,
+    "create_between_factors": true,
     "between_registration_type": "GICP",
     // Registration error factors
     "registration_error_factor_type": "VGICP_GPU",

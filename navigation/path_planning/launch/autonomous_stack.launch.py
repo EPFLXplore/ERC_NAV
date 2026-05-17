@@ -286,22 +286,22 @@ def generate_launch_description():
     manual_stack_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(FindPackageShare("wheels_control").find("wheels_control"),
-                         'launch', 'manual_stack.launch.py')
+                         'launch', 'auto_stack.launch.py')
         )
     )
 
-    gradient_costmap_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare("gradient_costmap").find("gradient_costmap"),
-                         'launch', 'gradient_costmap.launch.py')
-        ),
-        launch_arguments={'gradient_mode': 'local'}.items(),
-    )
+    # gradient_costmap_launch = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         os.path.join(FindPackageShare("gradient_costmap").find("gradient_costmap"),
+    #                      'launch', 'gradient_costmap.launch.py')
+    #     ),
+    #     launch_arguments={'gradient_mode': 'local'}.items(),
+    # )
 
-    gradient_costmap_delay = TimerAction(
-        period=5.0,  # Start after Ouster TF is fully published, before Nav2
-        actions=[gradient_costmap_launch]
-    )
+    # gradient_costmap_delay = TimerAction(
+    #     period=5.0,  # Start after Ouster TF is fully published, before Nav2
+    #     actions=[gradient_costmap_launch]
+    # )
 
     nav2_launch_delay = TimerAction(
         period=12.0,  # Wait for 35 seconds for the whole manual stack to launch
@@ -329,7 +329,7 @@ def generate_launch_description():
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
     # Add the actions to launch all of the navigation nodes
-    ld.add_action(gradient_costmap_delay)
+    # ld.add_action(gradient_costmap_delay)
     ld.add_action(nav2_launch_delay)
 
     return ld

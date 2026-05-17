@@ -90,10 +90,13 @@ public:
             });
 
     cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
-    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("centre_cube_beleck", qos);
+    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/centre_cube_beleck", qos);
     /* Separate from detect_cube (/cube_markers): pose_estimator merges both. */
     cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>(
         "/cube_markers_phi", qos);
+    /* Tags usable for LiDAR crop + line RANSAC: same gate as for_filter (not in cube_markers_phi). */
+    aruco_markers_lidar_assoc_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>(
+            "/aruco_markers_lidar_assoc", qos);
 
     landmark_circles_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
         "aruco_cube_circles", qos);
@@ -284,6 +287,13 @@ private:
         vector<RangeAngleId> for_filter;
         for_filter.reserve(n);
 
+        struct AllowedRow {
+            double range;
+            size_t idx;
+        };
+        vector<AllowedRow> allowed_rows;
+        allowed_rows.reserve(n);
+
         /* One batch per camera message so pose_estimator keeps every forbidden-sector
          * tag (last_cube_phi_ is overwritten per callback, not per row). */
         ros2_aruco_interfaces::msg::ArucoMarkers cube_phi_batch;
@@ -299,7 +309,6 @@ private:
 
             // Behind drill
             const bool in_forbidden_sector = (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
-            const bool in_forbidden_sector = (msg->ar_angles_list[i] < 180.0 && msg->ar_angles_list[i] > 90.0);
 
             if (!in_forbidden_sector) {
                 for_filter.push_back({
@@ -309,6 +318,7 @@ private:
                     msg->landmark_map_pos_x[i],
                     msg->landmark_map_pos_y[i]
                 });
+                allowed_rows.push_back({r, i});
             }
             if (in_forbidden_sector) {
                 geometry_msgs::msg::Point centre_moyen;
@@ -380,6 +390,22 @@ private:
         }
         if (!centre_markers_batch.markers.empty()) {
             centre_pub_->publish(centre_markers_batch);
+        }
+
+        sort(allowed_rows.begin(), allowed_rows.end(),
+             [](const AllowedRow &u, const AllowedRow &v) { return u.range < v.range; });
+        {
+            ros2_aruco_interfaces::msg::ArucoMarkers lidar_assoc_msg;
+            lidar_assoc_msg.header = msg->header;
+            for (const auto &ar : allowed_rows) {
+                const size_t i = ar.idx;
+                lidar_assoc_msg.marker_ids.push_back(msg->marker_ids[i]);
+                lidar_assoc_msg.poses.push_back(msg->poses[i]);
+                lidar_assoc_msg.landmark_map_pos_x.push_back(msg->landmark_map_pos_x[i]);
+                lidar_assoc_msg.landmark_map_pos_y.push_back(msg->landmark_map_pos_y[i]);
+                lidar_assoc_msg.ar_angles_list.push_back(msg->ar_angles_list[i]);
+            }
+            aruco_markers_lidar_assoc_pub_->publish(lidar_assoc_msg);
         }
 
         sort(for_filter.begin(), for_filter.end(),
@@ -652,6 +678,7 @@ private:
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr markers_sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
+    rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr aruco_markers_lidar_assoc_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr landmark_circles_pub_;
     rclcpp::TimerBase::SharedPtr landmark_timer_;

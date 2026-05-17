@@ -53,14 +53,14 @@ def generate_launch_description():
 
     return LaunchDescription([
         # lidar filter
-        DeclareLaunchArgument('tolerance_deg', default_value='10.0'),
-        DeclareLaunchArgument('tolerance_radius', default_value='0.5'), #1.5
+        DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
+        DeclareLaunchArgument('tolerance_radius', default_value='0.8'), #1.5
         DeclareLaunchArgument('hauteur_z_min', default_value='-0.5'),
         DeclareLaunchArgument('hauteur_z_max', default_value='1.0'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
         DeclareLaunchArgument('max_iterations', default_value='20'),
         DeclareLaunchArgument('t', default_value='0.25'),
-        DeclareLaunchArgument('min_inliers', default_value='1'),
+        DeclareLaunchArgument('min_inliers', default_value='30'),
         DeclareLaunchArgument('max_lines', default_value='3'),
         # before ransac
         DeclareLaunchArgument('max_distance_from_aruco', default_value='1.3'),
@@ -79,6 +79,8 @@ def generate_launch_description():
                 'max_lines': max_lines,
                 'max_distance_from_aruco': max_distance_from_aruco,
                 'angular_tolerance_deg': angular_tolerance_deg,
+                # Matches lidar_phi_filter_node publisher aruco_markers_lidar_assoc
+                'aruco_topic': 'aruco_markers_lidar_assoc',
             }],
         ),
   

@@ -43,7 +43,7 @@ class GlimOdomRepublisher(Node):
         super().__init__("glim_odom_publisher")
 
         # Core topics/frames
-        self.declare_parameter("pose_topic", "/glim_rosnode/pose_corrected")
+        self.declare_parameter("pose_topic", "/glim_rosnode/pose")
         self.declare_parameter("odom_topic", "/odom_glim_repub")
         self.declare_parameter("odom_frame_id", "odom")
         self.declare_parameter("child_frame_id", "base_link")
@@ -110,11 +110,13 @@ class GlimOdomRepublisher(Node):
             self.get_logger().warn("orientation_covariance must have 9 values, using defaults.")
             self.orientation_covariance = [0.02, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.0, 0.04]
 
-        self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
-
-        qos = QoSProfile(depth=10)
-        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos = QoSProfile(depth=1)
+        qos.reliability = ReliabilityPolicy.BEST_EFFORT
         qos.history = HistoryPolicy.KEEP_LAST
+
+        self.odom_pub = self.create_publisher(Odometry, self.odom_topic, qos)
+
+        
         self.pose_sub = self.create_subscription(
             PoseStamped, self.pose_topic, self.pose_callback, qos
         )

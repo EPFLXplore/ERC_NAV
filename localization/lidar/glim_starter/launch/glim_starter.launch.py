@@ -32,14 +32,16 @@ def generate_launch_description():
             arguments=['-0.16', '-0.18', '0.6', '-1.5708', '0.0', '0.0', 'base_link_glim', 'lidar_link_glim'],
         ),
 
-        # Launch the GLIM odometry republisher that chagnes the covariance to avoids tfs conflicts
+        # Launch the GLIM odometry republisher that changes the covariance to avoid TF conflicts.
+        # Use the live odometry pose for navigation; pose_corrected comes from mapping/correction
+        # and can lag behind real motion under load.
         Node(
             package='glim_starter',
             executable='glim_odom_publisher',
             name='glim_odom_publisher_node',
             output='screen',
             parameters=[
-                {'pose_topic': '/glim_rosnode/pose_corrected'},
+                {'pose_topic': '/glim_rosnode/pose'},
                 {'odom_topic': '/odom_glim_repub'},
                 {'odom_frame_id': 'odom'},
                 {'child_frame_id': 'base_link'},

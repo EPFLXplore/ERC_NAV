@@ -17,8 +17,8 @@ DEFAULT_ARUCO_STACK_DELAY = "18.0"
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     #-------------- File Paths ------------------
-    # local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
-    # global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
+    local_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "minimal_local_ekf.yaml")
+    global_ekf_file_path = os.path.join(get_package_share_directory("path_planning"), "config", "global_ekf_real.yaml") 
     
     # ------------- Launch Arguments -------------
     default_motor_cmds = "true"
@@ -107,6 +107,20 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         name="NAV_odometry_node",
     )
 
+    # Keep map frame alive from startup even when ArUco stack is delayed/disabled.
+    # This publishes identity transform: map -> odom.
+    map_to_odom_identity_tf = launch_ros.actions.Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="map_to_odom_identity_tf",
+        arguments=[
+            "0.0", "0.0", "0.0",   # translation xyz
+            "0.0", "0.0", "0.0",   # rotation yaw pitch roll
+            "map", "odom"          # parent -> child
+        ],
+        output="screen"
+    )
+
 
     # ------------- Ouster (ouster_ros os_driver) -------------
     # Use driver.launch.py (not driver_launch.py): driver_launch.py defaults to
@@ -134,14 +148,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         launch_arguments={}.items(),
     )
 
-    # nav_cameras_launch_opti = IncludeLaunchDescription(
-    #     launch.launch_description_sources.PythonLaunchDescriptionSource(
-    #         os.path.join(FindPackageShare("camera").find("camera"), "launch", "camera_node_nav.launch.py")
-    #     ),
-    #     launch_arguments={}.items(),
-    # )
-
-
 
     #----------- ArUco Launch Files ---------
 
@@ -166,10 +172,10 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     custom_local_ekf_node = launch_ros.actions.Node(
         package='local_nav_ekf',
-        executable='nav_ekf_3d_node',
-        name='nav_custom_ekf_3d',
+        executable='nav_ekf_node',
+        name='nav_custom_ekf',
         output='screen',
-        parameters=[{'include_lidar': True, 'include_aruco': False, 'include_vio': False}]
+        parameters=[{'include_lidar': True, 'include_aruco': True, 'include_vio': True}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
@@ -227,12 +233,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
 
 
-    # slip_control_node = launch_ros.actions.Node(
-    #     package="wheels_control",
-    #     executable="NAV_steer_control",
-    #     name="motor_steering_servoing",
-    #     output="screen"
-    # )
+    slip_control_node = launch_ros.actions.Node(
+        package="wheels_control",
+        executable="NAV_steer_control",
+        name="motor_steering_servoing",
+        output="screen"
+    )
 
     LogInfo(msg=f"{_C_BOLD_YELLOW} After slip control node {_C_RESET}"),
 
@@ -248,13 +254,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
+        map_to_odom_identity_tf,
         description_launch,
         olive_imu_restamp_node,
         wheel_odom_node,
         custom_local_ekf_node,
         ouster_launch,
         # nav_cameras_launch,
-        delayed_aruco_launch,
+        # delayed_aruco_launch,
         jetson_stats,
         # slip_control_node,
     ]

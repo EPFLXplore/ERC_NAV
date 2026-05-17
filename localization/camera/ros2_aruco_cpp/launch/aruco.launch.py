@@ -40,18 +40,19 @@ def generate_launch_description():
                 'calib_dir': calib_dir,
                 'cam_ids': ['19443010714B177E00', '19443010A19E157E00', '19443010816C177E00'],
                 # Keep in sync with sensors/camera/.../camera_node_nav.launch.py Oak1W x,y
-                'image_stream_width': 1280,
-                'image_stream_height': 720,
+                'image_stream_width': 1920,
+                'image_stream_height': 1080,
             }],
         ),
 
-        # LogInfo(msg="After aruco cpp before lidar launch file in launch file"),
+        # Replace pose_estimator_lidar_node with a fixed identity map->odom TF.
+        # map -> odom: x y z yaw pitch roll = 0 0 0 0 0 0
         Node(
-            package='ros2_aruco_cpp',
-            executable='pose_estimator_lidar_node',
-            name='pose_estimation_node_with_lidar',
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='map_to_odom_identity_tf',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
             output='screen',
         ),
-        # LogInfo(msg="After lidar launch file in launch file"),
 
     ])
