@@ -47,7 +47,17 @@ def generate_launch_description():
     min_inliers = LaunchConfiguration('min_inliers')
     max_lines = LaunchConfiguration('max_lines')
     max_planes = LaunchConfiguration('max_planes')
+    plane_group_centroid_max_m = LaunchConfiguration('plane_group_centroid_max_m')
     face_dimension_tolerance_m = LaunchConfiguration('face_dimension_tolerance_m')
+    side_perpendicular_dot_max = LaunchConfiguration('side_perpendicular_dot_max')
+    top_vertical_dot_min = LaunchConfiguration('top_vertical_dot_min')
+    face_min_short_frac = LaunchConfiguration('face_min_short_frac')
+    side_min_long_frac = LaunchConfiguration('side_min_long_frac')
+    top_min_long_frac = LaunchConfiguration('top_min_long_frac')
+    face_score_tolerance_multiplier = LaunchConfiguration('face_score_tolerance_multiplier')
+    max_face_diagonal_multiplier = LaunchConfiguration('max_face_diagonal_multiplier')
+    max_center_error_m = LaunchConfiguration('max_center_error_m')
+    accept_best_plane_fallback = LaunchConfiguration('accept_best_plane_fallback')
     process_rate_hz = LaunchConfiguration('process_rate_hz')
     marker_lifetime_sec = LaunchConfiguration('marker_lifetime_sec')
     max_distance_from_aruco = LaunchConfiguration('max_distance_from_aruco')
@@ -59,20 +69,30 @@ def generate_launch_description():
         # lidar filter
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
         DeclareLaunchArgument('tolerance_radius', default_value='0.8'), #1.5
-        DeclareLaunchArgument('hauteur_z_min', default_value='-0.5'),
-        DeclareLaunchArgument('hauteur_z_max', default_value='1.0'),
+        DeclareLaunchArgument('hauteur_z_min', default_value='0.0'),
+        DeclareLaunchArgument('hauteur_z_max', default_value='0.75'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
         DeclareLaunchArgument('max_iterations', default_value='100'),
         DeclareLaunchArgument('t', default_value='0.25'),
-        DeclareLaunchArgument('min_inliers', default_value='20'),
+        DeclareLaunchArgument('min_inliers', default_value='12'),
         DeclareLaunchArgument('max_lines', default_value='3'),
-        DeclareLaunchArgument('max_planes', default_value='8'),
-        DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.12'),
+        DeclareLaunchArgument('max_planes', default_value='3'),
+        DeclareLaunchArgument('plane_group_centroid_max_m', default_value='0.80'),
+        DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.25'),
+        DeclareLaunchArgument('side_perpendicular_dot_max', default_value='0.75'),
+        DeclareLaunchArgument('top_vertical_dot_min', default_value='0.35'),
+        DeclareLaunchArgument('face_min_short_frac', default_value='0.20'),
+        DeclareLaunchArgument('side_min_long_frac', default_value='0.20'),
+        DeclareLaunchArgument('top_min_long_frac', default_value='0.20'),
+        DeclareLaunchArgument('face_score_tolerance_multiplier', default_value='5.0'),
+        DeclareLaunchArgument('max_face_diagonal_multiplier', default_value='1.1'),
+        DeclareLaunchArgument('max_center_error_m', default_value='3.0'),
+        DeclareLaunchArgument('accept_best_plane_fallback', default_value='true'),
         DeclareLaunchArgument('process_rate_hz', default_value='8.0'),
         DeclareLaunchArgument('marker_lifetime_sec', default_value='1.0'),
         # before ransac
-        DeclareLaunchArgument('max_distance_from_aruco', default_value='1.3'),
-        DeclareLaunchArgument('angular_tolerance_deg', default_value='100.0'),
+        DeclareLaunchArgument('max_distance_from_aruco', default_value='0.6'),
+        DeclareLaunchArgument('angular_tolerance_deg', default_value='20.0'),
 
         Node(
             package='ros2_aruco_with_lidar',
@@ -86,7 +106,17 @@ def generate_launch_description():
                 'min_inliers': min_inliers,
                 'max_lines': max_lines,
                 'max_planes': max_planes,
+                'plane_group_centroid_max_m': plane_group_centroid_max_m,
                 'face_dimension_tolerance_m': face_dimension_tolerance_m,
+                'side_perpendicular_dot_max': side_perpendicular_dot_max,
+                'top_vertical_dot_min': top_vertical_dot_min,
+                'face_min_short_frac': face_min_short_frac,
+                'side_min_long_frac': side_min_long_frac,
+                'top_min_long_frac': top_min_long_frac,
+                'face_score_tolerance_multiplier': face_score_tolerance_multiplier,
+                'max_face_diagonal_multiplier': max_face_diagonal_multiplier,
+                'max_center_error_m': max_center_error_m,
+                'accept_best_plane_fallback': accept_best_plane_fallback,
                 'process_rate_hz': process_rate_hz,
                 'marker_lifetime_sec': marker_lifetime_sec,
                 'max_distance_from_aruco': max_distance_from_aruco,

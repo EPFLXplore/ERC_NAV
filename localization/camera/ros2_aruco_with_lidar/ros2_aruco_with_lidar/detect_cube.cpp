@@ -60,6 +60,13 @@ public:
         this->declare_parameter<double>("face_dimension_tolerance_m", 0.08);
         this->declare_parameter<double>("side_perpendicular_dot_max", 0.35);
         this->declare_parameter<double>("top_vertical_dot_min", 0.65);
+        this->declare_parameter<double>("face_min_short_frac", 0.25);
+        this->declare_parameter<double>("side_min_long_frac", 0.25);
+        this->declare_parameter<double>("top_min_long_frac", 0.25);
+        this->declare_parameter<double>("face_score_tolerance_multiplier", 4.0);
+        this->declare_parameter<double>("max_face_diagonal_multiplier", 1.8);
+        this->declare_parameter<double>("max_center_error_m", 3.0);
+        this->declare_parameter<bool>("accept_best_plane_fallback", false);
         this->declare_parameter<double>("process_rate_hz", 8.0);
         this->declare_parameter<double>("marker_lifetime_sec", 1.0);
         // Half-width (m) of radial band: |r_point − r_expected| < tol, where r_expected is from map landmark → LiDAR frame.
@@ -100,6 +107,13 @@ public:
         this->get_parameter("face_dimension_tolerance_m", face_dimension_tolerance_m_);
         this->get_parameter("side_perpendicular_dot_max", side_perpendicular_dot_max_);
         this->get_parameter("top_vertical_dot_min", top_vertical_dot_min_);
+        this->get_parameter("face_min_short_frac", face_min_short_frac_);
+        this->get_parameter("side_min_long_frac", side_min_long_frac_);
+        this->get_parameter("top_min_long_frac", top_min_long_frac_);
+        this->get_parameter("face_score_tolerance_multiplier", face_score_tolerance_multiplier_);
+        this->get_parameter("max_face_diagonal_multiplier", max_face_diagonal_multiplier_);
+        this->get_parameter("max_center_error_m", max_center_error_m_);
+        this->get_parameter("accept_best_plane_fallback", accept_best_plane_fallback_);
         this->get_parameter("process_rate_hz", process_rate_hz_);
         this->get_parameter("marker_lifetime_sec", marker_lifetime_sec_);
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
@@ -494,22 +508,31 @@ private:
             std::fabs(plane.dim_short - cube_width_m_) +
             std::fabs(plane.dim_long - cube_width_m_);
         const bool plausible_side_size =
-            plane.dim_short >= 0.45 * cube_width_m_ &&
+            plane.dim_short >= face_min_short_frac_ * cube_width_m_ &&
             plane.dim_short <= cube_width_m_ + face_dimension_tolerance_m_ &&
-            plane.dim_long >= 0.40 * cube_height_m_ &&
+            plane.dim_long >= side_min_long_frac_ * cube_height_m_ &&
             plane.dim_long <= cube_height_m_ + face_dimension_tolerance_m_;
         const bool plausible_top_size =
-            plane.dim_short >= 0.45 * cube_width_m_ &&
+            plane.dim_short >= face_min_short_frac_ * cube_width_m_ &&
             plane.dim_short <= cube_width_m_ + face_dimension_tolerance_m_ &&
-            plane.dim_long >= 0.45 * cube_width_m_ &&
+            plane.dim_long >= top_min_long_frac_ * cube_width_m_ &&
             plane.dim_long <= cube_width_m_ + face_dimension_tolerance_m_;
+        const double face_diagonal = std::hypot(cube_width_m_, cube_height_m_);
+        const double max_face_extent =
+            max_face_diagonal_multiplier_ > 0.0
+                ? max_face_diagonal_multiplier_ * face_diagonal
+                : std::numeric_limits<double>::infinity();
+        const bool plausible_face_extent = plane.dim_long <= max_face_extent;
 
         plane.side_score = side_score;
         plane.top_score = top_score;
-        plane.is_side = plausible_side_size && side_score <= 2.0 * face_dimension_tolerance_m_;
+        plane.is_side = plausible_side_size &&
+            plausible_face_extent &&
+            side_score <= face_score_tolerance_multiplier_ * face_dimension_tolerance_m_;
         plane.is_top =
             plausible_top_size &&
-            top_score <= 2.0 * face_dimension_tolerance_m_ &&
+            plausible_face_extent &&
+            top_score <= face_score_tolerance_multiplier_ * face_dimension_tolerance_m_ &&
             (std::fabs(plane.normal.z) >= top_vertical_dot_min_ ||
              top_score + 0.03 < side_score);
 
@@ -640,7 +663,7 @@ private:
             const int min_inliers = std::max(min_inliers_, dynamic_min_inliers);
             const double radial_tol =
                 have_expected_landmark
-                    ? std::min(max_distance_from_aruco_, std::max(0.05, expected_range_xy / 5.0))
+                    ? max_distance_from_aruco_
                     : max_distance_from_aruco_;
             const double aruco_angle_deg_base = atan2(aruco_y, aruco_x) * 180.0 / M_PI;
             const double ref_angle = have_expected_landmark
@@ -684,6 +707,7 @@ private:
             }
 
             std::vector<PlaneDetection> planes;
+            std::vector<PlaneDetection> extracted_planes;
             pcl::PointCloud<pcl::PointXYZ>::Ptr remaining(
                 new pcl::PointCloud<pcl::PointXYZ>());
             *remaining = *candidate_cloud;
@@ -695,6 +719,7 @@ private:
                 if (!extract_plane(remaining, min_inliers, plane)) {
                     break;
                 }
+                extracted_planes.push_back(plane);
 
                 if (plane.is_side || plane.is_top) {
                     *all_plane_inliers += *plane.inliers;
@@ -718,6 +743,33 @@ private:
                 }
             }
 
+            if (planes.empty() && accept_best_plane_fallback_ && !extracted_planes.empty()) {
+                auto best_it = std::max_element(
+                    extracted_planes.begin(),
+                    extracted_planes.end(),
+                    [](const PlaneDetection &a, const PlaneDetection &b) {
+                        return a.inlier_count < b.inlier_count;
+                    });
+                if (best_it != extracted_planes.end() &&
+                    best_it->inlier_count >= static_cast<size_t>(min_inliers) &&
+                    (max_face_diagonal_multiplier_ <= 0.0 ||
+                     best_it->dim_long <= max_face_diagonal_multiplier_ *
+                         std::hypot(cube_width_m_, cube_height_m_))) {
+                    PlaneDetection fallback = *best_it;
+                    fallback.is_side = true;
+                    fallback.is_top = false;
+                    *all_plane_inliers += *fallback.inliers;
+                    planes.push_back(fallback);
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 2000,
+                        "[detect_cube PLANES] id=%ld accepting fallback plane: "
+                        "inliers=%zu dim_short=%.3f dim_long=%.3f side_score=%.3f top_score=%.3f",
+                        aruco_ids[aruco_idx], fallback.inlier_count,
+                        fallback.dim_short, fallback.dim_long,
+                        fallback.side_score, fallback.top_score);
+                }
+            }
+
             if (all_plane_inliers->empty()) {
                 ++run_tags_preplane_skip;
                 RCLCPP_WARN_THROTTLE(
@@ -726,8 +778,6 @@ private:
                     aruco_ids[aruco_idx], candidate_cloud->size());
                 continue;
             }
-
-            *run_plane_inliers += *all_plane_inliers;
 
             std::vector<PlaneDetection> side_candidates;
             std::vector<PlaneDetection> top_candidates;
@@ -798,43 +848,64 @@ private:
                 }
             }
 
-            Vec3 expected_cloud{expected_x_cloud, expected_y_cloud, 0.0};
-            Vec3 center_sum;
-            double weight_sum = 0.0;
-            for (const auto &side : side_faces) {
-                Vec3 inward = side.normal;
-                if (have_expected_landmark) {
-                    expected_cloud.z = side.centroid.z;
-                    if (dot_vec(sub_vec(expected_cloud, side.centroid), inward) < 0.0) {
-                        inward = scale_vec(inward, -1.0);
+            Vec3 center;
+            if (side_faces.size() >= 2u) {
+                Vec3 bbox_min{
+                    std::numeric_limits<double>::infinity(),
+                    std::numeric_limits<double>::infinity(),
+                    std::numeric_limits<double>::infinity()
+                };
+                Vec3 bbox_max{
+                    -std::numeric_limits<double>::infinity(),
+                    -std::numeric_limits<double>::infinity(),
+                    -std::numeric_limits<double>::infinity()
+                };
+                size_t bbox_point_count = 0;
+                auto accumulate_bbox = [&](const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud) {
+                    if (!cloud) {
+                        return;
                     }
-                } else if (dot_vec(side.centroid, inward) < 0.0) {
-                    inward = scale_vec(inward, -1.0);
-                }
-                const Vec3 side_center = add_vec(
-                    side.centroid, scale_vec(inward, cube_width_m_ * 0.5));
-                const double weight = static_cast<double>(side.inlier_count) /
-                    std::max(0.05, 1.0 + side.side_score);
-                center_sum = add_vec(center_sum, scale_vec(side_center, weight));
-                weight_sum += weight;
-            }
+                    for (const auto &pt : cloud->points) {
+                        if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+                            continue;
+                        }
+                        bbox_min.x = std::min(bbox_min.x, static_cast<double>(pt.x));
+                        bbox_min.y = std::min(bbox_min.y, static_cast<double>(pt.y));
+                        bbox_min.z = std::min(bbox_min.z, static_cast<double>(pt.z));
+                        bbox_max.x = std::max(bbox_max.x, static_cast<double>(pt.x));
+                        bbox_max.y = std::max(bbox_max.y, static_cast<double>(pt.y));
+                        bbox_max.z = std::max(bbox_max.z, static_cast<double>(pt.z));
+                        ++bbox_point_count;
+                    }
+                };
 
-            if (weight_sum <= 0.0) {
-                ++run_tags_preplane_skip;
-                continue;
-            }
-
-            Vec3 center = scale_vec(center_sum, 1.0 / weight_sum);
-            if (have_top) {
-                Vec3 top_inward = top_face.normal;
-                if (top_inward.z > 0.0) {
-                    top_inward = scale_vec(top_inward, -1.0);
+                for (const auto &side : side_faces) {
+                    accumulate_bbox(side.inliers);
                 }
-                const Vec3 top_center = add_vec(
-                    top_face.centroid, scale_vec(top_inward, cube_height_m_ * 0.5));
-                center.x = 0.7 * center.x + 0.3 * top_center.x;
-                center.y = 0.7 * center.y + 0.3 * top_center.y;
-                center.z = top_center.z;
+
+                if (bbox_point_count == 0) {
+                    ++run_tags_preplane_skip;
+                    continue;
+                }
+
+                center = {
+                    0.5 * (bbox_min.x + bbox_max.x),
+                    0.5 * (bbox_min.y + bbox_max.y),
+                    0.5 * (bbox_min.z + bbox_max.z)
+                };
+            } else {
+                const PlaneDetection &side = side_faces.front();
+                Vec3 outward_from_rover = side.normal;
+                const Vec3 rover_to_face{
+                    side.centroid.x,
+                    side.centroid.y,
+                    side.centroid.z
+                };
+                if (dot_vec(rover_to_face, outward_from_rover) < 0.0) {
+                    outward_from_rover = scale_vec(outward_from_rover, -1.0);
+                }
+                center = add_vec(
+                    side.centroid, scale_vec(outward_from_rover, cube_width_m_ * 0.5));
             }
 
             if (have_expected_landmark) {
@@ -842,7 +913,9 @@ private:
                     center.x - expected_x_cloud,
                     center.y - expected_y_cloud);
                 const double max_center_error =
-                    std::max(0.45, max_distance_from_aruco_ + cube_width_m_);
+                    max_center_error_m_ > 0.0
+                        ? max_center_error_m_
+                        : std::max(0.45, max_distance_from_aruco_ + cube_width_m_);
                 if (center_expected_dist > max_center_error) {
                     ++run_tags_preplane_skip;
                     RCLCPP_WARN_THROTTLE(
@@ -852,6 +925,10 @@ private:
                         aruco_ids[aruco_idx], center_expected_dist, max_center_error);
                     continue;
                 }
+            }
+
+            for (const auto &side : side_faces) {
+                *run_plane_inliers += *side.inliers;
             }
 
             for (size_t i = 0; i < side_faces.size(); ++i) {
@@ -927,12 +1004,11 @@ private:
 
         markers_pub_->publish(markers);
         centre_pub_->publish(centres);
-        if (!run_plane_inliers->empty()) {
-            sensor_msgs::msg::PointCloud2 cloud_with_planes;
-            pcl::toROSMsg(*run_plane_inliers, cloud_with_planes);
-            cloud_with_planes.header = cloud_msg.header;
-            lines_pub_->publish(cloud_with_planes);
-        }
+
+        sensor_msgs::msg::PointCloud2 cloud_with_planes;
+        pcl::toROSMsg(*run_plane_inliers, cloud_with_planes);
+        cloud_with_planes.header = cloud_msg.header;
+        lines_pub_->publish(cloud_with_planes);
 
         RCLCPP_INFO(
             this->get_logger(),
@@ -975,6 +1051,13 @@ private:
     double face_dimension_tolerance_m_;
     double side_perpendicular_dot_max_;
     double top_vertical_dot_min_;
+    double face_min_short_frac_;
+    double side_min_long_frac_;
+    double top_min_long_frac_;
+    double face_score_tolerance_multiplier_;
+    double max_face_diagonal_multiplier_;
+    double max_center_error_m_;
+    bool accept_best_plane_fallback_;
     double process_rate_hz_;
     double marker_lifetime_sec_;
     double max_distance_from_aruco_;

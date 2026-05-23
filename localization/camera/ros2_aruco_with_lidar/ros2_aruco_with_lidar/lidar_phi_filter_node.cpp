@@ -18,6 +18,8 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "tf2/LinearMath/Matrix3x3.h"
+#include "tf2/LinearMath/Quaternion.h"
 
 using namespace std;
 // pas de placeholders: on utilise des lambdas pour les callbacks
@@ -43,8 +45,8 @@ public:
     LidarPhiFilterNode() : rclcpp::Node("lidar_phi_filter_node"), tf_buffer_(this->get_clock()) {
         this->declare_parameter<double>("tolerance_deg", 15.0);
         this->declare_parameter<double>("tolerance_radius", 0.35);
-        this->declare_parameter<double>("hauteur_z_min", -0.5);
-        this->declare_parameter<double>("hauteur_z_max", 0.5);
+        this->declare_parameter<double>("hauteur_z_min", -0.7);
+        this->declare_parameter<double>("hauteur_z_max", 1.0);
         this->declare_parameter<double>("camera_detection_ttl_sec", 0.8);
         // this->declare_parameter<double>("lidar_yaw_offset_deg", 270.0);
         this->declare_parameter<std::vector<double>>("landmark_poses", std::vector<double>{});
@@ -107,6 +109,43 @@ public:
 
 private:
     vector<std::pair<double, double>> landmark_poses_;
+
+
+    bool lookup_cloud_to_map_transform(
+        const std::string &cloud_frame,
+        const builtin_interfaces::msg::Time &cloud_stamp,
+        geometry_msgs::msg::TransformStamped &transform)
+    {
+        try {
+            const bool zero_stamp =
+                (cloud_stamp.sec == 0u && cloud_stamp.nanosec == 0u);
+            if (zero_stamp) {
+                if (!tf_buffer_.canTransform(
+                        "map", cloud_frame, tf2::TimePointZero, tf2::durationFromSec(0.1))) {
+                    return false;
+                }
+                transform = tf_buffer_.lookupTransform("map", cloud_frame, tf2::TimePointZero);
+                return true;
+            }
+
+            const rclcpp::Time t(cloud_stamp, get_clock()->get_clock_type());
+            if (tf_buffer_.canTransform(
+                    "map", cloud_frame, t, rclcpp::Duration::from_seconds(0.1))) {
+                transform = tf_buffer_.lookupTransform(
+                    "map", cloud_frame, t, rclcpp::Duration::from_seconds(0.1));
+                return true;
+            }
+
+            if (!tf_buffer_.canTransform(
+                    "map", cloud_frame, tf2::TimePointZero, tf2::durationFromSec(0.05))) {
+                return false;
+            }
+            transform = tf_buffer_.lookupTransform("map", cloud_frame, tf2::TimePointZero);
+            return true;
+        } catch (const tf2::TransformException &) {
+            return false;
+        }
+    }
 
 
     vector<std::pair<double, double>> get_aruco_poses_in_frame(
@@ -602,6 +641,20 @@ private:
         extract_ouster_coordinates(*in, points_buf_);
         if (points_buf_.empty()) return;
 
+        geometry_msgs::msg::TransformStamped cloud_to_map_tf;
+        if (!lookup_cloud_to_map_transform(cloud_frame, in->header.stamp, cloud_to_map_tf)) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *get_clock(), 3000,
+                "[phi_filter] EXIT: transform from cloud frame '%s' to map unavailable; "
+                "cannot apply map-frame z filter",
+                cloud_frame.c_str());
+            return;
+        }
+        tf2::Quaternion cloud_to_map_q;
+        tf2::fromMsg(cloud_to_map_tf.transform.rotation, cloud_to_map_q);
+        const tf2::Matrix3x3 cloud_to_map_rot(cloud_to_map_q);
+        const double cloud_to_map_z = cloud_to_map_tf.transform.translation.z;
+
         sensor_msgs::msg::PointCloud2 out;
         out.header         = in->header;
         out.height         = 1;
@@ -618,7 +671,12 @@ private:
         size_t rej_radius = 0;  // inside bbox but outside tolerance_radius of every landmark
 
         for (const auto &p : points_buf_) {
-            if (p[2] < hauteur_z_min || p[2] > hauteur_z_max) { ++rej_z; continue; }
+            const double map_z =
+                cloud_to_map_z +
+                cloud_to_map_rot[2][0] * static_cast<double>(p[0]) +
+                cloud_to_map_rot[2][1] * static_cast<double>(p[1]) +
+                cloud_to_map_rot[2][2] * static_cast<double>(p[2]);
+            if (map_z < hauteur_z_min || map_z > hauteur_z_max) { ++rej_z; continue; }
 
             const double px = p[0];
             const double py = p[1];
