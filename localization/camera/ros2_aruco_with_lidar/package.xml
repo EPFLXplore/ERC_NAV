@@ -16,6 +16,11 @@
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>ros2_aruco_interfaces</depend>
+  <depend>pcl_conversions</depend>
+  <depend>visualization_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
   <!-- Add other C++ dependencies here -->
 
   <!-- Python dependencies -->

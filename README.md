@@ -3,6 +3,26 @@
 ROS 2 Humble workspace for the **EPFL Xplore** rover's autonomous navigation stack,
 for the European Rover Challenge.
 
+## NAV Jetson Quick Start
+
+SSH into the NAV Jetson:
+
+```bash
+ssh xplore-nav@169.254.55.231
+```
+
+Once inside, run one of the NAV startup scripts:
+
+```bash
+go_in_nav_no_imu.sh
+go_in_nav_with_imu.sh
+start_glim.sh
+```
+
+- `go_in_nav_no_imu.sh`: starts the NAV stack without using the external IMU path. Use this when the IMU is unavailable, unstable, or you want to test wheel/LiDAR/camera navigation without IMU fusion.
+- `go_in_nav_with_imu.sh`: starts the NAV stack with IMU support enabled. This is the normal field mode when the Olive/Ouster IMU pipeline is available and time-synchronized.
+- `start_glim.sh`: starts the GLIM LiDAR-inertial odometry pipeline and its republisher. Use this when you specifically need GLIM LiDAR Odometry/SLAM running.
+
 - **TL:** Paul Bourgois
 - **SE:** Arno Laurie
 - **Documentation (Notion):** https://www.notion.so/xplore-doc/Navigation-128d2c11ab574c95a9be0790afa76d48

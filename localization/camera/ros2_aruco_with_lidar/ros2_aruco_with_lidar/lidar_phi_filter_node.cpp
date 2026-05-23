@@ -67,7 +67,7 @@ public:
 
         camera_detection_ttl_ns_ = static_cast<int64_t>(camera_detection_ttl_sec * 1e9);
         input_cloud_topic_ = "/ouster/points";
-        output_cloud_topic_ = "/ouster_points_aruco";
+        output_cloud_topic_ = "/lidar/points_near_camera_aruco_landmarks";
         aruco_topic_ = "aruco_markers";
         selected_count_ = 0;
         min_cloud_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max 
@@ -90,16 +90,16 @@ public:
             });
 
     cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
-    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/centre_cube_beleck", qos);
-    /* Separate from detect_cube (/cube_markers): pose_estimator merges both. */
+    centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/visualization/cube_centers", qos);
+    /* Separate from detect_cube (/perception/lidar_cube_markers): pose_estimator merges both. */
     cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>(
-        "/cube_markers_phi", qos);
+        "/perception/camera_forbidden_sector_cube_markers", qos);
     /* Tags usable for LiDAR crop + line RANSAC: same gate as for_filter (not in cube_markers_phi). */
     aruco_markers_lidar_assoc_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>(
-            "/aruco_markers_lidar_assoc", qos);
+            "/perception/aruco_markers_for_lidar_association", qos);
 
     landmark_circles_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-        "aruco_cube_circles", qos);
+        "/visualization/aruco_landmark_search_zones", qos);
     landmark_timer_ = create_wall_timer(std::chrono::milliseconds(2000), [this]() {
         publish_landmark_circles();
     });

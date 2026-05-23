@@ -46,6 +46,10 @@ def generate_launch_description():
     t = LaunchConfiguration('t')
     min_inliers = LaunchConfiguration('min_inliers')
     max_lines = LaunchConfiguration('max_lines')
+    max_planes = LaunchConfiguration('max_planes')
+    face_dimension_tolerance_m = LaunchConfiguration('face_dimension_tolerance_m')
+    process_rate_hz = LaunchConfiguration('process_rate_hz')
+    marker_lifetime_sec = LaunchConfiguration('marker_lifetime_sec')
     max_distance_from_aruco = LaunchConfiguration('max_distance_from_aruco')
     angular_tolerance_deg = LaunchConfiguration('angular_tolerance_deg')
 
@@ -58,10 +62,14 @@ def generate_launch_description():
         DeclareLaunchArgument('hauteur_z_min', default_value='-0.5'),
         DeclareLaunchArgument('hauteur_z_max', default_value='1.0'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
-        DeclareLaunchArgument('max_iterations', default_value='20'),
+        DeclareLaunchArgument('max_iterations', default_value='100'),
         DeclareLaunchArgument('t', default_value='0.25'),
-        DeclareLaunchArgument('min_inliers', default_value='30'),
+        DeclareLaunchArgument('min_inliers', default_value='20'),
         DeclareLaunchArgument('max_lines', default_value='3'),
+        DeclareLaunchArgument('max_planes', default_value='8'),
+        DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.12'),
+        DeclareLaunchArgument('process_rate_hz', default_value='8.0'),
+        DeclareLaunchArgument('marker_lifetime_sec', default_value='1.0'),
         # before ransac
         DeclareLaunchArgument('max_distance_from_aruco', default_value='1.3'),
         DeclareLaunchArgument('angular_tolerance_deg', default_value='100.0'),
@@ -77,10 +85,14 @@ def generate_launch_description():
                 't': t,
                 'min_inliers': min_inliers,
                 'max_lines': max_lines,
+                'max_planes': max_planes,
+                'face_dimension_tolerance_m': face_dimension_tolerance_m,
+                'process_rate_hz': process_rate_hz,
+                'marker_lifetime_sec': marker_lifetime_sec,
                 'max_distance_from_aruco': max_distance_from_aruco,
                 'angular_tolerance_deg': angular_tolerance_deg,
-                # Matches lidar_phi_filter_node publisher aruco_markers_lidar_assoc
-                'aruco_topic': 'aruco_markers_lidar_assoc',
+                # Matches lidar_phi_filter_node association publisher.
+                'aruco_topic': '/perception/aruco_markers_for_lidar_association',
             }],
         ),
   

@@ -35,7 +35,7 @@ add_executable(lidar_phi_filter_node ros2_aruco_with_lidar/lidar_phi_filter_node
 add_executable(detect_cube ros2_aruco_with_lidar/detect_cube.cpp)
 
 ament_target_dependencies(lidar_phi_filter_node rclcpp sensor_msgs ros2_aruco_interfaces visualization_msgs pcl_conversions geometry_msgs tf2_ros tf2_geometry_msgs)
-ament_target_dependencies(detect_cube rclcpp sensor_msgs ros2_aruco_interfaces pcl_conversions visualization_msgs tf2_ros tf2_geometry_msgs)
+ament_target_dependencies(detect_cube rclcpp sensor_msgs std_msgs ros2_aruco_interfaces pcl_conversions visualization_msgs geometry_msgs tf2_ros tf2_geometry_msgs)
 
 target_link_libraries(detect_cube
   ${PCL_SEGMENTATION_LIBRARIES}
