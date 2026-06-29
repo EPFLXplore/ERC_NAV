@@ -1,5 +1,7 @@
 ###########################################
 # Xplore Navigation image
+# Last built: June 29th 2026
+# Image Size: 21GB
 ###########################################
 FROM ghcr.io/epflxplore/docker_commons:humble-jetson
 
@@ -12,8 +14,7 @@ RUN apt update && apt install ros2-apt-source
 RUN rm /etc/apt/sources.list.d/ros2.list
 RUN rm /usr/share/keyrings/ros-archive-keyring.gpg
 
-# installing pyrealsense2 (doesnt work with pip)
-# Install dependencies for building librealsense with Python bindings
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     cmake \
@@ -42,47 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 #####################################
-# #Librealsense build form source: remove when realsense cameras are no longer used.
 
-# # Clone the librealsense repository with submodules
-# RUN git clone https://github.com/IntelRealSense/librealsense.git /librealsense \
-#     && cd /librealsense \
-#     && git submodule update --init --recursive
-
-
-# # Set up udev rules (optional but recommended for device access)
-# WORKDIR /librealsense
-# RUN ./scripts/setup_udev_rules.sh
-
-# # Build and install librealsense with Python bindings
-# WORKDIR /librealsense/build
-# RUN cmake ../ \
-#     -DBUILD_PYTHON_BINDINGS:bool=true \
-#     -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-#     -DFORCE_RSUSB_BACKEND=ON \
-#     -DBUILD_WITH_CUDA:bool=true \
-#     -DBUILD_EXAMPLES=true \
-#     -DCMAKE_BUILD_TYPE=release && \
-#     make uninstall && make clean
-
-# RUN make VERBOSE=1 -j$(nproc) pyrealsense2 && make install
-
-# ENV PYTHONPATH=/usr/local/lib/python3.10/dist-packages
-# ENV PYTHONPATH=/usr/local/lib/python3.10/dist-packages/pyrealsense2:$PYTHONPATH
-
-# #need to copy the pyrealsense2.cpython-310-aarch64-linux-gnu.so files to
-# #/usr/local/lib/python3.10/dist-packages/pyrealsense2/
-# RUN mkdir -p /usr/local/lib/python3.10/dist-packages/pyrealsense2 && \
-#     cp /librealsense/build/release/pyrealsense2.cpython-310-aarch64-linux-gnu.so* /usr/local/lib/python3.10/dist-packages/pyrealsense2/
-
-# #may also need to copy the __init__.py file from librealsense/?? to the same place
-# RUN cp /librealsense/wrappers/python/pyrealsense2/__init__.py /usr/local/lib/python3.10/dist-packages/pyrealsense2/
-
-# #this line doesnt work
-# #RUN udevadm control --reload-rules && udevadm trigger
-
-
-###############################################################
 
 # Install ROS 2 Nav packages
 RUN add-apt-repository ppa:borglab/gtsam-release-4.1
@@ -177,6 +138,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
     && rm -rf /var/lib/apt/lists/*
 
 USER $USERNAME

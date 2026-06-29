@@ -1,0 +1,43 @@
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+
+      <PipelineSequence name="NavigateWithStablePath">
+
+        <RateController hz="1.0">
+          <Sequence name="ComputeAndAcceptStableCandidate">
+
+            <ComputePathToPose goal="{goal}"
+                               path="{candidate_path}"
+                               planner_id="GridBased"/>
+
+            <AcceptCandidatePath current_path="{path}"
+                                 candidate_path="{candidate_path}"
+                                 output_path="{path}"
+                                 check_distance="1.0"
+                                 max_initial_angle_deg="100.0"
+                                 max_length_ratio="1.5"/>
+
+          </Sequence>
+        </RateController>
+
+        <FollowPath path="{path}" controller_id="FollowPath"/>
+
+      </PipelineSequence>
+
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+
+        <Sequence name="ClearCostmaps">
+          <ClearEntireCostmap name="ClearLocalCostmap"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap"
+                              service_name="global_costmap/clear_entirely_global_costmap"/>
+        </Sequence>
+      </ReactiveFallback>
+
+    </RecoveryNode>
+
+  </BehaviorTree>
+</root>

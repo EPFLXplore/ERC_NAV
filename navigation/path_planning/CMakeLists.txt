@@ -7,10 +7,14 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav2_behavior_tree REQUIRED)
+find_package(behaviortree_cpp_v3 REQUIRED)
+find_package(pluginlib REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -36,6 +40,41 @@ install(DIRECTORY
   launch
   config
   DESTINATION share/${PROJECT_NAME}
+)
+include_directories(include)
+
+add_library(path_planning_bt_nodes SHARED
+  bt_nodes/accept_candidate_path.cpp
+)
+
+ament_target_dependencies(path_planning_bt_nodes
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  nav2_behavior_tree
+  behaviortree_cpp_v3
+  pluginlib
+)
+
+target_compile_definitions(path_planning_bt_nodes PRIVATE BT_PLUGIN_EXPORT)
+pluginlib_export_plugin_description_file(nav2_behavior_tree bt_plugins.xml)
+
+install(TARGETS path_planning_bt_nodes
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/
+  DESTINATION include/
+)
+
+install(FILES bt_plugins.xml
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY behavior_trees/
+  DESTINATION share/${PROJECT_NAME}/behavior_trees
 )
 
 ament_package()

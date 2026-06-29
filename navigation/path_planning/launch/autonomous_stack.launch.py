@@ -63,7 +63,7 @@ def generate_launch_description():
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
     # Pass the params file directly (bypass RewrittenYaml to avoid silent failures)
-    configured_params = '/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_no_global_map.yaml'
+    configured_params = '/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026.yaml'
 
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_LOGGING_BUFFERED_STREAM', '1'
@@ -81,7 +81,7 @@ def generate_launch_description():
 
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
-        default_value='/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_no_global_map.yaml',
+        default_value='/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026.yaml',
         description='Full path to the ROS2 parameters file to use for all launched nodes',
     )
 

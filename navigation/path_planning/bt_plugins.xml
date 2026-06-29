@@ -1,0 +1,10 @@
+<library path="path_planning_bt_nodes">
+  <class
+    name="path_planning/AcceptCandidatePath"
+    type="path_planning::AcceptCandidatePath"
+    base_class_type="BT::ActionNodeBase">
+    <description>
+      Accepts or rejects a candidate path based on path stability checks.
+    </description>
+  </class>
+</library>
