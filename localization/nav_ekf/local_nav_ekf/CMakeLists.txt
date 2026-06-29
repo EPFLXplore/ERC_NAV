@@ -22,6 +22,7 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(custom_msg REQUIRED)
 
 
@@ -56,6 +57,7 @@ ament_target_dependencies(nav_ekf_3d_node
     tf2_geometry_msgs
     tf2_ros
     std_srvs
+    std_msgs
     custom_msg
 )
 target_link_libraries(nav_ekf_3d_node Eigen3::Eigen)

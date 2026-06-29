@@ -35,6 +35,8 @@
 #include <builtin_interfaces/msg/time.hpp>
 #include <Eigen/Dense>
 #include <cmath>
+#include <deque>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 
 namespace {
@@ -105,6 +107,46 @@ inline double low_pass_step(double raw, double previous, double dt, double time_
   const double alpha = dt / (time_constant + dt);
   return alpha * raw + (1.0 - alpha) * previous;
 }
+
+// Ring buffer storing the last CAPACITY pre-update innovations for one scalar
+// channel.  autocorr() returns the normalized autocorrelation sequence
+// r[k] = R(k)/R(0), k = 0..MAX_LAG.
+// For a well-tuned EKF: r[0] = 1, r[k≠0] ≈ 0 (innovation whiteness).
+struct InnovBuffer {
+  static constexpr int CAPACITY = 200;
+  static constexpr int MAX_LAG  = 50;
+  std::deque<double> buf;   // buf[0] = most recent
+
+  void push(double v) {
+    buf.push_front(v);
+    if (static_cast<int>(buf.size()) > CAPACITY) buf.pop_back();
+  }
+
+  std::vector<double> autocorr() const {
+    const int n = static_cast<int>(buf.size());
+    if (n < 4) return {};
+
+    double mean = 0.0;
+    for (double v : buf) mean += v;
+    mean /= n;
+
+    double var = 0.0;
+    for (double v : buf) { double d = v - mean; var += d * d; }
+    var /= n;
+
+    const int lags = std::min(MAX_LAG + 1, n);
+    std::vector<double> ac(lags, 0.0);
+    if (var < 1e-15) { if (!ac.empty()) ac[0] = 1.0; return ac; }
+
+    for (int lag = 0; lag < lags; ++lag) {
+      double s = 0.0;
+      for (int t = 0; t + lag < n; ++t)
+        s += (buf[t] - mean) * (buf[t + lag] - mean);
+      ac[lag] = (s / n) / var;
+    }
+    return ac;
+  }
+};
 
 }  // namespace
 
@@ -215,11 +257,38 @@ public:
     state(IDX_PITCH) = normalize_angle(state(IDX_PITCH));
     state(IDX_YAW)   = normalize_angle(state(IDX_YAW));
 
-    // --- Covariance propagation (RK2 Jacobian of CV model) ---
+    // --- Covariance propagation ---
+    const double roll  = state(IDX_ROLL);
+    const double pitch = state(IDX_PITCH);
+    const double yaw   = state(IDX_YAW);
+    const Eigen::Vector3d body_v(state(IDX_VX), state(IDX_VY), state(IDX_VZ));
+    const Eigen::Matrix3d R = rotation_matrix_from_rpy(roll, pitch, yaw);
+    const Eigen::Matrix3d E = euler_rate_matrix(roll, pitch);
+
     StateMatrix jacobian_continuous = StateMatrix::Zero();
-    const Eigen::Matrix3d rotation_world_from_body = rotation_matrix_from_rpy(
-        state(IDX_ROLL), state(IDX_PITCH), state(IDX_YAW));
-    jacobian_continuous.block<3, 3>(IDX_X, IDX_VX) = rotation_world_from_body;
+
+    // dp/dv_B = R
+    jacobian_continuous.block<3, 3>(IDX_X, IDX_VX) = R;
+
+    // dp/d_eta: attitude uncertainty propagates into position uncertainty
+    constexpr double EPS = 1e-5;
+    const Eigen::Vector3d Rv = R * body_v;
+    for (int k = 0; k < 3; ++k) {
+      double e[3] = {roll, pitch, yaw};
+      e[k] += EPS;
+      const Eigen::Matrix3d Rp = rotation_matrix_from_rpy(e[0], e[1], e[2]);
+      jacobian_continuous.block<3, 1>(IDX_X, IDX_ROLL + k) = (Rp * body_v - Rv) / EPS;
+    }
+
+    // d_eta/d_eta: roll/pitch uncertainty propagates into attitude-rate uncertainty
+    // (E doesn't depend on yaw, so the yaw column stays zero)
+    const Eigen::Vector3d Ew = E * body_angular_rate;
+    for (int k = 0; k < 2; ++k) {
+      double e[2] = {roll, pitch};
+      e[k] += EPS;
+      const Eigen::Matrix3d Ep = euler_rate_matrix(e[0], e[1]);
+      jacobian_continuous.block<3, 1>(IDX_ROLL, IDX_ROLL + k) = (Ep * body_angular_rate - Ew) / EPS;
+    }
 
     const StateMatrix jacobian_squared = jacobian_continuous * jacobian_continuous;
     const StateMatrix state_transition =
@@ -433,6 +502,25 @@ public:
     last_time_ = now();
     timer_ = create_wall_timer(std::chrono::milliseconds(10),
                                std::bind(&NavEKF3DNode::timer_callback, this));
+
+    // Innovation autocorrelation publishers
+    using FAMsg = std_msgs::msg::Float64MultiArray;
+    auto latch = rclcpp::QoS{rclcpp::KeepLast{1}}.reliable();
+    pub_ac_imu_roll_  = create_publisher<FAMsg>("/nav_ekf/autocorr/imu_roll",  latch);
+    pub_ac_imu_pitch_ = create_publisher<FAMsg>("/nav_ekf/autocorr/imu_pitch", latch);
+    pub_ac_imu_yaw_   = create_publisher<FAMsg>("/nav_ekf/autocorr/imu_yaw",   latch);
+    pub_ac_vel_x_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vel_x",     latch);
+    pub_ac_vel_y_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vel_y",     latch);
+    pub_ac_vel_z_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vel_z",     latch);
+    pub_ac_lidar_x_   = create_publisher<FAMsg>("/nav_ekf/autocorr/lidar_x",   latch);
+    pub_ac_lidar_y_   = create_publisher<FAMsg>("/nav_ekf/autocorr/lidar_y",   latch);
+    pub_ac_aruco_x_   = create_publisher<FAMsg>("/nav_ekf/autocorr/aruco_x",   latch);
+    pub_ac_aruco_y_   = create_publisher<FAMsg>("/nav_ekf/autocorr/aruco_y",   latch);
+    pub_ac_vio_x_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_x",     latch);
+    pub_ac_vio_y_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_y",     latch);
+
+    autocorr_timer_ = create_wall_timer(std::chrono::milliseconds(400),
+                                        std::bind(&NavEKF3DNode::autocorr_callback, this));
   }
 
 private:
@@ -512,6 +600,12 @@ private:
     if (var_yaw   > 0.0) R_rpy(2, 2) = var_yaw;
 
     const Eigen::Vector3d measured_rpy(filtered_roll_, filtered_pitch_, raw_yaw);
+
+    // Capture pre-update innovations for whiteness check
+    buf_imu_roll_.push(normalize_angle(filtered_roll_ - ekf_->state(IDX_ROLL)));
+    buf_imu_pitch_.push(normalize_angle(filtered_pitch_ - ekf_->state(IDX_PITCH)));
+    buf_imu_yaw_.push(normalize_angle(raw_yaw - ekf_->state(IDX_YAW)));
+
     ekf_->update_orientation_rpy(measured_rpy, R_rpy);
   }
 
@@ -523,6 +617,10 @@ private:
       return;
     }
 
+    buf_vel_x_.push(vx_body - ekf_->state(IDX_VX));
+    buf_vel_y_.push(vy_body - ekf_->state(IDX_VY));
+    buf_vel_z_.push(vz_body - ekf_->state(IDX_VZ));
+
     ekf_->update_velocity_body_xyz(Eigen::Vector3d(vx_body, vy_body, vz_body));
   }
 
@@ -530,6 +628,8 @@ private:
     if (!include_lidar_) return;
     const double mx = msg->pose.pose.position.x;
     const double my = msg->pose.pose.position.y;
+    buf_lidar_x_.push(mx - ekf_->state(IDX_X));
+    buf_lidar_y_.push(my - ekf_->state(IDX_Y));
     if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_lidar)) {
       ekf_->update_position_xy(mx, my, ekf_->R_position_xy_lidar);
     } else {
@@ -541,6 +641,8 @@ private:
     if (!include_aruco_) return;
     const double mx = msg->pose.pose.position.x;
     const double my = msg->pose.pose.position.y;
+    buf_aruco_x_.push(mx - ekf_->state(IDX_X));
+    buf_aruco_y_.push(my - ekf_->state(IDX_Y));
     if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_aruco)) {
       ekf_->update_position_xy(mx, my, ekf_->R_position_xy_aruco);
     } else {
@@ -552,10 +654,45 @@ private:
     if (!include_vio_) return;
     const double mx = msg->pose.pose.position.x;
     const double my = msg->pose.pose.position.y;
+    buf_vio_x_.push(mx - ekf_->state(IDX_X));
+    buf_vio_y_.push(my - ekf_->state(IDX_Y));
     if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_vio)) {
       ekf_->update_position_xy(mx, my, ekf_->R_position_xy_vio);
     } else {
       RCLCPP_WARN(get_logger(), "Reject VIO odom (Mahalanobis)");
+    }
+  }
+
+  // Publish normalized autocorrelation [r(0)=1, r(1), ..., r(MAX_LAG)] for one channel.
+  void publish_autocorr(
+    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr & pub,
+    const InnovBuffer & buf)
+  {
+    const auto ac = buf.autocorr();
+    if (ac.empty()) return;
+    std_msgs::msg::Float64MultiArray msg;
+    msg.data = ac;
+    pub->publish(msg);
+  }
+
+  void autocorr_callback() {
+    publish_autocorr(pub_ac_imu_roll_,  buf_imu_roll_);
+    publish_autocorr(pub_ac_imu_pitch_, buf_imu_pitch_);
+    publish_autocorr(pub_ac_imu_yaw_,   buf_imu_yaw_);
+    publish_autocorr(pub_ac_vel_x_,     buf_vel_x_);
+    publish_autocorr(pub_ac_vel_y_,     buf_vel_y_);
+    publish_autocorr(pub_ac_vel_z_,     buf_vel_z_);
+    if (include_lidar_) {
+      publish_autocorr(pub_ac_lidar_x_, buf_lidar_x_);
+      publish_autocorr(pub_ac_lidar_y_, buf_lidar_y_);
+    }
+    if (include_aruco_) {
+      publish_autocorr(pub_ac_aruco_x_, buf_aruco_x_);
+      publish_autocorr(pub_ac_aruco_y_, buf_aruco_y_);
+    }
+    if (include_vio_) {
+      publish_autocorr(pub_ac_vio_x_,   buf_vio_x_);
+      publish_autocorr(pub_ac_vio_y_,   buf_vio_y_);
     }
   }
 
@@ -658,6 +795,22 @@ private:
   // Initial frame capture
   bool   initial_frame_set_      = false;
   double initial_yaw_            = 0.0;
+
+  // Innovation ring buffers (one per scalar channel)
+  InnovBuffer buf_imu_roll_, buf_imu_pitch_, buf_imu_yaw_;
+  InnovBuffer buf_vel_x_, buf_vel_y_, buf_vel_z_;
+  InnovBuffer buf_lidar_x_, buf_lidar_y_;
+  InnovBuffer buf_aruco_x_, buf_aruco_y_;
+  InnovBuffer buf_vio_x_,   buf_vio_y_;
+
+  // Autocorrelation publishers
+  using FAMsg = std_msgs::msg::Float64MultiArray;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_imu_roll_, pub_ac_imu_pitch_, pub_ac_imu_yaw_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vel_x_,    pub_ac_vel_y_,     pub_ac_vel_z_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_lidar_x_,  pub_ac_lidar_y_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_aruco_x_,  pub_ac_aruco_y_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_x_,    pub_ac_vio_y_;
+  rclcpp::TimerBase::SharedPtr autocorr_timer_;
 
 };
 
