@@ -19,6 +19,7 @@ description:    Lifecycle node that connects and monitors the navigation motors.
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -97,38 +98,44 @@ public:
 
         this->homing = false;
 
-        // auto timer_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-        // auto sub_service_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        // Timer gets its own group; subscription and services share a second group.
+        // The can_mutex_ serializes actual CAN bus access between the two groups.
+        timer_group_  = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        sub_group_    = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
         timer_ = this->create_wall_timer(
             50ms,
-            std::bind(&MotorCmdsLifecycle::motors_param_callback, this)
+            std::bind(&MotorCmdsLifecycle::motors_param_callback, this),
+            timer_group_
         );
 
         auto qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
-        
+
         pub_motor_nav_status = this->create_publisher<custom_msg::msg::MotorStatus>(
             "/NAV/motor_nav_status", qos);
 
-
-        // subscription into sub_service_group
-        // rclcpp::SubscriptionOptions sub_opts;
-        // sub_opts.callback_group = sub_service_group;
+        rclcpp::SubscriptionOptions sub_opts;
+        sub_opts.callback_group = sub_group_;
         sub_motors_displacement = this->create_subscription<custom_msg::msg::Motorcmds>(
             "/NAV/displacement", qos,
-            std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1)
+            std::bind(&MotorCmdsLifecycle::motor_cmds_callback, this, std::placeholders::_1),
+            sub_opts
         );
 
         reset_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetNavMotors",
             std::bind(&MotorCmdsLifecycle::handle_reset_nav_motors, this,
-                        std::placeholders::_1, std::placeholders::_2)
+                        std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default,
+            sub_group_
         );
 
         reset_home_nav_motors_service_ = this->create_service<std_srvs::srv::SetBool>(
             "/CS/ResetHomeNavMotors",
             std::bind(&MotorCmdsLifecycle::handle_reset_home_nav_motors, this,
-                        std::placeholders::_1, std::placeholders::_2)
+                        std::placeholders::_1, std::placeholders::_2),
+            rmw_qos_profile_services_default,
+            sub_group_
         );
             
         // Get the size of the vector
@@ -188,6 +195,7 @@ public:
     void handle_reset_nav_motors(
         const std_srvs::srv::SetBool::Request::SharedPtr request,
         const std_srvs::srv::SetBool::Response::SharedPtr response){
+        std::lock_guard<std::mutex> lock(can_mutex_);
 
         if(request->data){
             RCLCPP_INFO(get_logger(), "Received request to reset navigation motor.");
@@ -246,6 +254,7 @@ public:
     void handle_reset_home_nav_motors(
         const std_srvs::srv::SetBool::Request::SharedPtr request,
         const std_srvs::srv::SetBool::Response::SharedPtr response){
+        std::lock_guard<std::mutex> lock(can_mutex_);
 
         if(request->data){
             for (auto motor = motors.begin(); motor != motors.end(); motor++){
@@ -266,7 +275,8 @@ public:
         }
     }
 
-    void motors_param_callback(){ //right now runs at 10Hz
+    void motors_param_callback(){
+        std::lock_guard<std::mutex> lock(can_mutex_);
         static unsigned int counter = 0;
         counter++;
         bool check_faults = (counter >= 20);
@@ -346,7 +356,7 @@ public:
 
     void motor_cmds_callback(const custom_msg::msg::Motorcmds::SharedPtr msg)
     {
-        /*Manage the communication with the controllers to execute the desire speed*/
+        std::lock_guard<std::mutex> lock(can_mutex_);
 
         mode_deplacement = msg->modedeplacement;
         //at max speed it sends in abs value 1800 --> gear ration 1:53 --> 1800/53=33.3rpm
@@ -621,6 +631,10 @@ public:
     bool homing;
 
 private:
+    std::mutex can_mutex_;
+    rclcpp::CallbackGroup::SharedPtr timer_group_;
+    rclcpp::CallbackGroup::SharedPtr sub_group_;
+
     void disconnect_motors()
     {
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
