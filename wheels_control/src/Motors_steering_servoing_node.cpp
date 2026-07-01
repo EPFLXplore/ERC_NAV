@@ -70,7 +70,7 @@ private:
     void check_and_send_motor_commands()
     {
         if (!(received_target_ && received_current_)) {
-            RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
+            // RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
             return; // Wait until both messages have arrived
         }
         // RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",ANGLE_TOLERANCE_INCR);

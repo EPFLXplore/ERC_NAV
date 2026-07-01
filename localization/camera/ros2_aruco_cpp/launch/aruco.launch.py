@@ -41,14 +41,20 @@ def generate_launch_description():
             }],
         ),
 
-        # Replace pose_estimator_lidar_node with a fixed identity map->odom TF.
-        # map -> odom: x y z yaw pitch roll = 0 0 0 0 0 0
         Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='map_to_odom_identity_tf',
-            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
-            output='screen',
+            package='ros2_aruco_cpp',
+            executable='pose_estimator_lidar_node',
+            name='pose_estimation_node_with_lidar',
         ),
+
+        # WARNING BAD FOR NAV TASK, NEED TO INITITALIZE WITH ARUCOS!!!! 
+        # map -> odom: x y z yaw pitch roll = 0 0 0 0 0 0
+        # Node(
+        #     package='tf2_ros',
+        #     executable='static_transform_publisher',
+        #     name='map_to_odom_identity_tf',
+        #     arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+        #     output='screen',
+        # ),
 
     ])

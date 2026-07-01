@@ -1,67 +1,41 @@
+# Shared across all nodes loaded from this file, so landmark_poses/erc_start_pos
+# only need to be edited in one place.
+/**:
+  ros__parameters:
+    erc_start_pos: [0.0, 0.0]
+    landmark_poses: [
+      999999.0,  999999.0,    # id 51
+      0.0,  2.995,            # id 52
+      3.595,  0.0,            # id 53
+      -3.595,  0.0,           # id 54
+      999999.0,  999999.0,    # id 55
+      999999.0,  999999.0,    # id 56
+      999999.0,  999999.0,    # id 57
+      999999.0,  999999.0,    # id 58
+      999999.0,  999999.0,    # id 59
+      999999.0,  999999.0,    # id 60
+      999999.0,  999999.0,    # id 61
+      999999.0,  999999.0,    # id 62
+      999999.0,  999999.0,    # id 63
+    ]
+
 aruco_node:
   ros__parameters:
-    # camera_config_dir is overridden at launch (see aruco.launch.py) to point
-    # at this package's installed config/ share directory.
-    camera_config_dir: ""
+    # camera_config_dir is intentionally NOT set here: it's supplied at launch
+    # (see aruco.launch.py) as a plain-dict parameter override pointing at this
+    # package's installed config/ share directory. Declaring it here too caused
+    # the two sources to race, and this file's empty string was winning.
     # One entry per camera; add a new camera by dropping its JSON file in
     # config/ and appending its filename here, no code changes in multiview aruco node needed.
     camera_config_files: [
       "oak_calibration_depthai_19443010714B177E00.json",
       "oak_calibration_depthai_19443010A19E157E00.json",
       "oak_calibration_depthai_19443010816C177E00.json",
-      "oak_calibration_hardcoded_oakd.json",
-    ]
-    erc_start_pos: [0.0, 0.0]
-    landmark_poses: [
-      999999.0,  999999.0,  # id 51
-      999999.0,  999999.0,    # id 52
-      999999.0,  999999.0,    # id 53
-      2.6,  0.26,  # id 54
-      999999.0,  999999.0,  # id 55
-      999999.0,  999999.0,  # id 56
-      999999.0,  999999.0,  # id 57
-      1.4,          2.18,  # id 58
-      999999.0,  999999.0,  # id 59
-      999999.0,  999999.0,  # id 60
-      999999.0,  999999.0,  # id 61
-      999999.0,  999999.0,  # id 62
-      999999.0,  999999.0,  # id 63
+      "zed2i.json",
     ]
 
 lidar_phi_filter_node:
-  ros__parameters:
-    erc_start_pos: [0.0, 0.0]
-    landmark_poses: [
-      999999.0,  999999.0,  # id 51
-      999999.0,  999999.0,    # id 52
-      999999.0,  999999.0,    # id 53
-      2.6,  0.26,  # id 54
-      999999.0,  999999.0,  # id 55
-      999999.0,  999999.0,  # id 56
-      999999.0,  999999.0,  # id 57
-      1.4,          2.18,  # id 58
-      999999.0,  999999.0,  # id 59
-      999999.0,  999999.0,  # id 60
-      999999.0,  999999.0,  # id 61
-      999999.0,  999999.0,  # id 62
-      999999.0,  999999.0,  # id 63
-    ]
+  ros__parameters: {}
 
 pose_estimation_node_with_lidar:
-  ros__parameters:
-    erc_start_pos: [0.0, 0.0]
-    landmark_poses: [
-      999999.0,  999999.0,  # id 51
-      999999.0,  999999.0,    # id 52
-      999999.0,  999999.0,    # id 53
-      2.6,  0.26,  # id 54
-      999999.0,  999999.0,  # id 55
-      999999.0,  999999.0,  # id 56
-      999999.0,  999999.0,  # id 57
-      1.4,          2.18,  # id 58
-      999999.0,  999999.0,  # id 59
-      999999.0,  999999.0,  # id 60
-      999999.0,  999999.0,  # id 61
-      999999.0,  999999.0,  # id 62
-      999999.0,  999999.0,  # id 63
-    ]
+  ros__parameters: {}

@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -22,7 +23,7 @@ find_package(nlohmann_json REQUIRED)
 # ---------- multiview_aruco_node ----------
 add_executable(multiview_aruco_node src/multiview_aruco_node.cpp)
 ament_target_dependencies(multiview_aruco_node
-  rclcpp sensor_msgs geometry_msgs
+  rclcpp std_msgs sensor_msgs geometry_msgs
   tf2 tf2_ros tf2_geometry_msgs
   ros2_aruco_interfaces message_filters)
 target_link_libraries(multiview_aruco_node ${OpenCV_LIBS} Eigen3::Eigen nlohmann_json::nlohmann_json)

@@ -283,7 +283,7 @@ def generate_launch_description():
         ],
     )
 
-    manual_stack_launch = IncludeLaunchDescription(
+    auto_stack_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(FindPackageShare("wheels_control").find("wheels_control"),
                          'launch', 'auto_stack.launch.py')
@@ -314,7 +314,7 @@ def generate_launch_description():
     # Create the launch description and populate
     ld = LaunchDescription()
     # Launch the manual stack before nav2
-    ld.add_action(manual_stack_launch)
+    ld.add_action(auto_stack_launch)
 
     # Set environment variables
     ld.add_action(stdout_linebuf_envvar)

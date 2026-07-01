@@ -254,9 +254,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         custom_local_ekf_node,
         ouster_launch,
         # nav_cameras_launch,
-        delayed_aruco_launch,
+        # delayed_aruco_launch,
         jetson_stats,
-        slip_control_node,
+        # slip_control_node,
     ]
 
 def generate_launch_description():

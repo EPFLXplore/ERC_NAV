@@ -1,5 +1,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/image_encodings.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
@@ -87,7 +90,8 @@ enum class CameraModel { PINHOLE, FISHEYE };
 struct CameraConfig {
     std::string config_filename;
     std::string frame_id;       // URDF link name (TF frame)
-    std::string image_topic;    // sensor_msgs/CompressedImage topic
+    std::string image_topic;    // sensor_msgs/CompressedImage or sensor_msgs/Image topic
+    bool compressed_image{true}; // true: CompressedImage (JPEG/PNG); false: raw Image
     std::string hardware_model; // free-text label, logging only
     CameraModel camera_model{CameraModel::PINHOLE};
 
@@ -117,6 +121,7 @@ struct CachedMarker {
 };
 
 using CompImg = sensor_msgs::msg::CompressedImage;
+using RawImg  = sensor_msgs::msg::Image;
 
 class MultiViewArucoNode : public rclcpp::Node
 {
@@ -219,7 +224,7 @@ private:
     std::shared_ptr<tf2_ros::Buffer>            tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-    std::vector<rclcpp::Subscription<CompImg>::SharedPtr>                  image_subs_;
+    std::vector<rclcpp::SubscriptionBase::SharedPtr>                       image_subs_;
     rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr            poses_pub_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr markers_pub_;
     std::unordered_map<int64_t, CachedMarker> marker_cache_;
@@ -271,6 +276,8 @@ private:
         cfg.config_filename = filepath;
         cfg.frame_id        = j.at("frame_id").get<std::string>();
         cfg.image_topic     = j.at("image_topic").get<std::string>();
+        // Optional; defaults to true so existing configs (all CompressedImage) keep working.
+        cfg.compressed_image = j.value("compressed_image", true);
         cfg.hardware_model  = j.value("hardware_model", std::string());
 
         const std::string model_str = j.at("camera_model").get<std::string>();
@@ -325,9 +332,10 @@ private:
         }
 
         RCLCPP_INFO(logger,
-            "Camera config %s: loaded frame_id=%s topic=%s model=%s hardware=%s "
+            "Camera config %s: loaded frame_id=%s topic=%s (%s) model=%s hardware=%s "
             "fx=%.1f fy=%.1f cx=%.1f cy=%.1f dist_coeffs=%zu calib=%dx%d",
             filepath.c_str(), cfg.frame_id.c_str(), cfg.image_topic.c_str(),
+            cfg.compressed_image ? "compressed" : "raw",
             model_str.c_str(), cfg.hardware_model.c_str(),
             fx, fy, cx, cy, n_dist, cfg.calib_width, cfg.calib_height);
         return cfg;
@@ -360,17 +368,73 @@ private:
     {
         image_subs_.resize(cameras_.size());
         for (size_t c = 0; c < cameras_.size(); ++c) {
-            image_subs_[c] = create_subscription<CompImg>(
-                cameras_[c].image_topic, rclcpp::SensorDataQoS(),
-                [this, c](const CompImg::ConstSharedPtr msg) { image_callback(c, msg); });
+            if (cameras_[c].compressed_image) {
+                image_subs_[c] = create_subscription<CompImg>(
+                    cameras_[c].image_topic, rclcpp::SensorDataQoS(),
+                    [this, c](const CompImg::ConstSharedPtr msg) {
+                        image_callback_compressed(c, msg);
+                    });
+            } else {
+                image_subs_[c] = create_subscription<RawImg>(
+                    cameras_[c].image_topic, rclcpp::SensorDataQoS(),
+                    [this, c](const RawImg::ConstSharedPtr msg) {
+                        image_callback_raw(c, msg);
+                    });
+            }
         }
     }
 
     /* ============================================================== */
-    /*  Per-camera callback                                           */
+    /*  Per-camera callbacks                                          */
     /* ============================================================== */
-    void image_callback(size_t camera_index, const CompImg::ConstSharedPtr &msg)
+    void image_callback_compressed(size_t camera_index, const CompImg::ConstSharedPtr &msg)
     {
+        cv::Mat raw(1, static_cast<int>(msg->data.size()), CV_8UC1,
+                    const_cast<uint8_t *>(msg->data.data()));
+        cv::Mat gray = cv::imdecode(raw, cv::IMREAD_GRAYSCALE);
+        handle_frame(camera_index, gray, msg->header);
+    }
+
+    void image_callback_raw(size_t camera_index, const RawImg::ConstSharedPtr &msg)
+    {
+        cv::Mat gray = raw_image_to_gray(*msg);
+        handle_frame(camera_index, gray, msg->header);
+    }
+
+    /* Convert a raw sensor_msgs/Image to single-channel grayscale, no lossy re-encoding. */
+    cv::Mat raw_image_to_gray(const sensor_msgs::msg::Image &msg)
+    {
+        namespace enc = sensor_msgs::image_encodings;
+        cv::Mat gray;
+        if (msg.encoding == enc::MONO8) {
+            gray = cv::Mat(msg.height, msg.width, CV_8UC1,
+                            const_cast<uint8_t *>(msg.data.data()), msg.step).clone();
+        } else if (msg.encoding == enc::BGR8) {
+            cv::Mat bgr(msg.height, msg.width, CV_8UC3,
+                        const_cast<uint8_t *>(msg.data.data()), msg.step);
+            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+        } else if (msg.encoding == enc::RGB8) {
+            cv::Mat rgb(msg.height, msg.width, CV_8UC3,
+                        const_cast<uint8_t *>(msg.data.data()), msg.step);
+            cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+        } else if (msg.encoding == enc::BGRA8) {
+            cv::Mat bgra(msg.height, msg.width, CV_8UC4,
+                         const_cast<uint8_t *>(msg.data.data()), msg.step);
+            cv::cvtColor(bgra, gray, cv::COLOR_BGRA2GRAY);
+        } else if (msg.encoding == enc::RGBA8) {
+            cv::Mat rgba(msg.height, msg.width, CV_8UC4,
+                         const_cast<uint8_t *>(msg.data.data()), msg.step);
+            cv::cvtColor(rgba, gray, cv::COLOR_RGBA2GRAY);
+        } else {
+            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                "raw_image_to_gray: unsupported encoding \"%s\"", msg.encoding.c_str());
+        }
+        return gray;
+    }
+
+    void handle_frame(size_t camera_index, const cv::Mat &gray, const std_msgs::msg::Header &header)
+    {
+        if (gray.empty()) return;
         CameraConfig &cam = cameras_[camera_index];
 
         const int64_t now_ns = this->now().nanoseconds();
@@ -381,10 +445,10 @@ private:
         geometry_msgs::msg::PoseArray pose_array;
         markers.header.frame_id    = base_frame_;
         pose_array.header.frame_id = base_frame_;
-        markers.header.stamp    = msg->header.stamp;
-        pose_array.header.stamp = msg->header.stamp;
+        markers.header.stamp    = header.stamp;
+        pose_array.header.stamp = header.stamp;
 
-        process_image(msg, cam, markers, pose_array);
+        process_image(gray, header, cam, markers, pose_array);
 
         if (!markers.marker_ids.empty())
             update_marker_cache(markers);
@@ -552,18 +616,13 @@ private:
     /*  Per-camera processing                                         */
     /* ============================================================== */
     void process_image(
-        const CompImg::ConstSharedPtr &img_msg,
+        const cv::Mat &gray,
+        const std_msgs::msg::Header &header,
         CameraConfig &cam,
         ros2_aruco_interfaces::msg::ArucoMarkers &markers,
         geometry_msgs::msg::PoseArray &pose_array)
         {
             const std::string &camera_frame = cam.frame_id;
-
-            /* ---- decode compressed JPEG ---- */
-            cv::Mat raw(1, static_cast<int>(img_msg->data.size()), CV_8UC1,
-                        const_cast<uint8_t *>(img_msg->data.data()));
-            cv::Mat gray = cv::imdecode(raw, cv::IMREAD_GRAYSCALE);
-            if (gray.empty()) return;
 
             rescale_intrinsics_for_frame(cam, gray.cols, gray.rows);
 
@@ -615,13 +674,13 @@ private:
             geometry_msgs::msg::TransformStamped transform;
             try {
                 const bool zero_stamp =
-                    (img_msg->header.stamp.sec == 0u &&
-                     img_msg->header.stamp.nanosec == 0u);
+                    (header.stamp.sec == 0u &&
+                     header.stamp.nanosec == 0u);
                 if (zero_stamp) {
                     transform = tf_buffer_->lookupTransform(
                         base_frame_, camera_frame, tf2::TimePointZero);
                 } else {
-                    const rclcpp::Time t(img_msg->header.stamp, get_clock()->get_clock_type());
+                    const rclcpp::Time t(header.stamp, get_clock()->get_clock_type());
                     if (tf_buffer_->canTransform(
                             base_frame_, camera_frame, t,
                             rclcpp::Duration::from_seconds(0.05))) {

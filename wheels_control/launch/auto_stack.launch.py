@@ -254,7 +254,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         cmd_vel_manager_node,
         displacement_cmds_node,
         motor_cmds_node,
-        map_to_odom_identity_tf,
+        # map_to_odom_identity_tf,
         description_launch,
         olive_imu_restamp_node,
         wheel_odom_node,
@@ -263,7 +263,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         nav_cameras_launch,
         delayed_aruco_launch,
         jetson_stats,
-        # slip_control_node,
+        slip_control_node,
     ]
 
 def generate_launch_description():
