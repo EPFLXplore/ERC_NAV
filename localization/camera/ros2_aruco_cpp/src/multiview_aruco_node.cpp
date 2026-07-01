@@ -1,26 +1,3 @@
-/*
- * MultiViewArucoNode detects ArUco markers from up to four compressed camera
- * feeds and publishes their positions and bearings in the rover base_link frame.
- *
- * Each camera image is decoded, processed with OpenCV ArUco detection, and
- * converted into a 3D marker pose using that camera's intrinsics. Cameras 0-2
- * load calibration either from JSON files or camera-info services, while camera
- * 3 uses hardcoded OAK-D intrinsics.
- *
- * Detected marker poses are transformed from each camera frame into base_link
- * using tf2. The node keeps the best detection per marker, rejects invalid or
- * distant detections, applies a short cache so markers from different camera
- * callbacks can be fused, and optionally smooths cached marker positions.
- *
- * Published outputs:
- * - /aruco_poses: PoseArray of detected/cached marker poses in base_link.
- * - /aruco_markers: marker IDs mapped to landmark indices, base_link poses,
- *   known map landmark positions, and marker bearings in degrees.
- *
- * The pose estimator consumes /aruco_markers to initialize and update the rover
- * map pose from known landmark locations.
- */
-
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
@@ -31,7 +8,7 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/aruco.hpp>
-#include "custom_msg/srv/camera_params.hpp"
+#include <opencv2/calib3d.hpp>
 
 #include <cmath>
 #include <optional>
@@ -101,9 +78,34 @@ struct MarkerCandidate {
     std::vector<cv::Point2f> corners;
 };
 
-struct CameraIntrinsics {
-    cv::Mat intrinsic;
-    cv::Mat distortion;
+/* ------------------------------------------------------------------ */
+/*  Per-camera configuration                                          */
+/* ------------------------------------------------------------------ */
+
+enum class CameraModel { PINHOLE, FISHEYE };
+
+struct CameraConfig {
+    std::string config_filename;
+    std::string frame_id;       // URDF link name (TF frame)
+    std::string image_topic;    // sensor_msgs/CompressedImage topic
+    std::string hardware_model; // free-text label, logging only
+    CameraModel camera_model{CameraModel::PINHOLE};
+
+    cv::Mat intrinsic;   // 3x3 CV_64F, at calibration resolution
+    cv::Mat distortion;  // 1xN CV_64F: N=14 (pinhole) or 4 (fisheye)
+
+    int calib_width{0};
+    int calib_height{0};
+
+    // Runtime rescale cache: cached_scaled_intrinsic is `intrinsic` scaled
+    // from (calib_width, calib_height) to the actual decoded frame size,
+    // recomputed only when that frame size changes.
+    bool rescale_cached{false};
+    int cached_frame_w{0};
+    int cached_frame_h{0};
+    cv::Mat cached_scaled_intrinsic;
+
+    int64_t last_cb_ns{0};
 };
 
 struct CachedMarker {
@@ -123,16 +125,6 @@ public:
     : Node("aruco_node")
     {
         declare_parameter("aruco_dictionary_id", "DICT_5X5_250");
-        declare_parameter("image_topic_1", "/NAV/feed_camera_nav_0");
-        declare_parameter("camera_frame_1", "OAK-1_v1_1");
-        declare_parameter("image_topic_2", "/NAV/feed_camera_nav_1");
-        declare_parameter("camera_frame_2", "OAK-1_v1_2");
-        declare_parameter("image_topic_3", "/NAV/feed_camera_nav_2");
-        declare_parameter("camera_frame_3", "OAK-1_v1_3");
-        // Cam 3 = OAK-D mono. Topic + frame configurable at launch; intrinsics
-        // are HARDCODED below in load_all_intrinsics() (no file / no service).
-        declare_parameter("image_topic_4", "/NAV/feed_camera_nav_3");
-        declare_parameter("camera_frame_4", "OAK-d");
         declare_parameter("marker_size", 0.144);
         /* Longer default: tags often arrive on different camera callbacks; short TTL drops the other. */
         declare_parameter("marker_cache_ttl_sec", 1.5);
@@ -146,18 +138,12 @@ public:
         /** 0..1: EMA on cached tag position in base_link (0 = off). Reduces jitter from noisy intrinsics. */
         declare_parameter("cache_pose_smooth_alpha", 0.25);
 
-        // --- Calibration mode parameters ---
-        // calib_mode: "auto" = fetch from service, "file" = load from JSON
-        declare_parameter("calib_mode", std::string("auto"));
-        // Directory containing oak_calibration_depthai_{cam_id}.json files
-        declare_parameter("calib_dir", std::string(""));
-        // Camera serial IDs, one per camera, in order (cam 0, 1, 2, 3)
-        // Cam 3 (OAK-D) ignores its cam_ids entry — its intrinsics are hardcoded.
-        declare_parameter("cam_ids", std::vector<std::string>{"", "", "", ""});
-        // JPEG / camera pipeline output size (camera_node_nav x,y). Used to scale file JSON
-        // intrinsics from JSON image_width/height (factory cal resolution).
-        declare_parameter("image_stream_width", 1280);
-        declare_parameter("image_stream_height", 720);
+        // --- Per-camera JSON configuration ---
+        // Directory containing per-camera config JSON files (see CameraConfig).
+        declare_parameter("camera_config_dir", std::string(""));
+        // Filenames (relative to camera_config_dir) to load, one per camera.
+        // Adding a camera = drop a new JSON file here + append its filename.
+        declare_parameter("camera_config_files", std::vector<std::string>{});
 
         marker_size_ = get_parameter("marker_size").as_double();
         const double marker_cache_ttl_sec =
@@ -170,16 +156,6 @@ public:
             get_parameter("cache_pose_smooth_alpha").as_double(), 0.0, 1.0);
         aruco_min_tvec_norm_ = std::max(
             0.0, get_parameter("aruco_min_tvec_norm").as_double());
-        calib_mode_  = get_parameter("calib_mode").as_string();
-        calib_dir_   = get_parameter("calib_dir").as_string();
-        cam_ids_     = get_parameter("cam_ids").as_string_array();
-        image_stream_width_  = get_parameter("image_stream_width").as_int();
-        image_stream_height_ = get_parameter("image_stream_height").as_int();
-
-        camera_frames_[0] = get_parameter("camera_frame_1").as_string();
-        camera_frames_[1] = get_parameter("camera_frame_2").as_string();
-        camera_frames_[2] = get_parameter("camera_frame_3").as_string();
-        camera_frames_[3] = get_parameter("camera_frame_4").as_string();
 
         dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_250);
         parameters_ = cv::aruco::DetectorParameters::create();
@@ -208,45 +184,32 @@ public:
         poses_pub_   = create_publisher<geometry_msgs::msg::PoseArray>("aruco_poses", 10);
         markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("aruco_markers", 10);
 
-        // Start subscribers immediately; intrinsics loaded in background
-        setup_subscribers();
+        const std::string camera_config_dir =
+            get_parameter("camera_config_dir").as_string();
+        const std::vector<std::string> camera_config_files =
+            get_parameter("camera_config_files").as_string_array();
+        cameras_ = load_camera_configs(camera_config_dir, camera_config_files, get_logger());
+        if (cameras_.empty()) {
+            RCLCPP_ERROR(get_logger(),
+                "No camera configs loaded successfully; node will not process any images. "
+                "Check camera_config_dir/camera_config_files.");
+        }
 
-        intrinsic_timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {
-            intrinsic_timer_->cancel();
-            load_all_intrinsics();
-            // Retry any failed cameras every 3s
-            retry_timer_ = create_wall_timer(std::chrono::seconds(3), [this]() {
-                bool all_ready = true;
-                for (int i = 0; i < NUM_CAMERAS; ++i)
-                    if (!intrinsics_ready_[i]) { all_ready = false; break; }
-                if (all_ready) { retry_timer_->cancel(); return; }
-                load_all_intrinsics();
-            });
-        });
+        setup_subscribers();
     }
 
 private:
     static constexpr double ARUCO_BOX_OFFSET    = 0.125;
     static constexpr double MAX_ARUCO_DIST       = 10.0;
-    static constexpr int    NUM_CAMERAS          = 4;
-    static constexpr int    OAKD_CAM_INDEX       = 3;
-    static constexpr int64_t MARKER_CACHE_TTL_NS = 500000000LL;
     static constexpr int64_t CB_MIN_PERIOD_NS    = 100000000LL;
     const std::string base_frame_{"base_link"};
 
-    CameraIntrinsics cam_[NUM_CAMERAS];
-    std::array<bool, NUM_CAMERAS> intrinsics_ready_{false, false, false, false};
-    std::string camera_frames_[NUM_CAMERAS];
-    std::string calib_mode_;
-    std::string calib_dir_;
-    std::vector<std::string> cam_ids_;
-    int image_stream_width_{1280};
-    int image_stream_height_{720};
+    std::vector<CameraConfig> cameras_;
 
     cv::Ptr<cv::aruco::Dictionary>         dictionary_;
     cv::Ptr<cv::aruco::DetectorParameters> parameters_;
     double marker_size_{};
-    int64_t marker_cache_ttl_ns_{MARKER_CACHE_TTL_NS};
+    int64_t marker_cache_ttl_ns_{500000000LL};
     double bearing_jump_warn_deg_{30.0};
     double cache_pose_smooth_alpha_{0.25};
     double aruco_min_tvec_norm_{0.12};
@@ -256,238 +219,138 @@ private:
     std::shared_ptr<tf2_ros::Buffer>            tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-    std::array<rclcpp::Subscription<CompImg>::SharedPtr, NUM_CAMERAS> image_subs_;
+    std::vector<rclcpp::Subscription<CompImg>::SharedPtr>                  image_subs_;
     rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr            poses_pub_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr markers_pub_;
     std::unordered_map<int64_t, CachedMarker> marker_cache_;
     std::mutex marker_cache_mutex_;
 
-    std::array<int64_t, NUM_CAMERAS> last_cb_ns_{};
-    rclcpp::TimerBase::SharedPtr intrinsic_timer_;
-    rclcpp::TimerBase::SharedPtr retry_timer_;
-
     /* ============================================================== */
-    /*  Hardcoded OAK-D (cam 3) intrinsics                             */
-    /*  Provided by user — calibration resolution implied by cx,cy.    */
-    /*  NOT rescaled to image_stream_*; the OAK-D feed must arrive at  */
-    /*  the native calibration resolution (~1280x640 here).            */
+    /*  camera_model string <-> enum                                   */
     /* ============================================================== */
-    bool load_oakd_hardcoded_intrinsics(int camera_index)
+    static bool parse_camera_model(const std::string &s, CameraModel &out)
     {
-        if (camera_index < 0 || camera_index >= NUM_CAMERAS) {
-            RCLCPP_ERROR(get_logger(),
-                "OAK-D hardcoded loader: invalid camera index %d", camera_index);
-            return false;
-        }
-
-        static constexpr double kFx = 795.8676147460938;
-        static constexpr double kFy = 795.8676147460938;
-        static constexpr double kCx = 628.2177124023438;
-        static constexpr double kCy = 318.68402099609375;
-
-        // OpenCV 14-coeff rational + thin-prism layout:
-        //   k1 k2 p1 p2 k3 k4 k5 k6 s1 s2 s3 s4 τx τy
-        static const double kDist[14] = {
-             9.151253700256348,
-             2.9740264415740967,
-            -0.0008457531803287566,
-             0.00016617916116956621,
-           -24.41039276123047,
-             8.823257446289062,
-             4.046622276306152,
-           -25.269325256347656,
-             0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        };
-
-        cam_[camera_index].intrinsic = (cv::Mat_<double>(3, 3) <<
-            kFx, 0.0, kCx,
-            0.0, kFy, kCy,
-            0.0, 0.0, 1.0);
-
-        cv::Mat D(1, 14, CV_64F);
-        for (int k = 0; k < 14; ++k) D.at<double>(0, k) = kDist[k];
-        cam_[camera_index].distortion = D;
-
-        RCLCPP_INFO(get_logger(),
-            "Camera %d (OAK-D): HARDCODED intrinsics loaded "
-            "fx=%.4f fy=%.4f cx=%.4f cy=%.4f dist_coeffs=14",
-            camera_index, kFx, kFy, kCx, kCy);
-        return true;
+        if (s == "pinhole") { out = CameraModel::PINHOLE; return true; }
+        if (s == "fisheye") { out = CameraModel::FISHEYE; return true; }
+        return false;
     }
 
     /* ============================================================== */
-    /*  Top-level intrinsics loader                                    */
-    /*  Cam 0/1/2 (Oak1W): file or service per calib_mode.             */
-    /*  Cam 3       (OAK-D): hardcoded values above (one-shot, no I/O).*/
+    /*  Per-camera JSON config loading                                 */
+    /*  Filename: {camera_config_dir}/{camera_config_files[i]}         */
     /* ============================================================== */
-    void load_all_intrinsics()
+    static std::optional<CameraConfig> load_single_camera_config(
+        const std::string &filepath, rclcpp::Logger logger)
     {
-        // --- OAK-D (cam 3): hardcoded, no file / no service -----------
-        if (!intrinsics_ready_[OAKD_CAM_INDEX]) {
-            intrinsics_ready_[OAKD_CAM_INDEX] =
-                load_oakd_hardcoded_intrinsics(OAKD_CAM_INDEX);
-        }
-
-        // --- Cams 0/1/2 (Oak1W): original file/service path ----------
-        if (calib_mode_ == "file") {
-            for (int i = 0; i < NUM_CAMERAS; ++i) {
-                if (i == OAKD_CAM_INDEX) continue;
-                if (!intrinsics_ready_[i])
-                    intrinsics_ready_[i] = load_intrinsics_from_file(i);
-            }
-        } else {
-            fetch_intrinsics_from_service();
-        }
-    }
-
-    /* ============================================================== */
-    /*  File-based calibration loader                                 */
-    /*  Filename: {calib_dir}/oak_calibration_depthai_{cam_id}.json   */
-    /* ============================================================== */
-    bool load_intrinsics_from_file(int camera_index)
-    {
-        // Safety net: cam 3 must never depend on cam_id/file calibration.
-        if (camera_index == OAKD_CAM_INDEX) {
-            return load_oakd_hardcoded_intrinsics(camera_index);
-        }
-
-        if (camera_index >= static_cast<int>(cam_ids_.size()) ||
-            cam_ids_[camera_index].empty()) {
-            RCLCPP_WARN(get_logger(),
-                "Camera %d: no cam_id provided for file-based calibration", camera_index);
-            return false;
-        }
-
-        const std::string filename = calib_dir_ +
-            "/oak_calibration_depthai_" + cam_ids_[camera_index] + ".json";
-
-        std::ifstream f(filename);
+        std::ifstream f(filepath);
         if (!f.is_open()) {
-            RCLCPP_WARN(get_logger(),
-                "Camera %d: cannot open calibration file: %s", camera_index, filename.c_str());
-            return false;
+            RCLCPP_ERROR(logger, "Camera config: cannot open file: %s", filepath.c_str());
+            return std::nullopt;
         }
 
         nlohmann::json j;
         try {
             f >> j;
         } catch (const std::exception &e) {
-            RCLCPP_ERROR(get_logger(),
-                "Camera %d: JSON parse error in %s: %s", camera_index, filename.c_str(), e.what());
-            return false;
+            RCLCPP_ERROR(logger, "Camera config: JSON parse error in %s: %s",
+                filepath.c_str(), e.what());
+            return std::nullopt;
         }
 
-        // Parse intrinsic_matrix (3x3 row-major nested array)
+        for (const char *field : {"frame_id", "image_topic", "camera_model",
+                                   "intrinsic_matrix", "distortion_coeffs",
+                                   "image_width", "image_height"}) {
+            if (!j.contains(field)) {
+                RCLCPP_ERROR(logger, "Camera config %s: missing required field \"%s\"",
+                    filepath.c_str(), field);
+                return std::nullopt;
+            }
+        }
+
+        CameraConfig cfg;
+        cfg.config_filename = filepath;
+        cfg.frame_id        = j.at("frame_id").get<std::string>();
+        cfg.image_topic     = j.at("image_topic").get<std::string>();
+        cfg.hardware_model  = j.value("hardware_model", std::string());
+
+        const std::string model_str = j.at("camera_model").get<std::string>();
+        if (!parse_camera_model(model_str, cfg.camera_model)) {
+            RCLCPP_ERROR(logger,
+                "Camera config %s: camera_model must be \"pinhole\" or \"fisheye\", got \"%s\"",
+                filepath.c_str(), model_str.c_str());
+            return std::nullopt;
+        }
+
         auto K = j.at("intrinsic_matrix");
-        double fx = K[0][0], cx = K[0][2];
-        double fy = K[1][1], cy = K[1][2];
-
-        int cal_w = 0;
-        int cal_h = 0;
-        if (j.contains("image_width") && j.contains("image_height")) {
-            cal_w = j.at("image_width").get<int>();
-            cal_h = j.at("image_height").get<int>();
-        } else {
-            RCLCPP_WARN(
-                get_logger(),
-                "Camera %d [%s]: JSON missing image_width/image_height; "
-                "intrinsics not scaled to image_stream_* (factory matrix used as-is)",
-                camera_index, cam_ids_[camera_index].c_str());
-        }
-        if (image_stream_width_ > 0 && image_stream_height_ > 0 &&
-            cal_w > 0 && cal_h > 0 &&
-            (cal_w != image_stream_width_ || cal_h != image_stream_height_)) {
-            const double sx =
-                static_cast<double>(image_stream_width_) / static_cast<double>(cal_w);
-            const double sy =
-                static_cast<double>(image_stream_height_) / static_cast<double>(cal_h);
-            fx *= sx;
-            fy *= sy;
-            cx *= sx;
-            cy *= sy;
-            RCLCPP_INFO(
-                get_logger(),
-                "Camera %d [%s]: scaled intrinsics %dx%d -> %dx%d (sx=%.5f sy=%.5f); "
-                "distortion coeffs unchanged (approximate under anisotropic resize)",
-                camera_index, cam_ids_[camera_index].c_str(),
-                cal_w, cal_h, image_stream_width_, image_stream_height_, sx, sy);
-        }
-
+        const double fx = K[0][0], cx = K[0][2];
+        const double fy = K[1][1], cy = K[1][2];
         if (fx < 1.0 || fy < 1.0 || cx < 1.0 || cy < 1.0) {
-            RCLCPP_ERROR(get_logger(),
-                "Camera %d: suspicious intrinsics in %s: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                camera_index, filename.c_str(), fx, fy, cx, cy);
-            return false;
+            RCLCPP_ERROR(logger,
+                "Camera config %s: suspicious intrinsics fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+                filepath.c_str(), fx, fy, cx, cy);
+            return std::nullopt;
         }
-
-        cam_[camera_index].intrinsic = (cv::Mat_<double>(3, 3) <<
+        cfg.intrinsic = (cv::Mat_<double>(3, 3) <<
             fx, 0.0, cx,
             0.0, fy, cy,
             0.0, 0.0, 1.0);
 
-        // Parse distortion_coeffs (flat array, any length)
         auto d = j.at("distortion_coeffs");
-        cv::Mat dist(1, static_cast<int>(d.size()), CV_64F);
-        for (size_t k = 0; k < d.size(); ++k)
+        const size_t n_dist = d.size();
+        if (cfg.camera_model == CameraModel::FISHEYE && n_dist != 4) {
+            RCLCPP_ERROR(logger,
+                "Camera config %s: fisheye camera_model requires exactly 4 distortion "
+                "coefficients (k1,k2,k3,k4), got %zu", filepath.c_str(), n_dist);
+            return std::nullopt;
+        }
+        if (cfg.camera_model == CameraModel::PINHOLE &&
+            n_dist != 4 && n_dist != 5 && n_dist != 8 && n_dist != 12 && n_dist != 14) {
+            RCLCPP_ERROR(logger,
+                "Camera config %s: pinhole distortion_coeffs length %zu is not one of "
+                "OpenCV's accepted lengths {4,5,8,12,14}", filepath.c_str(), n_dist);
+            return std::nullopt;
+        }
+        cv::Mat dist(1, static_cast<int>(n_dist), CV_64F);
+        for (size_t k = 0; k < n_dist; ++k)
             dist.at<double>(0, static_cast<int>(k)) = d[k].get<double>();
-        cam_[camera_index].distortion = dist;
+        cfg.distortion = dist;
 
-        RCLCPP_INFO(get_logger(),
-            "Camera %d [%s]: loaded from %s — fx=%.1f fy=%.1f cx=%.1f cy=%.1f dist_coeffs=%d",
-            camera_index, cam_ids_[camera_index].c_str(), filename.c_str(),
-            fx, fy, cx, cy, static_cast<int>(d.size()));
-        return true;
+        cfg.calib_width  = j.at("image_width").get<int>();
+        cfg.calib_height = j.at("image_height").get<int>();
+        if (cfg.calib_width <= 0 || cfg.calib_height <= 0) {
+            RCLCPP_ERROR(logger,
+                "Camera config %s: image_width/image_height must be positive (got %dx%d)",
+                filepath.c_str(), cfg.calib_width, cfg.calib_height);
+            return std::nullopt;
+        }
+
+        RCLCPP_INFO(logger,
+            "Camera config %s: loaded frame_id=%s topic=%s model=%s hardware=%s "
+            "fx=%.1f fy=%.1f cx=%.1f cy=%.1f dist_coeffs=%zu calib=%dx%d",
+            filepath.c_str(), cfg.frame_id.c_str(), cfg.image_topic.c_str(),
+            model_str.c_str(), cfg.hardware_model.c_str(),
+            fx, fy, cx, cy, n_dist, cfg.calib_width, cfg.calib_height);
+        return cfg;
     }
 
-    /* ============================================================== */
-    /*  Service-based calibration loader (original behaviour)         */
-    /* ============================================================== */
-    void fetch_intrinsics_from_service()
+    static std::vector<CameraConfig> load_camera_configs(
+        const std::string &camera_config_dir,
+        const std::vector<std::string> &camera_config_files,
+        rclcpp::Logger logger)
     {
-        rclcpp::NodeOptions opts;
-        opts.use_global_arguments(false);
-        auto client_node = std::make_shared<rclcpp::Node>("intrinsics_client_tmp_0", opts);
-
-        for (int i = 0; i < NUM_CAMERAS; ++i) {
-            // OAK-D (cam 3) is hardcoded — never query a service for it.
-            if (i == OAKD_CAM_INDEX) continue;
-            if (intrinsics_ready_[i]) continue;
-
-            auto client = client_node->create_client<custom_msg::srv::CameraParams>(
-                "/NAV/camera_info_" + std::to_string(i));
-
-            if (!client->wait_for_service(std::chrono::seconds(2))) {
-                RCLCPP_WARN(get_logger(), "Camera %d service not available, will retry", i);
-                continue;
+        std::vector<CameraConfig> cameras;
+        cameras.reserve(camera_config_files.size());
+        for (const auto &filename : camera_config_files) {
+            const std::string filepath = camera_config_dir + "/" + filename;
+            auto cfg = load_single_camera_config(filepath, logger);
+            if (cfg) {
+                cameras.push_back(std::move(*cfg));
+            } else {
+                RCLCPP_ERROR(logger, "Skipping camera config (failed to load): %s",
+                    filepath.c_str());
             }
-
-            auto req    = std::make_shared<custom_msg::srv::CameraParams::Request>();
-            auto future = client->async_send_request(req);
-
-            if (rclcpp::spin_until_future_complete(client_node, future,
-                    std::chrono::seconds(3)) != rclcpp::FutureReturnCode::SUCCESS) {
-                RCLCPP_WARN(get_logger(), "Camera %d intrinsics timed out, will retry", i);
-                continue;
-            }
-
-            auto response = future.get();
-            if (response->fx < 1.0 || response->fy < 1.0 ||
-                response->cx < 1.0 || response->cy < 1.0) {
-                RCLCPP_WARN(get_logger(), "Camera %d returned invalid intrinsics, will retry", i);
-                continue;
-            }
-
-            cam_[i].intrinsic = (cv::Mat_<double>(3, 3) <<
-                response->fx, 0.0,          response->cx,
-                0.0,          response->fy, response->cy,
-                0.0,          0.0,          1.0);
-            cam_[i].distortion = cv::Mat(response->distortion_coefficients);
-            intrinsics_ready_[i] = true;
-
-            RCLCPP_INFO(get_logger(),
-                "Camera %d: service intrinsics OK fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
-                i, response->fx, response->fy, response->cx, response->cy);
         }
+        return cameras;
     }
 
     /* ============================================================== */
@@ -495,15 +358,10 @@ private:
     /* ============================================================== */
     void setup_subscribers()
     {
-        const std::string topics[NUM_CAMERAS] = {
-            get_parameter("image_topic_1").as_string(),
-            get_parameter("image_topic_2").as_string(),
-            get_parameter("image_topic_3").as_string(),
-            get_parameter("image_topic_4").as_string()
-        };
-        for (int c = 0; c < NUM_CAMERAS; ++c) {
+        image_subs_.resize(cameras_.size());
+        for (size_t c = 0; c < cameras_.size(); ++c) {
             image_subs_[c] = create_subscription<CompImg>(
-                topics[c], rclcpp::SensorDataQoS(),
+                cameras_[c].image_topic, rclcpp::SensorDataQoS(),
                 [this, c](const CompImg::ConstSharedPtr msg) { image_callback(c, msg); });
         }
     }
@@ -511,17 +369,13 @@ private:
     /* ============================================================== */
     /*  Per-camera callback                                           */
     /* ============================================================== */
-    void image_callback(int camera_index, const CompImg::ConstSharedPtr &msg)
+    void image_callback(size_t camera_index, const CompImg::ConstSharedPtr &msg)
     {
-        const int64_t now_ns = this->now().nanoseconds();
-        if (now_ns - last_cb_ns_[camera_index] < CB_MIN_PERIOD_NS) return;
-        last_cb_ns_[camera_index] = now_ns;
+        CameraConfig &cam = cameras_[camera_index];
 
-        if (!intrinsics_ready_[camera_index]) {
-            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
-                "[cam %d] intrinsics not yet available, dropping frame", camera_index);
-            return;
-        }
+        const int64_t now_ns = this->now().nanoseconds();
+        if (now_ns - cam.last_cb_ns < CB_MIN_PERIOD_NS) return;
+        cam.last_cb_ns = now_ns;
 
         ros2_aruco_interfaces::msg::ArucoMarkers markers;
         geometry_msgs::msg::PoseArray pose_array;
@@ -530,17 +384,12 @@ private:
         markers.header.stamp    = msg->header.stamp;
         pose_array.header.stamp = msg->header.stamp;
 
-        process_image(msg, cam_[camera_index].intrinsic, cam_[camera_index].distortion,
-                      camera_frames_[camera_index], markers, pose_array);
+        process_image(msg, cam, markers, pose_array);
 
         if (!markers.marker_ids.empty())
             update_marker_cache(markers);
         publish_cached_markers();
     }
-
-    // ... (update_marker_cache, publish_cached_markers, process_image,
-    //      transform_to_matrix, calculate_aruco_box_bearing,
-    //      calculate_bearing_with_fov — all unchanged from your original)
 
     void update_marker_cache(const ros2_aruco_interfaces::msg::ArucoMarkers &markers)
     {
@@ -558,9 +407,6 @@ private:
                 !std::isfinite(markers.landmark_map_pos_x[i]) ||
                 !std::isfinite(markers.landmark_map_pos_y[i]) ||
                 !std::isfinite(markers.ar_angles_list[i])) {
-                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                //     "Skipping invalid cached marker id=%ld: non-finite pose/map/yaw",
-                //     markers.marker_ids[i]);
                 continue;
             }
 
@@ -666,12 +512,40 @@ private:
             return;
         }
 
-        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-        //     "Publishing cached %zu poses, %zu marker_ids",
-        //     pose_array.poses.size(), markers.marker_ids.size());
-
         poses_pub_->publish(pose_array);
         markers_pub_->publish(markers);
+    }
+
+    /* ============================================================== */
+    /*  Per-camera intrinsics rescale (calibration res -> decoded frame res) */
+    /* ============================================================== */
+    static void rescale_intrinsics_for_frame(CameraConfig &cam, int frame_w, int frame_h)
+    {
+        if (cam.rescale_cached &&
+            cam.cached_frame_w == frame_w && cam.cached_frame_h == frame_h) {
+            return;
+        }
+
+        if (frame_w == cam.calib_width && frame_h == cam.calib_height) {
+            cam.cached_scaled_intrinsic = cam.intrinsic;
+        } else {
+            const double sx = static_cast<double>(frame_w) / static_cast<double>(cam.calib_width);
+            const double sy = static_cast<double>(frame_h) / static_cast<double>(cam.calib_height);
+            cv::Mat scaled = cam.intrinsic.clone();
+            scaled.at<double>(0, 0) *= sx; // fx
+            scaled.at<double>(1, 1) *= sy; // fy
+            scaled.at<double>(0, 2) *= sx; // cx
+            scaled.at<double>(1, 2) *= sy; // cy
+            cam.cached_scaled_intrinsic = scaled;
+            RCLCPP_INFO(rclcpp::get_logger("aruco_node"),
+                "[%s] rescaled intrinsics %dx%d -> %dx%d (sx=%.5f sy=%.5f)",
+                cam.frame_id.c_str(), cam.calib_width, cam.calib_height,
+                frame_w, frame_h, sx, sy);
+        }
+
+        cam.rescale_cached  = true;
+        cam.cached_frame_w  = frame_w;
+        cam.cached_frame_h  = frame_h;
     }
 
     /* ============================================================== */
@@ -679,41 +553,53 @@ private:
     /* ============================================================== */
     void process_image(
         const CompImg::ConstSharedPtr &img_msg,
-        const cv::Mat &intrinsic_mat,
-        const cv::Mat &distortion,
-        const std::string &camera_frame,
+        CameraConfig &cam,
         ros2_aruco_interfaces::msg::ArucoMarkers &markers,
         geometry_msgs::msg::PoseArray &pose_array)
         {
+            const std::string &camera_frame = cam.frame_id;
+
             /* ---- decode compressed JPEG ---- */
             cv::Mat raw(1, static_cast<int>(img_msg->data.size()), CV_8UC1,
                         const_cast<uint8_t *>(img_msg->data.data()));
             cv::Mat gray = cv::imdecode(raw, cv::IMREAD_GRAYSCALE);
             if (gray.empty()) return;
 
+            rescale_intrinsics_for_frame(cam, gray.cols, gray.rows);
+
             /* ---- detect markers ---- */
             std::vector<std::vector<cv::Point2f>> corners;
             std::vector<int> ids;
             cv::aruco::detectMarkers(
                 gray, dictionary_, corners, ids, parameters_);
-            if (!ids.empty()) {
-                std::string id_str;
-                for (int id : ids) id_str += std::to_string(id) + " ";
-                // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-                //     "[%s] detected IDs: %s (img %dx%d)",
-                //     camera_frame.c_str(), id_str.c_str(), gray.cols, gray.rows);
-            }
             if (ids.empty()) {
-                // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,    "EARLY RETURN: no markers detected on camera %s", camera_frame.c_str());
                 return;
             };
 
+            const cv::Mat &intrinsic_mat = cam.cached_scaled_intrinsic;
             if (intrinsic_mat.empty() || intrinsic_mat.rows != 3 || intrinsic_mat.cols != 3) {
-                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                //     "[%s] invalid camera intrinsic matrix; skipping pose estimation",
-                //     camera_frame.c_str());
                 return;
             }
+
+            /* ---- fisheye: undistort detected corners before pose estimation ----
+             * cv::aruco::estimatePoseSingleMarkers (via solvePnP) assumes a
+             * rectilinear/pinhole distortion model and cannot correctly consume
+             * fisheye (equidistant) distortion coefficients. Undistort the
+             * corner points first, then feed zero distortion below. */
+            if (cam.camera_model == CameraModel::FISHEYE) {
+                for (auto &marker_corners : corners) {
+                    std::vector<cv::Point2f> undistorted;
+                    cv::fisheye::undistortPoints(
+                        marker_corners, undistorted,
+                        intrinsic_mat, cam.distortion,
+                        cv::noArray(), intrinsic_mat);
+                    marker_corners = undistorted;
+                }
+            }
+
+            const cv::Mat distortion = (cam.camera_model == CameraModel::FISHEYE)
+                ? cv::Mat::zeros(1, 14, CV_64F)
+                : cam.distortion;
 
             /* ---- estimate poses ---- */
             std::vector<cv::Vec3d> rvecs, tvecs;
@@ -722,9 +608,6 @@ private:
                 intrinsic_mat, distortion, rvecs, tvecs);
 
             if (rvecs.size() != ids.size() || tvecs.size() != ids.size()) {
-                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                //     "[%s] pose estimation returned mismatched vector sizes; skipping frame",
-                //     camera_frame.c_str());
                 return;
             }
 
@@ -763,9 +646,6 @@ private:
 
             Eigen::Matrix4d T_base_cam = transform_to_matrix(transform);
             if (!T_base_cam.allFinite()) {
-                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                //     "[%s] base<-camera TF contains non-finite values; skipping frame",
-                //     camera_frame.c_str());
                 return;
             }
 
@@ -774,13 +654,10 @@ private:
 
             for (size_t i = 0; i < ids.size(); ++i) {
                 if (!finite_cv_vec3(tvecs[i]) || !finite_cv_vec3(rvecs[i])) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d has non-finite rvec/tvec; skipping",
-                    //     camera_frame.c_str(), ids[i]);
                     continue;
                 }
 
-                double dist = cv::norm(tvecs[i]);                             
+                double dist = cv::norm(tvecs[i]);
                 if (!std::isfinite(dist) || dist < aruco_min_tvec_norm_ ||
                     dist > MAX_ARUCO_DIST) {
                     continue;
@@ -792,9 +669,6 @@ private:
                 cv::Rodrigues(rvecs[i], R_cv);
                 Eigen::Matrix3d R_tag2cam = cv_mat_to_eigen3(R_cv);
                 if (!R_tag2cam.allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d has non-finite rotation matrix; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -805,9 +679,6 @@ private:
                 double abs_face_yaw =
                     std::abs(extract_box_face_yaw(R_corrected));
                 if (!std::isfinite(abs_face_yaw)) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d has non-finite face yaw; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -837,34 +708,11 @@ private:
                 const std::vector<MarkerCandidate> &cands_vec = candidates[marker_id];
                 const MarkerCandidate &mc = cands_vec.front();
 
-                // /* face-to-center offset */
-                // Eigen::Vector3d offset(0.0, 0.0, -ARUCO_BOX_OFFSET);
-                // Eigen::Vector3d tvec_eigen(mc.tvec[0], mc.tvec[1], mc.tvec[2]);
-                // Eigen::Vector3d adjusted = tvec_eigen + mc.rot_3x3 * offset;
-
-                // /* OpenCV optical -> ROS body convention, then to base_link */
-                // Eigen::Vector4d p_cam(adjusted(2), -adjusted(0),
-                //                     -adjusted(1), 1.0);
-                // Eigen::Vector4d p_base = T_base_cam * p_cam;
-
-                // geometry_msgs::msg::Pose pose;
-                // pose.position.x = p_base(0);
-                // pose.position.y = p_base(1);
-                // pose.position.z = p_base(2);
-                // Eigen::Quaterniond q_rot(T_base_cam.block<3, 3>(0, 0));
-                // pose.orientation.x = q_rot.x();
-                // pose.orientation.y = q_rot.y();
-                // pose.orientation.z = q_rot.z();
-                // pose.orientation.w = q_rot.w();
-
                 /* face-to-center offset in camera optical frame */
                 Eigen::Vector3d offset(0.0, 0.0, -ARUCO_BOX_OFFSET);
                 Eigen::Vector3d tvec_eigen(mc.tvec[0], mc.tvec[1], mc.tvec[2]);
                 Eigen::Vector3d box_center_cam = tvec_eigen + mc.rot_3x3 * offset;
                 if (!box_center_cam.allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d has non-finite box center; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -879,25 +727,16 @@ private:
                 Eigen::Vector4d p_cam_h(box_center_ros(0), box_center_ros(1), box_center_ros(2), 1.0);
                 Eigen::Vector4d p_base = T_base_cam * p_cam_h;
                 if (!p_base.allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d transformed pose is non-finite; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
                 Eigen::Matrix3d R_tag_in_base =
                     T_base_cam.block<3,3>(0,0) * R_opt2ros * mc.rot_3x3;
                 if (!R_tag_in_base.allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d transformed rotation is non-finite; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
                 Eigen::Quaterniond q_tag(R_tag_in_base);
                 if (!q_tag.coeffs().allFinite()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "[%s] marker id=%d quaternion is non-finite; skipping",
-                    //     camera_frame.c_str(), marker_id);
                     continue;
                 }
 
@@ -913,21 +752,14 @@ private:
                 /* ERC ID mapping */
                 int aruco_index = marker_id - 51;
                 if (aruco_index < 0 || aruco_index >= static_cast<int>(landmark_poses_.size())) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    // "SKIP: marker_id %d (aruco_index %d) out of range on camera %s",
-                    // marker_id, aruco_index, camera_frame.c_str());
-                    continue;
-                }
-                    
-                if (std::find(markers.marker_ids.begin(),
-                            markers.marker_ids.end(),
-                            aruco_index) != markers.marker_ids.end()) {
-                    // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                    //     "SKIP: marker_id %d (aruco_index %d) already added this frame on camera %s",
-                    //     marker_id, aruco_index, camera_frame.c_str());
                     continue;
                 }
 
+                if (std::find(markers.marker_ids.begin(),
+                            markers.marker_ids.end(),
+                            aruco_index) != markers.marker_ids.end()) {
+                    continue;
+                }
 
                 /* ---- bearing computation ----
                  *
@@ -957,7 +789,7 @@ private:
                     landmark_poses_[aruco_index].second);
                 markers.ar_angles_list.push_back(yaw_deg);
             }
-    }    
+    }
 
     /* ============================================================== */
     /*  TF → 4×4 matrix                                              */

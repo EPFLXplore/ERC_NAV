@@ -1,4 +1,5 @@
 #include "path_planning/accept_candidate_path.hpp"
+#include "path_planning/restamp_goal.hpp"
 
 #include <cmath>
 
@@ -189,4 +190,8 @@ BT_REGISTER_NODES(factory)
 {
   factory.registerNodeType<path_planning::AcceptCandidatePath>(
     "AcceptCandidatePath");
+
+  factory.registerNodeType<path_planning::RestampGoal>(
+    "RestampGoal");
+
 }

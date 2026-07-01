@@ -1,4 +1,8 @@
 {
+    "frame_id": "OAK-1_v1_2",
+    "image_topic": "/NAV/feed_camera_nav_1",
+    "camera_model": "pinhole",
+    "hardware_model": "OAK-1-W",
     "intrinsic_matrix": [
         [
             2316.32470703125,
@@ -32,25 +36,8 @@
         0.00884088221937418,
         -0.0037088862154632807
     ],
-    "distortion_coeffs_full": [
-        6.9883317947387695,
-        9.804746627807617,
-        -0.0006462830351665616,
-        -9.848660556599498e-05,
-        -1.8249281644821167,
-        7.005791187286377,
-        12.244342803955078,
-        -1.1093947887420654,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.00884088221937418,
-        -0.0037088862154632807
-    ],
     "image_width": 4056,
     "image_height": 3040,
-    "camera_model": "OAK-1-W",
     "camera_socket": 0,
     "method": "depthai_factory_calibration",
     "depthai_version": "2.30"

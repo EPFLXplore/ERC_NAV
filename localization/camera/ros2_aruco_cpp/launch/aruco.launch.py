@@ -24,8 +24,8 @@ def _aruco_params_yaml_path():
 def generate_launch_description():
     config = _aruco_params_yaml_path()
     share = get_package_share_directory('ros2_aruco_cpp')
-    # oak_calibration_depthai_<MXID>.json live next to aruco_params.yaml (installed under share/.../config)
-    calib_dir = os.path.join(share, 'config')
+    # Per-camera config JSON files live next to aruco_params.yaml (installed under share/.../config)
+    camera_config_dir = os.path.join(share, 'config')
 
     return LaunchDescription([
 
@@ -36,31 +36,18 @@ def generate_launch_description():
             executable='multiview_aruco_node',
             name='aruco_node',
             parameters=[config, {
-                'calib_mode': 'file',
-                'calib_dir': calib_dir,
-                'cam_ids': ['19443010714B177E00', '19443010A19E157E00', '19443010816C177E00'],
-                # Keep in sync with sensors/camera/.../camera_node_nav.launch.py Oak1W x,y
-                'image_stream_width': 1280,
-                'image_stream_height': 720,
+                'camera_config_dir': camera_config_dir,
+                # camera_config_files (which JSONs to load) comes from aruco_params.yaml.
             }],
-            output='screen',
         ),
 
         # Replace pose_estimator_lidar_node with a fixed identity map->odom TF.
         # map -> odom: x y z yaw pitch roll = 0 0 0 0 0 0
-        # Node(
-        #     package='tf2_ros',
-        #     executable='static_transform_publisher',
-        #     name='map_to_odom_identity_tf',
-        #     arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
-        #     output='screen',
-        # ),
-
         Node(
-            package='ros2_aruco_cpp',
-            executable='pose_estimator_lidar_node',
-            name='pose_estimation_node_with_lidar',
-            parameters=[config],
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='map_to_odom_identity_tf',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
             output='screen',
         ),
 

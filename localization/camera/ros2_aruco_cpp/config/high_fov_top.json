@@ -1,0 +1,38 @@
+{
+  "frame_id": "high_fov_top",
+  "image_topic": "/ROVER/req_camera_cs_top",
+  "camera_model": "fisheye",
+  "hardware_model": "Aliexpress 130HFOV",
+  "intrinsic_matrix": [
+    [
+      868.239438,
+      0.0,
+      1030.17893
+    ],
+    [
+      0.0,
+      872.053517,
+      528.275293
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coeffs": [
+    -0.04290855,
+    -0.00107998,
+    0.00660521,
+    -0.00276183
+  ],
+  "image_width": 1920,
+  "image_height": 1080,
+  "camera_socket": 0,
+  "method": "opencv_fisheye_calibration",
+  "views_used": 472,
+  "rms_reprojection_error_px": 1.207693,
+  "mean_reprojection_error_px": 1.020397,
+  "median_reprojection_error_px": 0.844245,
+  "max_reprojection_error_px": 2.870204
+}

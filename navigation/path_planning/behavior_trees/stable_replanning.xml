@@ -7,8 +7,10 @@
 
         <RateController hz="1.0">
           <Sequence name="ComputeAndAcceptStableCandidate">
+            <RestampGoal input_goal="{goal}"
+                         output_goal="{current_goal}"/>
 
-            <ComputePathToPose goal="{goal}"
+            <ComputePathToPose goal="{current_goal}"
                                path="{candidate_path}"
                                planner_id="GridBased"/>
 
