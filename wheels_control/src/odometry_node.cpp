@@ -45,9 +45,9 @@ public:
             "/NAV/motor_nav_status", sub_qos,
             std::bind(&ForwardKinematicsNode::publish_odometry, this, _1));
 
-        imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
-        "/olive/imu/id001/ahrs", 10,
-        std::bind(&ForwardKinematicsNode::imu_callback, this, std::placeholders::_1));
+        // imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
+        // "/olive/imu/id001/ahrs", 10,
+        // std::bind(&ForwardKinematicsNode::imu_callback, this, std::placeholders::_1));
 
         odom_publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("wheel_odom", 10);
 
@@ -62,20 +62,55 @@ public:
 
 private:
 
+    double wrap_angle(double a) {
+        return std::atan2(std::sin(a), std::cos(a));
+    }
+
+    void integrate_se2(double v_x, double v_y, double omega_z, double dt) {
+        const double dtheta = omega_z * dt;
+
+        double A;
+        double B;
+
+        if (std::abs(omega_z) < 1e-6) {
+            // Small-angle stable limit:
+            // sin(w dt)/w -> dt
+            // (1 - cos(w dt))/w -> 0.5*w*dt^2
+            A = dt;
+            B = 0.5 * omega_z * dt * dt;
+        } else {
+            A = std::sin(dtheta) / omega_z;
+            B = (1.0 - std::cos(dtheta)) / omega_z;
+        }
+
+        // Exact body-frame displacement over the interval for constant body twist
+        const double dx_body = A * v_x - B * v_y;
+        const double dy_body = B * v_x + A * v_y;
+
+        // Rotate body displacement into odom/world frame using current heading
+        const double c = std::cos(pos_theta_);
+        const double s = std::sin(pos_theta_);
+
+        pos_x_ += c * dx_body - s * dy_body;
+        pos_y_ += s * dx_body + c * dy_body;
+
+        pos_theta_ = wrap_angle(pos_theta_ + dtheta);
+    }
+
     void timer_callback(){
         builtin_interfaces::msg::Time time_msg = this->get_clock()->now();
         time_publisher_->publish(time_msg);
     }
 
 
-    void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-        tf2::Quaternion q;
-        tf2::fromMsg(msg->orientation, q);
-        double roll, pitch, yaw;
-        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+    // void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
+    //     tf2::Quaternion q;
+    //     tf2::fromMsg(msg->orientation, q);
+    //     double roll, pitch, yaw;
+    //     tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-        pos_theta_ = yaw;
-    }
+    //     pos_theta_ = yaw;
+    // }
 
 
     void publish_odometry(const custom_msg::msg::MotorStatus::SharedPtr msg) {
@@ -163,27 +198,46 @@ private:
         }
 
         Eigen::Vector3d twist = A.colPivHouseholderQr().solve(b);
-        double v_x     = twist(0);     // body-frame forward
-        double v_y     = twist(1);     // body-frame left
-        double omega_z = -twist(2);     // yaw rate
+        double v_x     = twist(0);      // body-frame forward
+        double v_y     = twist(1);      // body-frame left
+        double omega_z = twist(2);     // yaw rate
 
         auto now = this->get_clock()->now();
         double dt = (now - prev_time_).seconds();
         if (dt <= 0.0) dt = 1.0 / 100.0;
 
-        double world_vx =  v_x*std::cos(pos_theta_) - v_y*std::sin(pos_theta_);
-        double world_vy =  v_x*std::sin(pos_theta_) + v_y*std::cos(pos_theta_);
-
-        pos_x_     += world_vx * dt;
-        pos_y_     += world_vy * dt;
-
-        /* keep θ in (-π, π] */
-        pos_theta_ = std::atan2(std::sin(pos_theta_), std::cos(pos_theta_));
+        integrate_se2(v_x, v_y, omega_z, dt);
 
         prev_time_ = now;
 
         //////////////////////////////////////////////////////////////////////////////////
-
+        // RCLCPP_INFO_THROTTLE(
+        //     this->get_logger(),
+        //     *this->get_clock(),
+        //     200,
+        //     "twist raw = [%.3f %.3f %.3f], published vy = %.3f, pos_y = %.3f, yaw = %.3f",
+        //     twist(0), twist(1), twist(2),
+        //     v_y,
+        //     pos_y_,
+        //     pos_theta_
+        // );
+        // RCLCPP_INFO_THROTTLE(
+        //     this->get_logger(),
+        //     *this->get_clock(),
+        //     200,
+        //     "angles deg: FL %.1f FR %.1f BR %.1f BL %.1f | speeds: FL %.3f FR %.3f BR %.3f BL %.3f | twist [%.3f %.3f %.3f]",
+        //     wheel_angles_[0] * 180.0 / M_PI,
+        //     wheel_angles_[1] * 180.0 / M_PI,
+        //     wheel_angles_[2] * 180.0 / M_PI,
+        //     wheel_angles_[3] * 180.0 / M_PI,
+        //     wheel_speeds_[0],
+        //     wheel_speeds_[1],
+        //     wheel_speeds_[2],
+        //     wheel_speeds_[3],
+        //     twist(0),
+        //     twist(1),
+        //     twist(2)
+        // );
 
 
         nav_msgs::msg::Odometry odom;
@@ -196,32 +250,33 @@ private:
         // odom.twist.twist.linear.y = world_vy;
         // odom.twist.twist.angular.z = omega_z;
 
-        odom.twist.twist.linear.x = v_x;
-        odom.twist.twist.linear.y = v_y;
+        odom.twist.twist.linear.x = v_x; // body frame
+        odom.twist.twist.linear.y = v_y; // body frame
         odom.twist.twist.angular.z = omega_z;
 
-        double yaw_uncertainty = 0.1 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
+        double yaw_uncertainty = 0.08 + 0.02*(abs(wheel_speeds_[0]) + abs(wheel_speeds_[1]) + abs(wheel_speeds_[2]) + abs(wheel_speeds_[3]))/4.0;
         //RCLCPP_INFO(this->get_logger(), "yaw cov: %f", yaw_uncertainty);
 
-
-        std::array<double, 36> pose_covariance = {
-            0.05, 0, 0, 0, 0, 0,
-            0, 0.05, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, yaw_uncertainty
-        };	
-
-        std::array<double, 36> twist_covariance = {
-                    0.03, 0, 0, 0, 0, 0,
-                    0, 0.03, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, yaw_uncertainty
-        };
+        const double BIG = 1e6;
+        const double vx_var = 0.03;
+        const double vy_var = 0.03;
         
+        std::array<double, 36> pose_covariance = {
+            0.05, 0,    0,   0,   0,   0,
+            0,    0.05, 0,   0,   0,   0,
+            0,    0,    BIG, 0,   0,   0,
+            0,    0,    0,   BIG, 0,   0,
+            0,    0,    0,   0,   BIG, 0,
+            0,    0,    0,   0,   0,   0.05
+        };
+        std::array<double, 36> twist_covariance = {
+            vx_var, 0,      0,   0,   0,   0,
+            0,      vy_var, 0,   0,   0,   0,
+            0,      0,      BIG, 0,   0,   0,
+            0,      0,      0,   BIG, 0,   0,
+            0,      0,      0,   0,   BIG, 0,
+            0,      0,      0,   0,   0,   yaw_uncertainty
+        };
         odom.pose.covariance = pose_covariance;
         odom.twist.covariance = twist_covariance;
 
@@ -230,11 +285,12 @@ private:
         odom.pose.pose.orientation = tf2::toMsg(q);
         odom_publisher_->publish(odom);
 
+
         prev_time_ = now;
     }
 
     rclcpp::Subscription<custom_msg::msg::MotorStatus>::SharedPtr subscription_;
-    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
+    // rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr    imu_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr time_publisher_;
     rclcpp::TimerBase::SharedPtr timer_;

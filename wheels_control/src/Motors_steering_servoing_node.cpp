@@ -22,7 +22,7 @@ description:
 #include "wheels_control/definition.hpp"
 
 
-#define ANGLE_TOLERANCE 0.2 // radians : 0.2 : 11.46°
+#define ANGLE_TOLERANCE 0.5 // radians : 0.2 : 11.46°
 const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
 // const double incr_to_rad = M_PI/12/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
 const double ANGLE_TOLERANCE_INCR = ANGLE_TOLERANCE / incr_to_rad; // convert to increments
@@ -73,16 +73,16 @@ private:
             RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
             return; // Wait until both messages have arrived
         }
-        RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",ANGLE_TOLERANCE_INCR);
+        // RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",ANGLE_TOLERANCE_INCR);
 
         bool all_within_tolerance = true;
         for (size_t i = 0; i < 4; ++i) {
-            RCLCPP_INFO(this->get_logger(), "target steering angle %.2f",target_steering_angles_[i]);
-            RCLCPP_INFO(this->get_logger(), "current steering angle %.2f",current_steering_angles_[i]);
+            // RCLCPP_INFO(this->get_logger(), "target steering angle %.2f",target_steering_angles_[i]);
+            // RCLCPP_INFO(this->get_logger(), "current steering angle %.2f",current_steering_angles_[i]);
             if (std::fabs(target_steering_angles_[i] - current_steering_angles_[i]) >= ANGLE_TOLERANCE_INCR) {
                 all_within_tolerance = false;
-                RCLCPP_INFO(this->get_logger(), "Motor %zu not within tolerance: target=%.2f, current=%.2f", 
-                            i, target_steering_angles_[i], current_steering_angles_[i]);
+                // RCLCPP_INFO(this->get_logger(), "Motor %zu not within tolerance: target=%.2f, current=%.2f", 
+                //             i, target_steering_angles_[i], current_steering_angles_[i]);
                 break;
             }
         }
@@ -98,9 +98,9 @@ private:
             pub_motor_cmds_->publish(zero_cmds);
         }
 
-        RCLCPP_INFO(this->get_logger(), "Target steering angles: [%.2f, %.2f, %.2f, %.2f]",
-                    target_steering_angles_[0], target_steering_angles_[1],
-                    target_steering_angles_[2], target_steering_angles_[3]);
+        // RCLCPP_INFO(this->get_logger(), "Target steering angles: [%.2f, %.2f, %.2f, %.2f]",
+        //             target_steering_angles_[0], target_steering_angles_[1],
+        //             target_steering_angles_[2], target_steering_angles_[3]);
     }
 
     // Subscriptions et Publishers

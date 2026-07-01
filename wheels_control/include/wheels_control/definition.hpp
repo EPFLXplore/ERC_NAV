@@ -130,9 +130,9 @@ inline constexpr const MotorLayout* paired_motor_layout(const MotorLayout& motor
 #define MIN_DESIRED_RADIUS 1
 #define PI_IN_INCR 16384
 
-// NEW rover dimensions as of Sat 25th April 2026
-#define WIDTH 0.78
-#define LENGTH 1.0
+// NEW rover dimensions as of Wed. 1st July 2026
+#define WIDTH 0.76
+#define LENGTH 0.99
 
 // #define ROTATION_TRANSLATION 0
 // #define CRABE 1

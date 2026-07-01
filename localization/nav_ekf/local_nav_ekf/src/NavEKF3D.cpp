@@ -5,7 +5,8 @@
 // Prediction:
 //   - Mean propagation via RK4 integration of the full nonlinear kinematics
 //     (position integrates body-frame velocity rotated into world, Euler angles integrate the
-//     body-frame gyro rate through the Euler-rate matrix).
+//     body-frame gyro rate through the Euler-rate matrix). The gyro's wz is
+//     inverse-variance blended with the wheel-derived omega_z before use.
 //   - Covariance propagation uses the RK2-discretized Jacobian of a
 //     constant-velocity motion model:
 //         F = I + dt * A + (dt^2 / 2) * A * A
@@ -37,6 +38,10 @@
 #include <cmath>
 #include <deque>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2/exceptions.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 
 namespace {
@@ -163,32 +168,43 @@ public:
   StateMatrix covariance;
   StateMatrix process_noise;      // continuous-time Q; integrated as Q*dt
 
-  Eigen::Matrix3d R_orientation_rpy;    // IMU RPY variance (roll, pitch, yaw)
+  Eigen::Matrix3d R_orientation_rpy;    // AHRS IMU RPY variance (roll, pitch, yaw)
   Eigen::Matrix2d R_position_xy_lidar;
   Eigen::Matrix2d R_position_xy_aruco;
   Eigen::Matrix2d R_position_xy_vio;
   Eigen::Matrix3d R_velocity_body_xyz;
+  Eigen::Matrix3d R_orientation_rpy_vio;  // VIO RPY variance (roll, pitch, yaw)
 
   ExtendedKalmanFilter3D() {
     state.setZero();
-    covariance = StateMatrix::Identity() * 1e-2;
+    covariance = StateMatrix::Identity() * 1e-3;
 
     process_noise.setZero();
     process_noise(IDX_X,     IDX_X)     = 0.01;
     process_noise(IDX_Y,     IDX_Y)     = 0.01;
     process_noise(IDX_Z,     IDX_Z)     = 0.01;
-    process_noise(IDX_ROLL,  IDX_ROLL)  = 0.005;
-    process_noise(IDX_PITCH, IDX_PITCH) = 0.005;
-    process_noise(IDX_YAW,   IDX_YAW)   = 0.001;
+    process_noise(IDX_ROLL,  IDX_ROLL)  = 0.01;
+    process_noise(IDX_PITCH, IDX_PITCH) = 0.01;
+    process_noise(IDX_YAW,   IDX_YAW)   = 0.01;
     process_noise(IDX_VX,    IDX_VX)    = 0.10;
-    process_noise(IDX_VY,    IDX_VY)    = 0.20;
+    process_noise(IDX_VY,    IDX_VY)    = 0.10;
     process_noise(IDX_VZ,    IDX_VZ)    = 0.10;
 
-    R_orientation_rpy    = Eigen::Matrix3d::Identity() * 1e-4;   // std 0.01 rad
-    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.01;   // std 0.10 m
-    R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.01;
-    R_position_xy_vio    = Eigen::Matrix2d::Identity() * 0.01;
-    R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.10;
+    R_orientation_rpy    = Eigen::Matrix3d::Identity() * 1e-4;    // IMU AHRS RPY variance ≈ 0.57° std
+
+    R_orientation_rpy(0, 0) = 1e-4;    // roll  ≈ 0.57°
+    R_orientation_rpy(1, 1) = 1e-4;    // pitch ≈ 0.57°
+    R_orientation_rpy(2, 2) = 3e-4;    // yaw   ≈ 1°
+    
+    R_orientation_rpy_vio.setZero();
+    R_orientation_rpy_vio(0, 0) = 8e-4;   // roll  std ≈ 1.28 deg
+    R_orientation_rpy_vio(1, 1) = 8e-4;   // pitch std ≈ 1.28 deg
+    R_orientation_rpy_vio(2, 2) = 8e-3;   // yaw   std ≈ 2.56 deg
+
+    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.015;   // std 0.10 m
+    R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.007;   // two times lower, because its a correction.
+    R_position_xy_vio    = Eigen::Matrix2d::Identity() * 0.015;
+    R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.1;  // from wheel odom meas
   }
 
   void initialize(double x0, double y0, double z0,
@@ -247,6 +263,18 @@ public:
   //   - Mean: RK4 integration (high accuracy, nonlinear).
   //   - Covariance: RK2 (midpoint) discretization of the constant-velocity
   //     Jacobian:  F = I + dt*A + (dt^2 / 2) * A*A
+  //   - Process noise: the position/velocity block is discretized analytically
+  //     (Van Loan) instead of a diagonal dt*Q_continuous approximation, so the
+  //     known position<->velocity noise correlation of a constant-velocity
+  //     model is preserved. For d/dt[p; v] = [[0, R], [0, 0]] [p; v] + [0; I] w,
+  //     with w continuous white noise of intensity Qc_v (R frozen over the
+  //     step, matching the state_transition linearization below):
+  //       Q_pp = (dt^3/3) * R * Qc_v * R^T   (+ dt * Qc_p for the position's
+  //                                            own unmodeled-disturbance term)
+  //       Q_pv = (dt^2/2) * R * Qc_v
+  //       Q_vv =  dt      * Qc_v
+  //     Attitude noise stays a plain diagonal dt*Q term (it models direct
+  //     orientation-disturbance uncertainty, not a random-walk-driven state).
   // -------------------------------------------------------------------
   void predict(double dt, const Eigen::Vector3d& body_angular_rate) {
     if (!(dt > 0.0) || !std::isfinite(dt)) return;
@@ -296,8 +324,22 @@ public:
         + dt * jacobian_continuous
         + (0.5 * dt * dt) * jacobian_squared;
 
+    // --- Discrete process noise (Van Loan for the position/velocity block) ---
+    const Eigen::Matrix3d Qc_p = process_noise.block<3, 3>(IDX_X,  IDX_X);
+    const Eigen::Matrix3d Qc_v = process_noise.block<3, 3>(IDX_VX, IDX_VX);
+    const Eigen::Matrix3d RQvR  = R * Qc_v * R.transpose();
+    const Eigen::Matrix3d RQv   = R * Qc_v;
+
+    StateMatrix process_noise_discrete = StateMatrix::Zero();
+    process_noise_discrete.block<3, 3>(IDX_X,  IDX_X)  = (dt * dt * dt / 3.0) * RQvR + dt * Qc_p;
+    process_noise_discrete.block<3, 3>(IDX_X,  IDX_VX) = (dt * dt / 2.0) * RQv;
+    process_noise_discrete.block<3, 3>(IDX_VX, IDX_X)  = process_noise_discrete.block<3, 3>(IDX_X, IDX_VX).transpose();
+    process_noise_discrete.block<3, 3>(IDX_VX, IDX_VX) = dt * Qc_v;
+    process_noise_discrete.block<3, 3>(IDX_ROLL, IDX_ROLL) =
+        process_noise.block<3, 3>(IDX_ROLL, IDX_ROLL) * dt;
+
     covariance = state_transition * covariance * state_transition.transpose()
-                 + process_noise * dt;
+                 + process_noise_discrete;
   }
 
   // -------------------------------------------------------------------
@@ -449,17 +491,28 @@ public:
     // Mahalanobis gate squared (2 DoF chi^2 95% ≈ 5.99; 99% ≈ 9.21).
     declare_parameter<double>("mahalanobis_gate_squared", 7.0);
 
+    // Wheel-derived yaw-rate (ICR omega_z) variance used when blending with the
+    // gyro.  Kept high relative to typical gyro noise so it only pulls the fused
+    // rate away from the gyro when the gyro is degraded or clearly disagrees.
+    declare_parameter<double>("wheel_omega_z_variance", 0.5);
+    // Fallback gyro yaw-rate variance, used when the IMU message reports an
+    // invalid (<=0) angular_velocity_covariance[8].
+    declare_parameter<double>("gyro_omega_z_variance_default", 1e-3);
+
     include_lidar_ = get_parameter("include_lidar").as_bool();
     include_aruco_ = get_parameter("include_aruco").as_bool();
     include_vio_   = get_parameter("include_vio").as_bool();
     roll_pitch_lowpass_tau_ = get_parameter("roll_pitch_lowpass_tau").as_double();
     mahalanobis_gate_sq_    = get_parameter("mahalanobis_gate_squared").as_double();
+    wheel_omega_z_variance_ = get_parameter("wheel_omega_z_variance").as_double();
+    gyro_omega_z_variance_default_ = get_parameter("gyro_omega_z_variance_default").as_double();
 
-    RCLCPP_INFO(get_logger(), "3D EKF | LiDAR: %s  ArUco: %s  VIO: %s  tau_rp=%.3fs",
+    RCLCPP_INFO(get_logger(), "3D EKF | LiDAR: %s  ArUco: %s  VIO: %s  tau_rp=%.3fs  wheel_wz_var=%.3f",
                 include_lidar_ ? "on" : "off",
                 include_aruco_ ? "on" : "off",
                 include_vio_   ? "on" : "off",
-                roll_pitch_lowpass_tau_);
+                roll_pitch_lowpass_tau_,
+                wheel_omega_z_variance_);
 
     // ---- IMU calibration services (same as 2D node) ----
     bias_client_      = create_client<std_srvs::srv::Trigger>("/olive/imu/id001/setBias");
@@ -498,7 +551,8 @@ public:
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>("/fused_nav_ekf_odom", pub_qos);
     ros_time_pub_ = create_publisher<builtin_interfaces::msg::Time>("/NAV/ros_time", pub_qos);
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
-
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     last_time_ = now();
     timer_ = create_wall_timer(std::chrono::milliseconds(10),
                                std::bind(&NavEKF3DNode::timer_callback, this));
@@ -518,7 +572,9 @@ public:
     pub_ac_aruco_y_   = create_publisher<FAMsg>("/nav_ekf/autocorr/aruco_y",   latch);
     pub_ac_vio_x_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_x",     latch);
     pub_ac_vio_y_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_y",     latch);
-
+    pub_ac_vio_roll_  = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_roll",  latch);
+    pub_ac_vio_pitch_ = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_pitch", latch);
+    pub_ac_vio_yaw_   = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_yaw",   latch);
     autocorr_timer_ = create_wall_timer(std::chrono::milliseconds(400),
                                         std::bind(&NavEKF3DNode::autocorr_callback, this));
   }
@@ -586,9 +642,24 @@ private:
     }
 
     // --- Cache body-frame gyro for use in prediction ---
+    // Blend gyro wz with the wheel-derived omega_z (inverse-variance weighting:
+    // the minimum-variance combination of two independent noisy measurements of
+    // the same body yaw rate). wheel_omega_z_variance_ is set high, so this only
+    // pulls the fused rate away from the gyro when the gyro disagrees strongly
+    // or the wheel estimate is comparatively certain.
+    double wz_fused = msg->angular_velocity.z;
+    if (has_wheel_omega_z_) {
+      const double var_gyro_wz = (msg->angular_velocity_covariance[8] > 0.0)
+                                      ? msg->angular_velocity_covariance[8]
+                                      : gyro_omega_z_variance_default_;
+      const double w_gyro  = 1.0 / var_gyro_wz;
+      const double w_wheel = 1.0 / wheel_omega_z_variance_;
+      wz_fused = (w_gyro * msg->angular_velocity.z + w_wheel * last_wheel_omega_z_) / (w_gyro + w_wheel);
+    }
+
     last_body_angular_rate_ = Eigen::Vector3d(msg->angular_velocity.x,
                                               msg->angular_velocity.y,
-                                              msg->angular_velocity.z);
+                                              wz_fused);
 
     // --- Measurement update with filtered orientation ---
     Eigen::Matrix3d R_rpy = ekf_->R_orientation_rpy;
@@ -609,19 +680,25 @@ private:
     ekf_->update_orientation_rpy(measured_rpy, R_rpy);
   }
 
-  void wheel_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+  void wheel_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) { //body frame speeds
     const double vx_body = msg->twist.twist.linear.x;
     const double vy_body = msg->twist.twist.linear.y;
-    const double vz_body = msg->twist.twist.linear.z;
-    if (!std::isfinite(vx_body) || !std::isfinite(vy_body) || !std::isfinite(vz_body)) {
+    const double vz_body = 0.0;  // wheel odom does not measure vertical velocity
+    if (!std::isfinite(vx_body) || !std::isfinite(vy_body)) {
       return;
     }
 
     buf_vel_x_.push(vx_body - ekf_->state(IDX_VX));
     buf_vel_y_.push(vy_body - ekf_->state(IDX_VY));
-    buf_vel_z_.push(vz_body - ekf_->state(IDX_VZ));
 
     ekf_->update_velocity_body_xyz(Eigen::Vector3d(vx_body, vy_body, vz_body));
+
+    // Cache wheel-derived yaw rate for blending with the gyro in imu_callback.
+    const double omega_z = msg->twist.twist.angular.z;
+    if (std::isfinite(omega_z)) {
+      last_wheel_omega_z_ = omega_z;
+      has_wheel_omega_z_  = true;
+    }
   }
 
   void lidar_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -652,15 +729,169 @@ private:
 
   void vio_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
     if (!include_vio_) return;
-    const double mx = msg->pose.pose.position.x;
-    const double my = msg->pose.pose.position.y;
-    buf_vio_x_.push(mx - ekf_->state(IDX_X));
-    buf_vio_y_.push(my - ekf_->state(IDX_Y));
-    if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_vio)) {
-      ekf_->update_position_xy(mx, my, ekf_->R_position_xy_vio);
-    } else {
-      RCLCPP_WARN(get_logger(), "Reject VIO odom (Mahalanobis)");
+
+    // ============================================================
+    // VIO pose is assumed to be the pose of the OAK-d camera frame.
+    //
+    // EKF state is base_link, so convert:
+    //
+    //   T_odom_base = T_odom_oakd * T_oakd_base
+    //
+    // where T_oakd_base = inverse(T_base_oakd).
+    // ============================================================
+
+    const auto &p_msg = msg->pose.pose.position;
+    const auto &q_msg = msg->pose.pose.orientation;
+
+    if (!std::isfinite(p_msg.x) || !std::isfinite(p_msg.y) || !std::isfinite(p_msg.z) ||
+        !std::isfinite(q_msg.x) || !std::isfinite(q_msg.y) ||
+        !std::isfinite(q_msg.z) || !std::isfinite(q_msg.w)) {
+      return;
     }
+
+    tf2::Quaternion q_odom_oakd(
+        q_msg.x,
+        q_msg.y,
+        q_msg.z,
+        q_msg.w
+    );
+
+    if (q_odom_oakd.length2() < 1e-12) {
+      return;
+    }
+
+    q_odom_oakd.normalize();
+
+    tf2::Vector3 p_odom_oakd(
+        p_msg.x,
+        p_msg.y,
+        p_msg.z
+    );
+
+    tf2::Transform T_odom_oakd(q_odom_oakd, p_odom_oakd);
+
+    // ---------------- Lookup static extrinsic base_link -> OAK-d ----------------
+    geometry_msgs::msg::TransformStamped tf_base_oakd_msg;
+
+    try {
+      const bool zero_stamp =
+          (msg->header.stamp.sec == 0u && msg->header.stamp.nanosec == 0u);
+
+      if (zero_stamp) {
+        tf_base_oakd_msg = tf_buffer_->lookupTransform(
+            "base_link",
+            "OAK-d",
+            tf2::TimePointZero);
+      } else {
+        const rclcpp::Time t(msg->header.stamp, get_clock()->get_clock_type());
+
+        if (tf_buffer_->canTransform(
+                "base_link",
+                "OAK-d",
+                t,
+                rclcpp::Duration::from_seconds(0.05))) {
+          tf_base_oakd_msg = tf_buffer_->lookupTransform(
+              "base_link",
+              "OAK-d",
+              t,
+              rclcpp::Duration::from_seconds(0.1));
+        } else {
+          tf_base_oakd_msg = tf_buffer_->lookupTransform(
+              "base_link",
+              "OAK-d",
+              tf2::TimePointZero);
+        }
+      }
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          2000,
+          "VIO correction skipped: cannot lookup TF base_link <- OAK-d: %s",
+          ex.what());
+      return;
+    }
+
+    const auto &tr = tf_base_oakd_msg.transform.translation;
+    const auto &qr = tf_base_oakd_msg.transform.rotation;
+
+    tf2::Quaternion q_base_oakd(
+        qr.x,
+        qr.y,
+        qr.z,
+        qr.w
+    );
+
+    if (q_base_oakd.length2() < 1e-12) {
+      return;
+    }
+
+    q_base_oakd.normalize();
+
+    tf2::Vector3 p_base_oakd(
+        tr.x,
+        tr.y,
+        tr.z
+    );
+
+    const tf2::Transform T_base_oakd(q_base_oakd, p_base_oakd);
+    const tf2::Transform T_oakd_base = T_base_oakd.inverse();
+
+    // Correct VIO camera pose into base_link pose.
+    const tf2::Transform T_odom_base = T_odom_oakd * T_oakd_base;
+
+    const tf2::Vector3 p_odom_base = T_odom_base.getOrigin();
+    tf2::Quaternion q_odom_base = T_odom_base.getRotation();
+    q_odom_base.normalize();
+
+    // ---------------- Position correction using corrected base_link position ----------------
+    const double mx = p_odom_base.x();
+    const double my = p_odom_base.y();
+
+    if (std::isfinite(mx) && std::isfinite(my)) {
+      buf_vio_x_.push(mx - ekf_->state(IDX_X));
+      buf_vio_y_.push(my - ekf_->state(IDX_Y));
+
+      if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_vio)) {
+        ekf_->update_position_xy(mx, my, ekf_->R_position_xy_vio);
+      } else {
+        RCLCPP_WARN(get_logger(), "Reject VIO base_link position (Mahalanobis)");
+      }
+    }
+
+    // ---------------- Orientation correction using corrected base_link orientation ----------------
+    double vio_roll, vio_pitch, vio_yaw;
+    tf2::Matrix3x3(q_odom_base).getRPY(vio_roll, vio_pitch, vio_yaw);
+
+    if (!std::isfinite(vio_roll) ||
+        !std::isfinite(vio_pitch) ||
+        !std::isfinite(vio_yaw)) {
+      return;
+    }
+
+    Eigen::Vector3d measured_rpy(vio_roll, vio_pitch, vio_yaw);
+
+    Eigen::Matrix3d R_vio_rpy = ekf_->R_orientation_rpy_vio;
+
+    // PoseWithCovarianceStamped covariance layout:
+    // [x, y, z, roll, pitch, yaw], row-major 6x6.
+    //
+    // NOTE:
+    // This covariance is originally for the OAK-d pose.
+    // We reuse its diagonal as an approximation for base_link orientation.
+    const double var_roll  = msg->pose.covariance[21];
+    const double var_pitch = msg->pose.covariance[28];
+    const double var_yaw   = msg->pose.covariance[35];
+
+    if (std::isfinite(var_roll)  && var_roll  > 1e-12) R_vio_rpy(0, 0) = var_roll;
+    if (std::isfinite(var_pitch) && var_pitch > 1e-12) R_vio_rpy(1, 1) = var_pitch;
+    if (std::isfinite(var_yaw)   && var_yaw   > 1e-12) R_vio_rpy(2, 2) = var_yaw;
+
+    buf_vio_roll_.push(normalize_angle(vio_roll  - ekf_->state(IDX_ROLL)));
+    buf_vio_pitch_.push(normalize_angle(vio_pitch - ekf_->state(IDX_PITCH)));
+    buf_vio_yaw_.push(normalize_angle(vio_yaw   - ekf_->state(IDX_YAW)));
+
+    ekf_->update_orientation_rpy(measured_rpy, R_vio_rpy);
   }
 
   // Publish normalized autocorrelation [r(0)=1, r(1), ..., r(MAX_LAG)] for one channel.
@@ -691,8 +922,11 @@ private:
       publish_autocorr(pub_ac_aruco_y_, buf_aruco_y_);
     }
     if (include_vio_) {
-      publish_autocorr(pub_ac_vio_x_,   buf_vio_x_);
-      publish_autocorr(pub_ac_vio_y_,   buf_vio_y_);
+      publish_autocorr(pub_ac_vio_x_,     buf_vio_x_);
+      publish_autocorr(pub_ac_vio_y_,     buf_vio_y_);
+      publish_autocorr(pub_ac_vio_roll_,  buf_vio_roll_);
+      publish_autocorr(pub_ac_vio_pitch_, buf_vio_pitch_);
+      publish_autocorr(pub_ac_vio_yaw_,   buf_vio_yaw_);
     }
   }
 
@@ -770,6 +1004,8 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr vio_sub_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster>                tf_broadcaster_;
+  std::shared_ptr<tf2_ros::Buffer>                              tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener>                   tf_listener_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr         ekf_pub_;
   rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr    ros_time_pub_;
   rclcpp::TimerBase::SharedPtr                                  timer_;
@@ -780,11 +1016,18 @@ private:
   // Gyro cache (body frame) for prediction
   Eigen::Vector3d last_body_angular_rate_ = Eigen::Vector3d::Zero();
 
+  // Wheel-derived yaw rate cache, blended into the gyro wz via inverse-variance
+  // weighting (see imu_callback).
+  double last_wheel_omega_z_          = 0.0;
+  bool   has_wheel_omega_z_           = false;
+  double wheel_omega_z_variance_      = 0.5;
+  double gyro_omega_z_variance_default_ = 1e-3;
+
   // Low-pass filter state for roll/pitch
   bool   lowpass_initialized_    = false;
   double filtered_roll_          = 0.0;
   double filtered_pitch_         = 0.0;
-  double roll_pitch_lowpass_tau_ = 0.15;
+  double roll_pitch_lowpass_tau_ = 0.2;
 
   // Fusion toggles / gates
   bool   include_lidar_          = false;
@@ -802,6 +1045,7 @@ private:
   InnovBuffer buf_lidar_x_, buf_lidar_y_;
   InnovBuffer buf_aruco_x_, buf_aruco_y_;
   InnovBuffer buf_vio_x_,   buf_vio_y_;
+  InnovBuffer buf_vio_roll_, buf_vio_pitch_, buf_vio_yaw_;
 
   // Autocorrelation publishers
   using FAMsg = std_msgs::msg::Float64MultiArray;
@@ -810,6 +1054,7 @@ private:
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_lidar_x_,  pub_ac_lidar_y_;
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_aruco_x_,  pub_ac_aruco_y_;
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_x_,    pub_ac_vio_y_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_roll_, pub_ac_vio_pitch_, pub_ac_vio_yaw_;
   rclcpp::TimerBase::SharedPtr autocorr_timer_;
 
 };
