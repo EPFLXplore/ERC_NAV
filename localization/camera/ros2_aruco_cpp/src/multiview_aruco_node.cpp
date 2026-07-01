@@ -1,3 +1,26 @@
+/*
+ * MultiViewArucoNode detects ArUco markers from up to four compressed camera
+ * feeds and publishes their positions and bearings in the rover base_link frame.
+ *
+ * Each camera image is decoded, processed with OpenCV ArUco detection, and
+ * converted into a 3D marker pose using that camera's intrinsics. Cameras 0-2
+ * load calibration either from JSON files or camera-info services, while camera
+ * 3 uses hardcoded OAK-D intrinsics.
+ *
+ * Detected marker poses are transformed from each camera frame into base_link
+ * using tf2. The node keeps the best detection per marker, rejects invalid or
+ * distant detections, applies a short cache so markers from different camera
+ * callbacks can be fused, and optionally smooths cached marker positions.
+ *
+ * Published outputs:
+ * - /aruco_poses: PoseArray of detected/cached marker poses in base_link.
+ * - /aruco_markers: marker IDs mapped to landmark indices, base_link poses,
+ *   known map landmark positions, and marker bearings in degrees.
+ *
+ * The pose estimator consumes /aruco_markers to initialize and update the rover
+ * map pose from known landmark locations.
+ */
+
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>

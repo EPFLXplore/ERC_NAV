@@ -271,6 +271,7 @@ public:
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>(
       "/fused_nav_ekf_odom", pub_qos);
+    //needed for the ZED 2i for time sync
     ros_time_pub_ = create_publisher<builtin_interfaces::msg::Time>(
       "/NAV/ros_time", pub_qos);
 

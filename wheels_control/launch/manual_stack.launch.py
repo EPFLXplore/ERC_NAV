@@ -227,12 +227,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
 
 
-    # slip_control_node = launch_ros.actions.Node(
-    #     package="wheels_control",
-    #     executable="NAV_steer_control",
-    #     name="motor_steering_servoing",
-    #     output="screen"
-    # )
+    slip_control_node = launch_ros.actions.Node(
+        package="wheels_control",
+        executable="NAV_steer_control",
+        name="motor_steering_servoing",
+        output="screen"
+    )
 
     LogInfo(msg=f"{_C_BOLD_YELLOW} After slip control node {_C_RESET}"),
 
@@ -256,7 +256,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         # nav_cameras_launch,
         delayed_aruco_launch,
         jetson_stats,
-        # slip_control_node,
+        slip_control_node,
     ]
 
 def generate_launch_description():

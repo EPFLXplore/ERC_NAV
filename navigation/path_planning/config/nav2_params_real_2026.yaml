@@ -86,7 +86,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: false
-    transform_tolerance: 0.15
+    transform_tolerance: 0.3
     controller_frequency: 5.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -120,7 +120,7 @@ controller_server:
       max_lookahead_dist: 1.0
       lookahead_time: 1.8
       rotate_to_heading_angular_vel: 0.1
-      transform_tolerance: 0.1
+      transform_tolerance: 0.3
       use_velocity_scaled_lookahead_dist: false
       min_approach_linear_velocity: 0.07
       approach_velocity_scaling_dist: 0.4
@@ -374,7 +374,7 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 10.0
+    expected_planner_frequency: 1.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
     # Switched to SmacPlanner2D because global costmap has no inflation/obstacle layers.
@@ -500,7 +500,7 @@ behavior_server:
       plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 0.1
+    transform_tolerance: 0.3
     use_sim_time: false
     simulate_ahead_time: 2.0
     max_rotational_vel: 0.5

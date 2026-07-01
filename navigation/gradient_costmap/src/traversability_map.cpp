@@ -1,3 +1,36 @@
+/*
+ * @file traversability_mapping.cpp
+ * @brief ROS 2 node for building local traversability and occupancy maps from filtered terrain point clouds.
+ *
+ * Input:
+ * - Subscribes to `pointcloud_topic`, default: `/cloud_pcd`
+ * - Typical live input: `/filtered_pointcloud`
+ *
+ * Outputs:
+ * - Publishes local traversability occupancy grid on `output_local_topic`,
+ *   default: `/occupancy_map_local`
+ * - Publishes inflated local traversability occupancy grid on `output_local_inflated_topic`,
+ *   default: `/occupancy_map_local_inflated`
+ * - Publishes elevation/traversability point cloud on `output_elevation_topic`,
+ *   default: `/elevation_pointcloud`
+ *
+ * This node consumes a filtered PointCloud2 terrain cloud and inserts the points into a tiled elevation
+ * map. For each observed grid cell, it estimates terrain traversability from local surface geometry:
+ * slope is computed by fitting a plane to neighboring elevation cells, and roughness is computed from
+ * the height residuals around that plane. The resulting traversability cost is converted into occupancy
+ * values suitable for local navigation.
+ *
+ * The map can operate in robot-centered local mode, where only cells observed in the current scan are
+ * published, or in fixed-origin/global mode, where accumulated map memory is preserved. An optional
+ * inflation step expands high-cost traversability regions using a distance-decay kernel so navigation
+ * can account for robot footprint and safety margin.
+ *
+ * Typical use:
+ * - Convert filtered LiDAR terrain points into a 2D traversability cost map.
+ * - Publish local occupancy grids for path planning or Nav2 integration.
+ * - Visualize elevation and traversability as a PointCloud2 map.
+ */
+
 #include "utility.h"
 #include <unordered_map>
 
@@ -167,7 +200,6 @@ public:
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         auto start = std::chrono::high_resolution_clock::now();
-        ++current_scan_id_;
 
         // Limit the speed of the callback
         if (std::chrono::duration_cast<std::chrono::milliseconds>(start - last_time).count() < cloudHandlerRate)
@@ -179,6 +211,8 @@ public:
         
         // Lock the the processes to prevent new data from interrupting old data
         std::lock_guard<std::mutex> lock(mtx);
+
+        ++current_scan_id_;
         
         auto t1 = std::chrono::high_resolution_clock::now();
         if (use_robot_centered_origin_) {
@@ -333,6 +367,9 @@ public:
 
                 mapCell_t *cell = getCellFromPoint(&point);
                 if (!isCellFreshForOutput(cell)) continue;
+
+                int index = i + j * localMapArrayLength;
+                occupancyMap2DInflated.data[index] = 0;
 
                 cost = int(applySigmoidToOccupancy(cell->occupancy) * 100);
                 if (cost <= 0) continue;

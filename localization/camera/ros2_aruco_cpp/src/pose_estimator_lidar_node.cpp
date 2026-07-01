@@ -1,3 +1,24 @@
+/*
+ * PoseEstimatorLidarNode estimates the rover pose in the map frame using known
+ * landmark positions and detected ArUco/cube markers.
+ *
+ * The node first initializes map->odom in two phases:
+ * 1. CAMERA phase: uses /aruco_markers camera bearings to estimate the initial
+ *    yaw and pose near erc_start_pos.
+ * 2. CUBE phase: uses merged LiDAR/camera cube detections from /cube_markers
+ *    and /cube_markers_phi to refine the transform.
+ *
+ * After initialization, the node continuously updates the rover position from
+ * valid marker range/bearing measurements. With multiple markers, it solves for
+ * (x, y) using ECOS SOCP when available, with fallback solvers if ECOS fails.
+ * Yaw is then deduced from the solved position and marker bearings.
+ *
+ * The latest EKF odometry from /fused_nav_ekf_odom is used to build and publish
+ * the map->odom transform, while the estimated map-frame rover pose is published
+ * on /aruco_rover_pos.
+ */
+
+
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>

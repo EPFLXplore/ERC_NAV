@@ -2,7 +2,7 @@
 pkg:    wheels_commands
 node:   NAV_displacement_cmds
 topics:
-        publish:    /NAV/displacement
+        publish:    /NAV/steering_servoing #/NAV/displacement
         subscribe:  /ROVER/NAV_gamepad  - /NAV/absolute_encoders - /NAV/cmd_vel_final  -
 
 description:  - Take the rover velocity and compute the position of the steering and the velocity of the driving
@@ -95,7 +95,9 @@ public:
 
     normalKinematicModel.motor_cmds = motor_cmds;
 
-    pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", qos_best_effort);
+    pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/steering_servoing", qos_best_effort);
+    // pub_kinematic = this->create_publisher<custom_msg::msg::Motorcmds>("/NAV/displacement", qos_best_effort);
+
     
     auto sub_qos = rclcpp::QoS(rclcpp::KeepLast{1}).best_effort();
 

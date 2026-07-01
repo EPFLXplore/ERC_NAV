@@ -1,3 +1,32 @@
+/**
+ * @file traversability_filter.cpp
+ * @brief ROS 2 node for converting raw LiDAR point clouds into a local traversability height map.
+ *
+ * Input:
+ * - Subscribes to `input_cloud_topic`, default: `/ouster/points`
+ *
+ * Output:
+ * - Publishes filtered terrain cloud on `output_cloud_topic`, default: `/filtered_pointcloud`
+ * - Optional/debug outputs:
+ *   - `/filtered_pointcloud_visual_high_res`
+ *   - `/filtered_pointcloud_visual_low_res`
+ *   - `/pointcloud_2_laserscan`
+ *
+ * This node transforms incoming PointCloud2 LiDAR data into the map frame, filters points by range,
+ * and bins them into a robot-centered 2D height grid. Each occupied grid cell stores the observed
+ * maximum height below the configured obstacle-height threshold, producing a downsampled point cloud
+ * representation of the local terrain.
+ *
+ * The filter supports optional sensor-frame voxel downsampling and point striding to reduce CPU load
+ * on dense LiDAR clouds. TF is used to locate both the LiDAR/source frame and the robot base frame,
+ * allowing the output map to stay centered around the robot while being published in the map frame.
+ *
+ * Typical use:
+ * - Remove near/far LiDAR points outside the configured sensor range.
+ * - Build a lightweight local height map for navigation or traversability analysis.
+ * - Reduce dense 3D LiDAR data into a lower-cost terrain representation.
+ */
+
 #include "utility.h"
 #include <pcl/filters/voxel_grid.h>
 #include <algorithm>
