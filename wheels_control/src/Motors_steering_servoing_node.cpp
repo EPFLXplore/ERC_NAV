@@ -22,16 +22,16 @@ description:
 #include "wheels_control/definition.hpp"
 
 
-#define ANGLE_TOLERANCE 0.5 // radians : 0.2 : 11.46°
-const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
-// const double incr_to_rad = M_PI/12/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
-const double ANGLE_TOLERANCE_INCR = ANGLE_TOLERANCE / incr_to_rad; // convert to increments
-
 class MotorSteeringServoingNode : public rclcpp::Node
 {    
 public:
     MotorSteeringServoingNode() : Node("motor_steering_servoing")
     {
+        declare_parameter<double>("ANGLE_TOLERANCE", 0.5);
+        angle_tolerance_ = get_parameter("ANGLE_TOLERANCE").as_double();
+        const double incr_to_rad = 2.0 * M_PI / std::pow(2.0, STEERING_RESOLUTION_BITS);
+        angle_tolerance_incr_ = angle_tolerance_ / incr_to_rad;
+
 
         auto qos_best_effort = rclcpp::QoS(rclcpp::KeepLast(1));
         qos_best_effort.reliability(rclcpp::ReliabilityPolicy::BestEffort);
@@ -73,13 +73,13 @@ private:
             // RCLCPP_INFO(this->get_logger(), "Waiting for both target and current steering angles...");
             return; // Wait until both messages have arrived
         }
-        // RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",ANGLE_TOLERANCE_INCR);
+        // RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",angle_tolerance_incr_);
 
         bool all_within_tolerance = true;
         for (size_t i = 0; i < 4; ++i) {
             // RCLCPP_INFO(this->get_logger(), "target steering angle %.2f",target_steering_angles_[i]);
             // RCLCPP_INFO(this->get_logger(), "current steering angle %.2f",current_steering_angles_[i]);
-            if (std::fabs(target_steering_angles_[i] - current_steering_angles_[i]) >= ANGLE_TOLERANCE_INCR) {
+            if (std::fabs(target_steering_angles_[i] - current_steering_angles_[i]) >= angle_tolerance_incr_) {
                 all_within_tolerance = false;
                 // RCLCPP_INFO(this->get_logger(), "Motor %zu not within tolerance: target=%.2f, current=%.2f", 
                 //             i, target_steering_angles_[i], current_steering_angles_[i]);
@@ -112,6 +112,10 @@ private:
     std::array<double, 4> current_steering_angles_{};
     std::array<double, 4> target_steering_angles_{};
     custom_msg::msg::Motorcmds future_motor_cmds_;
+
+    // Angle tolerance
+    double angle_tolerance_incr_;
+    double angle_tolerance_;
 
     // Flags
     bool received_target_ = false;

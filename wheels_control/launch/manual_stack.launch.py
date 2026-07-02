@@ -169,7 +169,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='nav_ekf_3d_node',
         name='nav_custom_ekf_3d',
         output='screen',
-        parameters=[{'include_lidar': True, 'include_aruco': False, 'include_vio': True}]
+        parameters=[{'include_lidar': False, 'include_aruco': False, 'include_vio': True}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
@@ -231,6 +231,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_steer_control",
         name="motor_steering_servoing",
+        parameters=[{'ANGLE_TOLERANCE': 50.0}],
         output="screen"
     )
 
@@ -256,7 +257,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         # nav_cameras_launch,
         # delayed_aruco_launch,
         jetson_stats,
-        # slip_control_node,
+        slip_control_node,
     ]
 
 def generate_launch_description():

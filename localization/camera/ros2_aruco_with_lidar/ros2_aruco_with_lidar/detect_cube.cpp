@@ -697,12 +697,12 @@ private:
 
             if (candidate_cloud->size() < static_cast<size_t>(min_inliers)) {
                 ++run_tags_preplane_skip;
-                RCLCPP_WARN_THROTTLE(
-                    this->get_logger(), *this->get_clock(), 2000,
-                    "[detect_cube PLANES] id=%ld skipped before plane fit: "
-                    "candidate=%zu min_inliers=%d pass_radial=%zu pass_angle=%zu",
-                    aruco_ids[aruco_idx], candidate_cloud->size(), min_inliers,
-                    stage_pass_radial, stage_pass_both);
+                // RCLCPP_WARN_THROTTLE(
+                //     this->get_logger(), *this->get_clock(), 2000,
+                //     "[detect_cube PLANES] id=%ld skipped before plane fit: "
+                //     "candidate=%zu min_inliers=%d pass_radial=%zu pass_angle=%zu",
+                //     aruco_ids[aruco_idx], candidate_cloud->size(), min_inliers,
+                //     stage_pass_radial, stage_pass_both);
                 continue;
             }
 
@@ -772,10 +772,10 @@ private:
 
             if (all_plane_inliers->empty()) {
                 ++run_tags_preplane_skip;
-                RCLCPP_WARN_THROTTLE(
-                    this->get_logger(), *this->get_clock(), 2000,
-                    "[detect_cube PLANES] id=%ld no plausible cuboid planes from %zu candidates",
-                    aruco_ids[aruco_idx], candidate_cloud->size());
+                // RCLCPP_WARN_THROTTLE(
+                //     this->get_logger(), *this->get_clock(), 2000,
+                //     "[detect_cube PLANES] id=%ld no plausible cuboid planes from %zu candidates",
+                //     aruco_ids[aruco_idx], candidate_cloud->size());
                 continue;
             }
 
@@ -993,13 +993,13 @@ private:
             run_total_side_planes += side_faces.size();
             run_total_top_planes += have_top ? 1 : 0;
 
-            RCLCPP_INFO(
-                this->get_logger(),
-                "[detect_cube PLANES] id=%ld center_base=(%.3f, %.3f, %.3f) "
-                "planes=%zu sides=%zu top=%s candidates=%zu min_inliers=%d",
-                aruco_ids[aruco_idx], center_point.x, center_point.y, center_point.z,
-                planes.size(), side_faces.size(), have_top ? "yes" : "no",
-                candidate_cloud->size(), min_inliers);
+            // RCLCPP_INFO(
+            //     this->get_logger(),
+            //     "[detect_cube PLANES] id=%ld center_base=(%.3f, %.3f, %.3f) "
+            //     "planes=%zu sides=%zu top=%s candidates=%zu min_inliers=%d",
+            //     aruco_ids[aruco_idx], center_point.x, center_point.y, center_point.z,
+            //     planes.size(), side_faces.size(), have_top ? "yes" : "no",
+            //     candidate_cloud->size(), min_inliers);
         }
 
         markers_pub_->publish(markers);
@@ -1010,19 +1010,19 @@ private:
         cloud_with_planes.header = cloud_msg.header;
         lines_pub_->publish(cloud_with_planes);
 
-        RCLCPP_INFO(
-            this->get_logger(),
-            "[detect_cube PLANES RUN] frame=%s stamp=%d.%09u tags_in_assoc=%zu "
-            "tags_skipped=%zu tags_with_center=%zu planes=%zu side_planes=%zu top_planes=%zu",
-            cloud_msg.header.frame_id.c_str(),
-            cloud_msg.header.stamp.sec,
-            static_cast<unsigned>(cloud_msg.header.stamp.nanosec),
-            aruco_ids.size(),
-            run_tags_preplane_skip,
-            run_tags_with_center,
-            run_total_planes,
-            run_total_side_planes,
-            run_total_top_planes);
+        // RCLCPP_INFO(
+        //     this->get_logger(),
+        //     "[detect_cube PLANES RUN] frame=%s stamp=%d.%09u tags_in_assoc=%zu "
+        //     "tags_skipped=%zu tags_with_center=%zu planes=%zu side_planes=%zu top_planes=%zu",
+        //     cloud_msg.header.frame_id.c_str(),
+        //     cloud_msg.header.stamp.sec,
+        //     static_cast<unsigned>(cloud_msg.header.stamp.nanosec),
+        //     aruco_ids.size(),
+        //     run_tags_preplane_skip,
+        //     run_tags_with_center,
+        //     run_total_planes,
+        //     run_total_side_planes,
+        //     run_total_top_planes);
 
         if (!cube_msg.marker_ids.empty()) {
             cube_msg.header.stamp = cloud_msg.header.stamp;

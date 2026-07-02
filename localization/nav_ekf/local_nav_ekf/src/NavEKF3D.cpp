@@ -42,6 +42,7 @@
 #include <tf2/exceptions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <nav_msgs/msg/path.hpp>
 
 
 namespace {
@@ -171,7 +172,7 @@ public:
   Eigen::Matrix3d R_orientation_rpy;    // AHRS IMU RPY variance (roll, pitch, yaw)
   Eigen::Matrix2d R_position_xy_lidar;
   Eigen::Matrix2d R_position_xy_aruco;
-  Eigen::Matrix2d R_position_xy_vio;
+  Eigen::Matrix3d R_position_xyz_vio;
   Eigen::Matrix3d R_velocity_body_xyz;
   Eigen::Matrix3d R_orientation_rpy_vio;  // VIO RPY variance (roll, pitch, yaw)
 
@@ -201,9 +202,9 @@ public:
     R_orientation_rpy_vio(1, 1) = 8e-4;   // pitch std ≈ 1.28 deg
     R_orientation_rpy_vio(2, 2) = 8e-3;   // yaw   std ≈ 2.56 deg
 
-    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.015;   // std 0.10 m
+    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.015;   // std 0.12 m
     R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.007;   // two times lower, because its a correction.
-    R_position_xy_vio    = Eigen::Matrix2d::Identity() * 0.015;
+    R_position_xyz_vio   = Eigen::Matrix3d::Identity() * 0.0225; // std 0.15m (~15cm error on 30m)
     R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.1;  // from wheel odom meas
   }
 
@@ -490,6 +491,8 @@ public:
 
     // Mahalanobis gate squared (2 DoF chi^2 95% ≈ 5.99; 99% ≈ 9.21).
     declare_parameter<double>("mahalanobis_gate_squared", 7.0);
+    // Mahalanobis gate squared (3 DoF chi^2 95% ≈ 7.815; 99% ≈ 11.345).
+    declare_parameter<double>("mahalanobis_gate_xyz_squared", 10.0);
 
     // Wheel-derived yaw-rate (ICR omega_z) variance used when blending with the
     // gyro.  Kept high relative to typical gyro noise so it only pulls the fused
@@ -504,6 +507,8 @@ public:
     include_vio_   = get_parameter("include_vio").as_bool();
     roll_pitch_lowpass_tau_ = get_parameter("roll_pitch_lowpass_tau").as_double();
     mahalanobis_gate_sq_    = get_parameter("mahalanobis_gate_squared").as_double();
+    mahalanobis_gate_xyz_sq_    = get_parameter("mahalanobis_gate_xyz_squared").as_double();
+
     wheel_omega_z_variance_ = get_parameter("wheel_omega_z_variance").as_double();
     gyro_omega_z_variance_default_ = get_parameter("gyro_omega_z_variance_default").as_double();
 
@@ -549,6 +554,7 @@ public:
         std::bind(&NavEKF3DNode::wheel_odom_callback, this, std::placeholders::_1));
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>("/fused_nav_ekf_odom", pub_qos);
+    path_pub_ = create_publisher<nav_msgs::msg::Path>("/fused_nav_ekf_path", pub_qos);
     ros_time_pub_ = create_publisher<builtin_interfaces::msg::Time>("/NAV/ros_time", pub_qos);
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -572,6 +578,7 @@ public:
     pub_ac_aruco_y_   = create_publisher<FAMsg>("/nav_ekf/autocorr/aruco_y",   latch);
     pub_ac_vio_x_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_x",     latch);
     pub_ac_vio_y_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_y",     latch);
+    pub_ac_vio_z_     = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_z",     latch);
     pub_ac_vio_roll_  = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_roll",  latch);
     pub_ac_vio_pitch_ = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_pitch", latch);
     pub_ac_vio_yaw_   = create_publisher<FAMsg>("/nav_ekf/autocorr/vio_yaw",   latch);
@@ -610,6 +617,16 @@ private:
     const double maha2 = innovation.transpose() * S.inverse() * innovation;
     return std::isfinite(maha2) && maha2 < mahalanobis_gate_sq_;
   }
+
+  bool mahalanobis_gate_xyz(double mx, double my, double mz, const Eigen::Matrix3d& R_cov) const {
+    Eigen::Vector3d innovation(mx - ekf_->state(IDX_X), my - ekf_->state(IDX_Y), mz - ekf_->state(IDX_Z));
+    Eigen::Matrix<double, 3, STATE_DIM> H = Eigen::Matrix<double, 3, STATE_DIM>::Zero();
+    H(0, IDX_X) = 1.0; H(1, IDX_Y) = 1.0; H(2, IDX_Z) = 1.0;
+    const Eigen::Matrix3d S = H * ekf_->covariance * H.transpose() + R_cov;
+    const double maha2 = innovation.transpose() * S.inverse() * innovation;
+    return std::isfinite(maha2) && maha2 < mahalanobis_gate_xyz_sq_;
+  }
+
 
   // ---------------- Sensor callbacks ----------------
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
@@ -735,9 +752,7 @@ private:
     //
     // EKF state is base_link, so convert:
     //
-    //   T_odom_base = T_odom_oakd * T_oakd_base
-    //
-    // where T_oakd_base = inverse(T_base_oakd).
+    // T_measurement = T_base -> zed_link * T_vio_message * T_zed_link -> base;
     // ============================================================
 
     const auto &p_msg = msg->pose.pose.position;
@@ -768,7 +783,7 @@ private:
         p_msg.z
     );
 
-    tf2::Transform T_odom_oakd(q_odom_oakd, p_odom_oakd);
+    tf2::Transform T_zedodom_oakd(q_odom_oakd, p_odom_oakd);
 
     // ---------------- Lookup static extrinsic base_link -> OAK-d ----------------
     geometry_msgs::msg::TransformStamped tf_base_oakd_msg;
@@ -837,8 +852,17 @@ private:
     const tf2::Transform T_base_oakd(q_base_oakd, p_base_oakd);
     const tf2::Transform T_oakd_base = T_base_oakd.inverse();
 
-    // Correct VIO camera pose into base_link pose.
-    const tf2::Transform T_odom_base = T_odom_oakd * T_oakd_base;
+    // VIO message is actually:
+    //   T_zed_odom -> zed_current
+    //
+    // EKF measurement should be:
+    //   T_odom -> base_link_current
+    //
+    // EKF odom starts at initial base_link,
+    // and zed_odom starts at initial zed/OAK-d:
+    const tf2::Transform T_odom_base =
+        T_base_oakd * T_zedodom_oakd * T_oakd_base;
+
 
     const tf2::Vector3 p_odom_base = T_odom_base.getOrigin();
     tf2::Quaternion q_odom_base = T_odom_base.getRotation();
@@ -847,13 +871,15 @@ private:
     // ---------------- Position correction using corrected base_link position ----------------
     const double mx = p_odom_base.x();
     const double my = p_odom_base.y();
+    const double mz = p_odom_base.z();
 
-    if (std::isfinite(mx) && std::isfinite(my)) {
+    if (std::isfinite(mx) && std::isfinite(my) && std::isfinite(mz)) {
       buf_vio_x_.push(mx - ekf_->state(IDX_X));
       buf_vio_y_.push(my - ekf_->state(IDX_Y));
+      buf_vio_z_.push(mz - ekf_->state(IDX_Z));
 
-      if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_vio)) {
-        ekf_->update_position_xy(mx, my, ekf_->R_position_xy_vio);
+      if (mahalanobis_gate_xyz(mx, my, mz, ekf_->R_position_xyz_vio)) {
+        ekf_->update_position_xyz(mx, my, mz, ekf_->R_position_xyz_vio);
       } else {
         RCLCPP_WARN(get_logger(), "Reject VIO base_link position (Mahalanobis)");
       }
@@ -924,6 +950,7 @@ private:
     if (include_vio_) {
       publish_autocorr(pub_ac_vio_x_,     buf_vio_x_);
       publish_autocorr(pub_ac_vio_y_,     buf_vio_y_);
+      publish_autocorr(pub_ac_vio_z_,     buf_vio_z_);
       publish_autocorr(pub_ac_vio_roll_,  buf_vio_roll_);
       publish_autocorr(pub_ac_vio_pitch_, buf_vio_pitch_);
       publish_autocorr(pub_ac_vio_yaw_,   buf_vio_yaw_);
@@ -992,6 +1019,42 @@ private:
     transform_stamped.transform.translation.z = ekf_->state(IDX_Z);
     transform_stamped.transform.rotation      = tf2::toMsg(q_out);
     tf_broadcaster_->sendTransform(transform_stamped);
+
+    // ---- Publish EKF path for RViz ----
+    geometry_msgs::msg::PoseStamped path_pose;
+    path_pose.header = odom_msg.header;
+    path_pose.pose = odom_msg.pose.pose;
+
+    bool add_pose = false;
+
+    if (path_msg_.poses.empty()) {
+      add_pose = true;
+    } else {
+      const auto &last_pose = path_msg_.poses.back().pose.position;
+      const auto &curr_pose = path_pose.pose.position;
+
+      const double dx = curr_pose.x - last_pose.x;
+      const double dy = curr_pose.y - last_pose.y;
+      const double dz = curr_pose.z - last_pose.z;
+
+      const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+      if (dist > 0.02) {  // add point every 2 cm
+        add_pose = true;
+      }
+    }
+
+    if (add_pose) {
+      path_msg_.header.stamp = current_time;
+      path_msg_.header.frame_id = "odom";
+      path_msg_.poses.push_back(path_pose);
+
+      if (path_msg_.poses.size() > max_path_poses_) {
+        path_msg_.poses.erase(path_msg_.poses.begin());
+      }
+    }
+
+    path_pub_->publish(path_msg_);
   }
 
   // ---------------- Members ----------------
@@ -1007,6 +1070,9 @@ private:
   std::shared_ptr<tf2_ros::Buffer>                              tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener>                   tf_listener_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr         ekf_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  nav_msgs::msg::Path path_msg_;
+  size_t max_path_poses_ = 9000;
   rclcpp::Publisher<builtin_interfaces::msg::Time>::SharedPtr    ros_time_pub_;
   rclcpp::TimerBase::SharedPtr                                  timer_;
   rclcpp::Time                                                  last_time_;
@@ -1034,6 +1100,7 @@ private:
   bool   include_aruco_          = false;
   bool   include_vio_            = false;
   double mahalanobis_gate_sq_    = 7.0;
+  double mahalanobis_gate_xyz_sq_=11.0;
 
   // Initial frame capture
   bool   initial_frame_set_      = false;
@@ -1044,7 +1111,7 @@ private:
   InnovBuffer buf_vel_x_, buf_vel_y_, buf_vel_z_;
   InnovBuffer buf_lidar_x_, buf_lidar_y_;
   InnovBuffer buf_aruco_x_, buf_aruco_y_;
-  InnovBuffer buf_vio_x_,   buf_vio_y_;
+  InnovBuffer buf_vio_x_,   buf_vio_y_, buf_vio_z_;
   InnovBuffer buf_vio_roll_, buf_vio_pitch_, buf_vio_yaw_;
 
   // Autocorrelation publishers
@@ -1053,7 +1120,7 @@ private:
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vel_x_,    pub_ac_vel_y_,     pub_ac_vel_z_;
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_lidar_x_,  pub_ac_lidar_y_;
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_aruco_x_,  pub_ac_aruco_y_;
-  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_x_,    pub_ac_vio_y_;
+  rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_x_,    pub_ac_vio_y_,     pub_ac_vio_z_;
   rclcpp::Publisher<FAMsg>::SharedPtr pub_ac_vio_roll_, pub_ac_vio_pitch_, pub_ac_vio_yaw_;
   rclcpp::TimerBase::SharedPtr autocorr_timer_;
 

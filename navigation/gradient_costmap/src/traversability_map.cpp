@@ -446,7 +446,7 @@ public:
         updateOccupancyGrid();
         publishMap();
         }
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Calculating traversability");
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "Calculating traversability");
     }
 
     void calculateTraversability(mapCell_t *cell)

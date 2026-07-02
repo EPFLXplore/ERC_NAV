@@ -109,17 +109,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     # Keep map frame alive from startup even when ArUco stack is delayed/disabled.
     # This publishes identity transform: map -> odom.
-    map_to_odom_identity_tf = launch_ros.actions.Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="map_to_odom_identity_tf",
-        arguments=[
-            "0.0", "0.0", "0.0",   # translation xyz
-            "0.0", "0.0", "0.0",   # rotation yaw pitch roll
-            "map", "odom"          # parent -> child
-        ],
-        output="screen"
-    )
+    # map_to_odom_identity_tf = launch_ros.actions.Node(
+    #     package="tf2_ros",
+    #     executable="static_transform_publisher",
+    #     name="map_to_odom_identity_tf",
+    #     arguments=[
+    #         "0.0", "0.0", "0.0",   # translation xyz
+    #         "0.0", "0.0", "0.0",   # rotation yaw pitch roll
+    #         "map", "odom"          # parent -> child
+    #     ],
+    #     output="screen"
+    # )
 
 
     # ------------- Ouster (ouster_ros os_driver) -------------
@@ -173,9 +173,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     custom_local_ekf_node = launch_ros.actions.Node(
         package='local_nav_ekf',
         executable='nav_ekf_3d_node',
-        name='nav_custom_ekf',
+        name='nav_custom_ekf_3d',
         output='screen',
-        parameters=[{'include_lidar': True, 'include_aruco': True, 'include_vio': True}]
+        parameters=[{'include_lidar': False, 'include_aruco': False, 'include_vio': True}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(
@@ -237,6 +237,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_steer_control",
         name="motor_steering_servoing",
+        parameters=[{'ANGLE_TOLERANCE': 0.5}],
         output="screen"
     )
 

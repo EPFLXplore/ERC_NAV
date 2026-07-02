@@ -1,300 +1,526 @@
 #!/usr/bin/env python3
 
-# Work around the removed `np.float` alias in NumPy ≥1.20
+# Work around the removed `np.float` alias in NumPy >= 1.20
 import numpy as _np
-if not hasattr(_np, 'float'):
+if not hasattr(_np, "float"):
     _np.float = float
+
+import math
 
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 from nav2_msgs.action import FollowWaypoints
-from geometry_msgs.msg import PoseStamped, TransformStamped
-import math
+from geometry_msgs.msg import PoseStamped, PoseArray, Point
+from nav_msgs.msg import Odometry, Path
+from visualization_msgs.msg import Marker, MarkerArray
+
 from tf2_ros import Buffer, TransformListener
 import tf_transformations
-from nav_msgs.msg import Odometry
-
-#to visualize waypoints in rviz2:
-# ADD imports
-from visualization_msgs.msg import Marker, MarkerArray
-from nav_msgs.msg import Path
-from geometry_msgs.msg import PoseArray, Point
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 
 class WaypointFollower(Node):
     def __init__(self):
-        super().__init__('waypoint_follower')
+        super().__init__("waypoint_follower")
 
-        self._action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
-        self.send_waypoints()
+        # =====================================================================
+        # Coordinate convention
+        # =====================================================================
+        #
+        # ROS / Nav2 / RViz use the real TF frame called:
+        #
+        #   map
+        #
+        # Your ERC map convention is only a coordinate convention, not necessarily
+        # a real TF frame.
+        #
+        # Conversion used here:
+        #
+        #   x_map   =  x_erc
+        #   y_map   = -y_erc
+        #   yaw_map = -yaw_erc
+        #
+        # and equivalently:
+        #
+        #   x_erc   =  x_map
+        #   y_erc   = -y_map
+        #   yaw_erc = -yaw_map
+        #
+        # Set this to either:
+        #
+        #   "map"      -> waypoint_list is written directly in ROS/Nav2 map coords
+        #   "erc_map"  -> waypoint_list is written in ERC coords and converted to map
+        #
+        # =====================================================================
+        self.declare_parameter("waypoint_input_coordinates", "map") # WATCH OUT FOR MEEE !!!!
+        self.declare_parameter("map_frame", "map")
+        self.declare_parameter("robot_frame", "base_link")
+        self.declare_parameter("wheel_odom_topic", "/fused_nav_ekf_odom")
+        self.declare_parameter("acceptance_radius", 0.15)
+        self.declare_parameter("visualization_rate_hz", 2.0)
 
+        self.waypoint_input_coordinates = self.get_parameter(
+            "waypoint_input_coordinates"
+        ).value
+
+        self.map_frame = self.get_parameter("map_frame").value
+        self.robot_frame = self.get_parameter("robot_frame").value
+        self.wheel_odom_topic = self.get_parameter("wheel_odom_topic").value
+        self.acceptance_radius = float(self.get_parameter("acceptance_radius").value)
+        self.visualization_rate_hz = float(
+            self.get_parameter("visualization_rate_hz").value
+        )
+
+        if self.waypoint_input_coordinates not in ["map", "erc_map"]:
+            self.get_logger().warn(
+                f"Invalid waypoint_input_coordinates='{self.waypoint_input_coordinates}'. "
+                "Using 'map'. Valid options are: 'map', 'erc_map'."
+            )
+            self.waypoint_input_coordinates = "map"
+
+        self.get_logger().info("=======================================================")
+        self.get_logger().info("Waypoint coordinate convention")
+        self.get_logger().info(f"  ROS/Nav2/RViz frame:          {self.map_frame}")
+        self.get_logger().info(
+            f"  Waypoint input coordinates:   {self.waypoint_input_coordinates}"
+        )
+        self.get_logger().info("  ERC -> map conversion:        x_map=x_erc, y_map=-y_erc, yaw_map=-yaw_erc")
+        self.get_logger().info("=======================================================")
+
+        # ---------------- TF ----------------
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        # ---------------- State ----------------
         self.waypoints = self.create_waypoints()
+        self.curr_waypoint_index = 0
+        self.current_speed = 0.0
 
-        #for waypoints visualization:
+        # ---------------- Nav2 action client ----------------
+        self._action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
+
+        # ---------------- Visualization publishers ----------------
         viz_qos = QoSProfile(
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=QoSReliabilityPolicy.RELIABLE
+            reliability=QoSReliabilityPolicy.RELIABLE,
         )
 
-        self.path_pub = self.create_publisher(Path, '/waypoints_path', viz_qos)
-        self.marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', viz_qos)
-        self.posearray_pub = self.create_publisher(PoseArray, '/waypoints_posearray', viz_qos)
+        self.path_pub = self.create_publisher(Path, "/waypoints_path", viz_qos)
+        self.marker_pub = self.create_publisher(MarkerArray, "/waypoint_markers", viz_qos)
+        self.posearray_pub = self.create_publisher(PoseArray, "/waypoints_posearray", viz_qos)
 
-        # publish once (or you can also republish on a timer if you prefer)
-        self.publish_visualizations()
-
-
-        self.curr_waypoint_index = 0
-
-        #timer to periodically print the current position and distance to the current target waypoint
-        self.timer = self.create_timer(1.0, self.print_current_position)
-
-        #subscribe to /wheel_odom to get speed
+        # ---------------- Subscriptions ----------------
         self.create_subscription(
             Odometry,
-            '/wheel_odom',
+            self.wheel_odom_topic,
             self.wheel_odom_callback,
-            10
+            10,
         )
 
-        self.current_speed = 0.0
+        # ---------------- Timers ----------------
+        viz_period = 1.0 / max(self.visualization_rate_hz, 0.1)
+        self.viz_timer = self.create_timer(viz_period, self.publish_visualizations)
+        self.status_timer = self.create_timer(1.0, self.print_current_position)
 
-    def publish_visualizations(self):
-        now = self.get_clock().now().to_msg()
+        # ---------------- Send goal ----------------
+        self.send_waypoints()
 
-        # 1) Path polyline
-        path = Path()
-        path.header.frame_id = 'map'
-        path.header.stamp = now
-        path.poses = self.waypoints  # already PoseStamped
-        self.path_pub.publish(path)
+    # =====================================================================
+    # Coordinate conversion
+    # =====================================================================
+    def erc_to_map(self, x_erc, y_erc, yaw_erc):
+        """
+        Convert ERC-map convention coordinates into ROS/Nav2 map coordinates.
+        """
+        x_map = x_erc
+        y_map = -y_erc
+        yaw_map = -yaw_erc
+        return x_map, y_map, yaw_map
 
-        # 2) Markers: arrows at each waypoint, index labels, and a connecting line
-        marr = MarkerArray()
+    def map_to_erc(self, x_map, y_map, yaw_map):
+        """
+        Convert ROS/Nav2 map coordinates into ERC-map convention coordinates.
+        """
+        x_erc = x_map
+        y_erc = -y_map
+        yaw_erc = -yaw_map
+        return x_erc, y_erc, yaw_erc
 
-        # Connecting line
-        line = Marker()
-        line.header.frame_id = 'map'
-        line.header.stamp = now
-        line.ns = 'waypoints_line'
-        line.id = 0
-        line.type = Marker.LINE_STRIP
-        line.action = Marker.ADD
-        line.scale.x = 0.08  # line width (m)
-        line.color.g = 1.0
-        line.color.a = 0.8
-        line.pose.orientation.w = 1.0
-        for p in self.waypoints:
-            line.points.append(Point(x=p.pose.position.x, y=p.pose.position.y, z=0.05))
-        marr.markers.append(line)
+    def input_to_map(self, x_in, y_in, yaw_in):
+        """
+        Convert the user-entered waypoint list into the actual ROS/Nav2 map frame.
+        """
+        if self.waypoint_input_coordinates == "erc_map":
+            return self.erc_to_map(x_in, y_in, yaw_in)
 
-        # Waypoint arrows + labels
-        for i, ps in enumerate(self.waypoints, start=1):
-            # Arrow showing orientation
-            arrow = Marker()
-            arrow.header.frame_id = 'map'
-            arrow.header.stamp = now
-            arrow.ns = 'waypoint_arrows'
-            arrow.id = i
-            arrow.type = Marker.ARROW
-            arrow.action = Marker.ADD
-            arrow.pose = ps.pose
-            arrow.scale.x = 0.4   # shaft length
-            arrow.scale.y = 0.2  # shaft diameter
-            arrow.scale.z = 0.2  # head diameter
-            arrow.color.r = 0.1
-            arrow.color.g = 0.8
-            arrow.color.b = 1.0
-            arrow.color.a = 1.0
-            marr.markers.append(arrow)
+        return x_in, y_in, yaw_in
 
-            # Text label with index
-            text = Marker()
-            text.header.frame_id = 'map'
-            text.header.stamp = now
-            text.ns = 'waypoint_labels'
-            text.id = 1000 + i
-            text.type = Marker.TEXT_VIEW_FACING
-            text.action = Marker.ADD
-            text.pose.position.x = ps.pose.position.x
-            text.pose.position.y = ps.pose.position.y
-            text.pose.position.z = ps.pose.position.z + 0.5
-            text.scale.z = 0.4  # text height (m)
-            text.color.r = 1.0
-            text.color.g = 1.0
-            text.color.b = 1.0
-            text.color.a = 1.0
-            text.text = f'{i}'
-            marr.markers.append(text)
-
-        self.marker_pub.publish(marr)
-
-        # 3) PoseArray (optional)
-        pa = PoseArray()
-        pa.header.frame_id = 'map'
-        pa.header.stamp = now
-        pa.poses = [p.pose for p in self.waypoints]
-        self.posearray_pub.publish(pa)
-
-
-    def wheel_odom_callback(self, msg):
-        # Extract the linear velocity from the odometry message
-        self.current_speed = msg.twist.twist.linear.x
-        
-    def print_current_position(self):
-        try:
-            # Get the transform from 'map' to 'base_link'
-            transform = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
-            position = transform.transform.translation
-            self.get_logger().info(f'POSITION in erc_map: X={position.x}, Y={(-1.0)*position.y}')
-        except Exception as e:
-            self.get_logger().error(f'could NOT get map->base_link TF: {e}')
-
-        #check the distance to the current target waypoint
-        if self.curr_waypoint_index < len(self.create_waypoints()):
-            target_waypoint = self.waypoints[self.curr_waypoint_index]
-            target_position = target_waypoint.pose.position
-            distance = math.sqrt((target_position.x - position.x) ** 2 + (target_position.y - position.y) ** 2)
-            self.get_logger().info(f'Distance to waypoint {self.curr_waypoint_index}: {distance:.2f} meters')
-
-        else:
-            self.get_logger().info('***** !!!! NO MORE WAYPOINTS, TASK FINISHED !!!! ******')
-
-        #compute ETA (Estimated Time of Arrival) to the current target waypoint
-        if abs(self.current_speed) > 0:
-            eta = abs(distance / self.current_speed)
-            self.get_logger().info(f'ETA to waypoint {self.curr_waypoint_index}: {eta:.2f} seconds')
-
-
-    def send_waypoints(self):
-        # Wait for the action server
-        self._action_client.wait_for_server()
-
-        # Create the goal message
-        goal_msg = FollowWaypoints.Goal()
-        goal_msg.poses = self.create_waypoints()
-
-        # Send goal
-        self._send_goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)
-        self._send_goal_future.add_done_callback(self.goal_response_callback)
-
-
+    # =====================================================================
+    # Waypoints
+    # =====================================================================
     def create_waypoints(self):
         poses = []
 
-        def make_pose(x, y, yaw_rad):
+        def make_pose_in_ros_map(x_map, y_map, yaw_map):
             pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            pose.pose.position.x = x
-            pose.pose.position.y = y
+            pose.header.frame_id = self.map_frame
+            pose.pose.position.x = float(x_map)
+            pose.pose.position.y = float(y_map)
             pose.pose.position.z = 0.0
 
-            # Convert yaw (in degrees) to quaternion
-
-            q = tf_transformations.quaternion_from_euler(0, 0, yaw_rad)
+            q = tf_transformations.quaternion_from_euler(0.0, 0.0, yaw_map)
             pose.pose.orientation.x = q[0]
             pose.pose.orientation.y = q[1]
             pose.pose.orientation.z = q[2]
             pose.pose.orientation.w = q[3]
+
             return pose
 
-        # Hardcoded waypoints (x, y, yaw_rad) in the ERC map frame !!!
-        # THE LAST WAYPOINT NEEDS TO BE THE START POSITION BECAUSE WE NEED TO GO THERE TO COMPLETE THE TASK
+        # =====================================================================
+        # Hardcoded waypoints
+        # =====================================================================
+        #
+        # These values are interpreted according to:
+        #
+        #   self.waypoint_input_coordinates
+        #
+        # If waypoint_input_coordinates == "map":
+        #   waypoint_list contains:
+        #       x_map, y_map, yaw_map
+        #
+        # If waypoint_input_coordinates == "erc_map":
+        #   waypoint_list contains:
+        #       x_erc, y_erc, yaw_erc
+        #
+        # The values actually sent to Nav2 are always converted to ROS/Nav2 map.
+        #
+        # =====================================================================
 
-
-        # waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
-        #     (12.328, 6.779,    0.0),
-        #     (6.807, 10.375, -3.141),
-        #     (15.116, -3.085, -2.61),
-        #     (19.727, 5.238, 0.785),
-        #     (18.6625, 10.8159, 1.57)
-        # ]
-
-        # waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!!
-        #     (13.2623, 8.671, 3.1415),
-        #     (6.8073, 10.1746, 2.8),
-        #     (0.1, 8.37, -1.57),
-        #     (1.4, 1.0, -0.17),
-        #     (10.0126, 0.0, 0.0),
-        #     (15.66, -0.76, 0.0),
-        #     (25.2349, 2.0235, 0.0),
-        #     (20.0, 5.75, 0.785),
-        #     (24.4818, 7.9578, 0.785),
-        #     (20.0, 5.75, 0.785),
-        #     (18.6625, 10.8159, 1.57)
-        # ]
-
-        # waypoint_list = [ #(x, y, yaw) in the ERC_MAP FRAME !!!!! y is flip
-        #     (3.0, 0.0, 0.0),
-        #     (3.0, -4.0, 0.0),
-        #     (3.0, 0.0, 0.0),
-        #     (0.0, 0.0, 0.0),
-        # ]
-
-        waypoint_list = [ 
-            (11.2, 5.2, 0.0),
-            (11.2, 7.2, 0.0),
-            (2.94, 7.2, 0.0),
-            (12.1, 7.2, 0.0),
-            (9.8, 20.8, 0.0),
-            (8.1, 24.05, 0.0),
-            (5.0, 22.25, 0.0),
-            (8.1, 24.05, 0.0),
-            (9.8, 20.8, 0.0),
-            (12.1, 7.2, 0.0),
-            (11.2, 7.2, 0.0),
-            (11.2, 5.2, 0.0),
-            (0.0, 0.0, 0.0)
+        waypoint_list = [
+            (6.6, 0.0, 0.0),
+            (6.6, 4.2, 0.0),
+            (13.3, 4.9, 0.0),
+            (13.3, 14.1, 0.0),
+            (2.8, 14.1, 0.0),
+            (2.8, 11.0, 0.0),
+            (-0.7, 11.0, 0.0),
+            (0.0, 0.0, 0.0),
         ]
 
+        for i, (x_in, y_in, yaw_in) in enumerate(waypoint_list):
+            x_map, y_map, yaw_map = self.input_to_map(x_in, y_in, yaw_in)
+            x_erc, y_erc, yaw_erc = self.map_to_erc(x_map, y_map, yaw_map)
 
+            poses.append(make_pose_in_ros_map(x_map, y_map, yaw_map))
 
-        for x, y, yaw in waypoint_list:
-            poses.append(make_pose(x, y, yaw)) # THIS IS BRUGG
-            # poses.append(make_pose(x, (-1.0)*y, (-1.0)*yaw)) THIS IS ERC
-            self.get_logger().info(f"waypoint in map NOT erc_map: X={x}, Y={-y}, yaw : {-yaw}")
+            self.get_logger().info(
+                f"WP {i:02d} | "
+                f"input[{self.waypoint_input_coordinates}]: "
+                f"x={x_in:.2f}, y={y_in:.2f}, yaw={yaw_in:.2f} | "
+                f"sent_to_nav2[map]: "
+                f"x={x_map:.2f}, y={y_map:.2f}, yaw={yaw_map:.2f} | "
+                f"erc_equivalent: "
+                f"x={x_erc:.2f}, y={y_erc:.2f}, yaw={yaw_erc:.2f}"
+            )
 
         return poses
 
+    # =====================================================================
+    # Visualization helpers
+    # =====================================================================
+    def make_color(self, marker, r, g, b, a):
+        marker.color.r = float(r)
+        marker.color.g = float(g)
+        marker.color.b = float(b)
+        marker.color.a = float(a)
+
+    def waypoint_color(self, index):
+        if index < self.curr_waypoint_index:
+            return 0.0, 1.0, 0.0, 0.65      # visited: green
+        if index == self.curr_waypoint_index:
+            return 1.0, 0.7, 0.0, 1.0       # current: orange
+        return 0.1, 0.8, 1.0, 0.80          # future: cyan
+
+    def get_robot_position(self):
+        tf = self.tf_buffer.lookup_transform(
+            self.map_frame,
+            self.robot_frame,
+            rclpy.time.Time(),
+        )
+        return tf.transform.translation
+
+    def publish_visualizations(self):
+        now = self.get_clock().now().to_msg()
+
+        # ------------------------------------------------------------
+        # 1) Path polyline, always in ROS/Nav2 map frame
+        # ------------------------------------------------------------
+        path = Path()
+        path.header.frame_id = self.map_frame
+        path.header.stamp = now
+
+        for wp in self.waypoints:
+            ps = PoseStamped()
+            ps.header.frame_id = self.map_frame
+            ps.header.stamp = now
+            ps.pose = wp.pose
+            path.poses.append(ps)
+
+        self.path_pub.publish(path)
+
+        # ------------------------------------------------------------
+        # 2) PoseArray, always in ROS/Nav2 map frame
+        # ------------------------------------------------------------
+        pose_array = PoseArray()
+        pose_array.header.frame_id = self.map_frame
+        pose_array.header.stamp = now
+        pose_array.poses = [wp.pose for wp in self.waypoints]
+        self.posearray_pub.publish(pose_array)
+
+        # ------------------------------------------------------------
+        # 3) MarkerArray, always rendered in ROS/Nav2 map frame
+        # ------------------------------------------------------------
+        markers = MarkerArray()
+
+        # Delete old markers first, useful if waypoint count changes
+        delete_all = Marker()
+        delete_all.header.frame_id = self.map_frame
+        delete_all.header.stamp = now
+        delete_all.action = Marker.DELETEALL
+        markers.markers.append(delete_all)
+
+        # ------------------------------------------------------------
+        # Route line through all waypoints
+        # ------------------------------------------------------------
+        route_line = Marker()
+        route_line.header.frame_id = self.map_frame
+        route_line.header.stamp = now
+        route_line.ns = "waypoints_route_line"
+        route_line.id = 0
+        route_line.type = Marker.LINE_STRIP
+        route_line.action = Marker.ADD
+        route_line.pose.orientation.w = 1.0
+        route_line.scale.x = 0.08
+
+        self.make_color(route_line, 0.0, 0.8, 1.0, 0.75)
+
+        for wp in self.waypoints:
+            route_line.points.append(
+                Point(
+                    x=wp.pose.position.x,
+                    y=wp.pose.position.y,
+                    z=0.05,
+                )
+            )
+
+        markers.markers.append(route_line)
+
+        # ------------------------------------------------------------
+        # Waypoint markers
+        # ------------------------------------------------------------
+        for i, wp in enumerate(self.waypoints):
+            r, g, b, a = self.waypoint_color(i)
+            is_current = i == self.curr_waypoint_index
+
+            x_map = wp.pose.position.x
+            y_map = wp.pose.position.y
+
+            # ---------------- Orientation arrow ----------------
+            arrow = Marker()
+            arrow.header.frame_id = self.map_frame
+            arrow.header.stamp = now
+            arrow.ns = "waypoint_arrows"
+            arrow.id = 200 + i
+            arrow.type = Marker.ARROW
+            arrow.action = Marker.ADD
+            arrow.pose = wp.pose
+
+            if is_current:
+                arrow.scale.x = 0.9
+                arrow.scale.y = 0.25
+                arrow.scale.z = 0.25
+            else:
+                arrow.scale.x = 0.45
+                arrow.scale.y = 0.15
+                arrow.scale.z = 0.15
+
+            self.make_color(arrow, r, g, b, a)
+            markers.markers.append(arrow)
+
+            # ---------------- Acceptance radius ----------------
+            radius = Marker()
+            radius.header.frame_id = self.map_frame
+            radius.header.stamp = now
+            radius.ns = "waypoint_acceptance_radius"
+            radius.id = 400 + i
+            radius.type = Marker.CYLINDER
+            radius.action = Marker.ADD
+            radius.pose.position.x = x_map
+            radius.pose.position.y = y_map
+            radius.pose.position.z = 0.01
+            radius.pose.orientation.w = 1.0
+            radius.scale.x = 2.0 * self.acceptance_radius
+            radius.scale.y = 2.0 * self.acceptance_radius
+            radius.scale.z = 0.02
+
+            self.make_color(radius, r, g, b, 0.18)
+            markers.markers.append(radius)
+
+        # ------------------------------------------------------------
+        # Rover-to-current-waypoint line + distance/ETA text
+        # ------------------------------------------------------------
+        try:
+            robot_pos = self.get_robot_position()
+
+            if self.curr_waypoint_index < len(self.waypoints):
+                target = self.waypoints[self.curr_waypoint_index].pose.position
+
+                # ---------------- Line to current target ----------------
+                to_target = Marker()
+                to_target.header.frame_id = self.map_frame
+                to_target.header.stamp = now
+                to_target.ns = "rover_to_current_waypoint"
+                to_target.id = 900
+                to_target.type = Marker.LINE_STRIP
+                to_target.action = Marker.ADD
+                to_target.pose.orientation.w = 1.0
+                to_target.scale.x = 0.06
+
+                self.make_color(to_target, 1.0, 1.0, 0.0, 1.0)
+
+                to_target.points.append(
+                    Point(
+                        x=robot_pos.x,
+                        y=robot_pos.y,
+                        z=0.25,
+                    )
+                )
+                to_target.points.append(
+                    Point(
+                        x=target.x,
+                        y=target.y,
+                        z=0.25,
+                    )
+                )
+
+                markers.markers.append(to_target)
+
+        except Exception:
+            # Avoid spamming logs here because visualization runs often.
+            pass
+
+        self.marker_pub.publish(markers)
+
+    # =====================================================================
+    # Status / odometry
+    # =====================================================================
+    def wheel_odom_callback(self, msg):
+        vx = msg.twist.twist.linear.x
+        vy = msg.twist.twist.linear.y
+        self.current_speed = math.sqrt(vx * vx + vy * vy)
+
+    def print_current_position(self):
+        try:
+            position = self.get_robot_position()
+
+        except Exception as e:
+            self.get_logger().error(
+                f"Could not get {self.map_frame}->{self.robot_frame} TF: {e}"
+            )
+            return
+
+        x_erc, y_erc, _ = self.map_to_erc(position.x, position.y, 0.0)
+
+        self.get_logger().info(
+            f"ROVER POSITION | "
+            f"map: x={position.x:.2f}, y={position.y:.2f} | "
+            f"erc_map: x={x_erc:.2f}, y={y_erc:.2f}"
+        )
+
+        if self.curr_waypoint_index < len(self.waypoints):
+            target = self.waypoints[self.curr_waypoint_index].pose.position
+
+            dx = target.x - position.x
+            dy = target.y - position.y
+            distance = math.sqrt(dx * dx + dy * dy)
+
+            target_x_erc, target_y_erc, _ = self.map_to_erc(
+                target.x,
+                target.y,
+                0.0,
+            )
+
+            self.get_logger().info(
+                f"TARGET WP {self.curr_waypoint_index} | "
+                f"map: x={target.x:.2f}, y={target.y:.2f} | "
+                f"erc_map: x={target_x_erc:.2f}, y={target_y_erc:.2f} | "
+                f"distance={distance:.2f} m"
+            )
+
+            if self.current_speed > 0.03:
+                eta = distance / self.current_speed
+                self.get_logger().info(
+                    f"ETA to waypoint {self.curr_waypoint_index}: {eta:.2f} s"
+                )
+            else:
+                self.get_logger().info("ETA: rover speed too low")
+
+        else:
+            self.get_logger().info("***** NO MORE WAYPOINTS, TASK FINISHED *****")
+
+    # =====================================================================
+    # Nav2 FollowWaypoints action
+    # =====================================================================
+    def send_waypoints(self):
+        self.get_logger().info("Waiting for FollowWaypoints action server...")
+        self._action_client.wait_for_server()
+
+        goal_msg = FollowWaypoints.Goal()
+        goal_msg.poses = self.waypoints
+
+        self.get_logger().info(
+            f"Sending {len(self.waypoints)} waypoints to Nav2 in ROS frame '{self.map_frame}'."
+        )
+
+        self._send_goal_future = self._action_client.send_goal_async(
+            goal_msg,
+            feedback_callback=self.feedback_callback,
+        )
+        self._send_goal_future.add_done_callback(self.goal_response_callback)
+
     def feedback_callback(self, feedback):
         current_wp = feedback.feedback.current_waypoint
-        self.curr_waypoint_index = current_wp
-        #self.get_logger().info(f'Reached waypoint index: {current_wp}')
+        self.curr_waypoint_index = int(current_wp)
 
     def goal_response_callback(self, future):
         goal_handle = future.result()
+
         if not goal_handle.accepted:
-            self.get_logger().warn('Goal was rejected')
+            self.get_logger().warn("Goal was rejected")
             return
 
-        self.get_logger().info('Goal accepted')
+        self.get_logger().info("Goal accepted")
         self._get_result_future = goal_handle.get_result_async()
         self._get_result_future.add_done_callback(self.get_result_callback)
 
     def get_result_callback(self, future):
         result = future.result().result
-        self.get_logger().info(f'FollowWaypoints finished with result code: {result}')
+        self.get_logger().info(f"FollowWaypoints finished with result: {result}")
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = WaypointFollower()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
 
-if __name__ == '__main__':
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
     main()
-
-
-
-############################################################################
-
-

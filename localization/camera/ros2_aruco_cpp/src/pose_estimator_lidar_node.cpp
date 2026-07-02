@@ -1298,7 +1298,9 @@ private:
                     mB.bearing_rad * 180.0 / M_PI,
                     std::atan2(B.second - y0, B.first - x0) * 180.0 / M_PI,
                     yawB * 180.0 / M_PI);
-                yaw_estimate_ = wrap(0.5 * (yawA + yawB));
+                // yaw_estimate_ = wrap(0.5 * (yawA + yawB));
+                //circular mean
+                yaw_estimate_ = circular_mean_yaw({yawA, yawB});
                 x_estimate_ = x0;
                 y_estimate_ = y0;
                 measured_new_yaw_ = true;

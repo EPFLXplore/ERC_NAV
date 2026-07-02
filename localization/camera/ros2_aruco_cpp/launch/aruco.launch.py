@@ -45,6 +45,7 @@ def generate_launch_description():
             package='ros2_aruco_cpp',
             executable='pose_estimator_lidar_node',
             name='pose_estimation_node_with_lidar',
+            parameters=[config],
         ),
 
         # WARNING BAD FOR NAV TASK, NEED TO INITITALIZE WITH ARUCOS!!!! 

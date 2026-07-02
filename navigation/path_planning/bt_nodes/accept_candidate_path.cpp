@@ -55,9 +55,15 @@ BT::NodeStatus AcceptCandidatePath::tick()
     return BT::NodeStatus::FAILURE;
   }
 
-  if (!has_current_path || current_path.poses.size() < 2) {
+    if (!has_current_path || current_path.poses.size() < 2) {
     setOutput("output_path", candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate: no usable current path");
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  if (goalChanged(current_path, candidate_path)) {
+    setOutput("output_path", candidate_path);
+    RCLCPP_INFO(logger_, "Accept candidate: goal changed");
     return BT::NodeStatus::SUCCESS;
   }
 
@@ -184,7 +190,24 @@ double AcceptCandidatePath::angleDiff(double a, double b) const
   return normalizeAngle(a - b);
 }
 
+bool AcceptCandidatePath::goalChanged(
+  const nav_msgs::msg::Path & current_path,
+  const nav_msgs::msg::Path & candidate_path) const
+{
+  if (current_path.poses.empty() || candidate_path.poses.empty()) {
+    return true;
+  }
+
+  const auto & a = current_path.poses.back().pose.position;
+  const auto & b = candidate_path.poses.back().pose.position;
+
+  const double dist = std::hypot(b.x - a.x, b.y - a.y);
+  return dist > 0.25;
+} 
+
 }  // namespace path_planning
+
+
 
 BT_REGISTER_NODES(factory)
 {
@@ -195,3 +218,4 @@ BT_REGISTER_NODES(factory)
     "RestampGoal");
 
 }
+

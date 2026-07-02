@@ -36,6 +36,10 @@ private:
     const nav_msgs::msg::Path & current_path,
     const nav_msgs::msg::Path & candidate_path);
 
+  bool goalChanged(
+    const nav_msgs::msg::Path & current_path,
+    const nav_msgs::msg::Path & candidate_path) const;
+
   rclcpp::Node::SharedPtr node_;
   rclcpp::Logger logger_{rclcpp::get_logger("AcceptCandidatePath")};
 };
