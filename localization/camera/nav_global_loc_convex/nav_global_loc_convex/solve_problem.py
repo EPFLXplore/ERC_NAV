@@ -43,12 +43,12 @@ class ConvexRangeBearing(Node):
         #     6: np.array([-1.70, -0.55]),
         # }
         self.anchor = {
-            1: np.array([4.11, -0.8]),
-            6: np.array([4.0, 1.03]),
-            2: np.array([-2.70,2.81]),
-            7: np.array([-3.41, -3.0]),
+            0: np.array([-2.75, 1.0]),
+            2: np.array([1.15, -1.65]),
+            7: np.array([-2.75, -0.5]),  
+            1: np.array([2, 1.5]),
+  
         }
-
         qos = rclpy.qos.QoSProfile(
             reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
             durability=rclpy.qos.DurabilityPolicy.VOLATILE,

@@ -32,6 +32,8 @@ def _aruco_params_yaml_path():
 def generate_launch_description():
     package_dir = get_package_share_directory('ros2_aruco_with_lidar')
     config = _aruco_params_yaml_path()
+    cpp_share = get_package_share_directory('ros2_aruco_cpp')
+    camera_config_dir = os.path.join(cpp_share, 'config')
     # rviz_config_file = os.path.join(package_dir, 'rviz', 'dual_cam_setup.rviz')
 
     # rviz = LaunchConfiguration('rviz', default='false')
@@ -66,15 +68,36 @@ def generate_launch_description():
 
 
     return LaunchDescription([
+        # ---- ArUco camera detection (from ros2_aruco_cpp) ----
+        Node(
+            package='ros2_aruco_cpp',
+            executable='multiview_aruco_node',
+            name='aruco_node',
+            parameters=[config, {
+                'camera_config_dir': camera_config_dir,
+            }],
+            output='screen',
+        ),
+
+        # ---- Pose estimation / triangulation (from ros2_aruco_cpp) ----
+        Node(
+            package='ros2_aruco_cpp',
+            executable='pose_estimator_lidar_node',
+            name='pose_estimation_node_with_lidar',
+            parameters=[config],
+            output='screen',
+        ),
+
+        # ---- Lidar filter params ----
         # lidar filter
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
-        DeclareLaunchArgument('tolerance_radius', default_value='0.8'), #1.5
+        DeclareLaunchArgument('tolerance_radius', default_value='1.0'), #1.5 HAS TO BE A TYPE DOUBLE
         DeclareLaunchArgument('hauteur_z_min', default_value='0.0'),
         DeclareLaunchArgument('hauteur_z_max', default_value='0.75'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
-        DeclareLaunchArgument('max_iterations', default_value='100'),
+        DeclareLaunchArgument('max_iterations', default_value='300'),
         DeclareLaunchArgument('t', default_value='0.25'),
-        DeclareLaunchArgument('min_inliers', default_value='12'),
+        DeclareLaunchArgument('min_inliers', default_value='20'),
         DeclareLaunchArgument('max_lines', default_value='3'),
         DeclareLaunchArgument('max_planes', default_value='3'),
         DeclareLaunchArgument('plane_group_centroid_max_m', default_value='0.80'),
@@ -88,10 +111,10 @@ def generate_launch_description():
         DeclareLaunchArgument('max_face_diagonal_multiplier', default_value='1.1'),
         DeclareLaunchArgument('max_center_error_m', default_value='3.0'),
         DeclareLaunchArgument('accept_best_plane_fallback', default_value='true'),
-        DeclareLaunchArgument('process_rate_hz', default_value='8.0'),
+        DeclareLaunchArgument('process_rate_hz', default_value='13.0'),
         DeclareLaunchArgument('marker_lifetime_sec', default_value='1.0'),
         # before ransac
-        DeclareLaunchArgument('max_distance_from_aruco', default_value='0.6'),
+        DeclareLaunchArgument('max_distance_from_aruco', default_value='1.0'), #has to be a type double
         DeclareLaunchArgument('angular_tolerance_deg', default_value='20.0'),
 
         Node(
@@ -99,6 +122,9 @@ def generate_launch_description():
             executable='detect_cube',
             name='detect_cube',
             output='screen',
+            remappings=[
+                ('/perception/lidar_cube_markers', '/cube_markers'),
+            ],
             parameters=[{
                 'distance_threshold_inliers': distance_threshold_inliers,
                 'max_iterations': max_iterations,
@@ -131,6 +157,9 @@ def generate_launch_description():
             executable='lidar_phi_filter_node',
             name='lidar_phi_filter_node',
             output='screen',
+            remappings=[
+                ('/perception/camera_forbidden_sector_cube_markers', '/cube_markers_phi'),
+            ],
             parameters=[
                 config,
                 {

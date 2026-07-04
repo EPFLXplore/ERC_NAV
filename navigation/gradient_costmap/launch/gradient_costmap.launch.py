@@ -53,125 +53,154 @@ def generate_launch_description():
             "gradient_mode",
             "local",
             "Gradient map mode: local uses base_link-centered local map; "
-            "global uses map-frame fixed origin and /cloud_pcd.",
+            "global uses map-frame fixed origin and /cloud_pcd. Use local for live robot-relative "
+            "mapping; use global for fixed/offline map generation.",
         ),
 
         arg(
             "lidar_points_topic",
             "/ouster/points",
-            "Input point cloud topic for traversability_filter.",
+            "Input point cloud topic for traversability_filter. Change this to select which raw LiDAR "
+            "cloud is filtered; it does not change map aggressiveness.",
         ),
         arg(
             "filtered_cloud_topic",
             "/filtered_pointcloud",
-            "Output of traversability_filter and input of traversability_map.",
+            "Output of traversability_filter and input of traversability_map. Change this only when "
+            "remapping the intermediate filtered cloud topic.",
         ),
         arg(
             "output_elevation_topic",
             "/elevation_pointcloud",
-            "Output elevation pointcloud topic.",
+            "Output elevation pointcloud topic. Change this to rename the visualization/debug cloud; "
+            "it does not change map computation.",
         ),
 
         arg(
             "source_frame",
             "Lidar_v2_1",
-            "Fallback lidar frame if message frame_id is missing.",
+            "Fallback lidar frame if message frame_id is missing. Wrong values cause TF lookup "
+            "failures or shifted maps; no higher/lower tuning effect.",
         ),
         arg(
             "use_msg_frame_id",
             "true",
-            "Use incoming pointcloud frame_id as source frame in filter transform.",
+            "Use incoming pointcloud frame_id as source frame in filter transform. true trusts the "
+            "message header; false always uses source_frame.",
         ),
 
         arg(
             "fixed_origin_x",
             "-40.0",
-            "Fixed origin x used in global mode.",
+            "Fixed origin x used in global mode. Higher shifts the published grid origin toward +x; "
+            "lower shifts it toward -x.",
         ),
         arg(
             "fixed_origin_y",
             "-40.0",
-            "Fixed origin y used in global mode.",
+            "Fixed origin y used in global mode. Higher shifts the published grid origin toward +y; "
+            "lower shifts it toward -y.",
         ),
 
         arg(
             "filter_point_stride",
             "3",
-            "traversability_filter: process every k-th point after optional voxel downsampling.",
+            "traversability_filter: process every k-th point after optional voxel downsampling. "
+            "Higher is faster but less detailed; lower keeps more points but costs more CPU.",
         ),
         arg(
             "filter_sensor_voxel_leaf_m",
             "0.1",
             "traversability_filter: voxel grid leaf size in meters in the incoming lidar frame. "
+            "Higher downsamples more and smooths detail; lower preserves detail but costs more CPU. "
             "0.0 disables voxel downsampling.",
         ),
         arg(
             "filter_max_lidar_z_m",
-            "1.0",
-            "traversability_filter: discard points above this z value in LiDAR frame.",
+            "0.5",
+            "traversability_filter: discard points above this z value in LiDAR frame. Higher keeps "
+            "taller points/obstacles; lower removes more high returns.",
         ),
 
         arg(
             "local_inflation_radius",
-            "2",
-            "Inflation radius in cells used when gradient_mode=local.",
+            "5",
+            "Inflation radius in cells used when gradient_mode=local. Higher expands obstacles/costs "
+            "farther; lower keeps inflated costs tighter.",
         ),
         arg(
             "local_inflation_factor",
-            "6.0",
-            "Inflation decay factor used when gradient_mode=local.",
+            "5.0",
+            "Inflation decay factor used when gradient_mode=local. Higher makes inflated cost decay "
+            "faster with distance; lower spreads stronger costs farther.",
         ),
         arg(
             "local_sigmoid_k",
-            "4.0",
-            "Sigmoid slope parameter used when gradient_mode=local.",
+            "15.0", #4.0
+            "Sigmoid slope parameter used when gradient_mode=local. Higher makes the cost transition "
+            "sharper around x0; lower makes traversability costs more gradual.",
         ),
         arg(
             "local_sigmoid_x0",
-            "0.95",
-            "Sigmoid midpoint parameter used when gradient_mode=local.",
+            "0.5", #0.95
+            "Sigmoid midpoint parameter used when gradient_mode=local. Higher delays high occupancy "
+            "until worse terrain; lower marks terrain costly sooner.",
+        ),
+        arg(
+            "output_lookup_radius_cells",
+            "15",
+            "traversability_map: observed-cell lookup radius in grid cells when publishing output maps. "
+            "Higher fills small observation/grid gaps more aggressively; lower leaves more unknown cells.",
         ),
 
         arg(
             "global_inflation_radius",
             "1",
-            "Inflation radius in cells used when gradient_mode=global.",
+            "Inflation radius in cells used when gradient_mode=global. Higher expands obstacles/costs "
+            "farther; lower keeps inflated costs tighter.",
         ),
         arg(
             "global_inflation_factor",
             "1.0",
-            "Inflation decay factor used when gradient_mode=global.",
+            "Inflation decay factor used when gradient_mode=global. Higher makes inflated cost decay "
+            "faster with distance; lower spreads stronger costs farther.",
         ),
         arg(
             "global_sigmoid_k",
             "1.0",
-            "Sigmoid slope parameter used when gradient_mode=global.",
+            "Sigmoid slope parameter used when gradient_mode=global. Higher makes the cost transition "
+            "sharper around x0; lower makes traversability costs more gradual.",
         ),
         arg(
             "global_sigmoid_x0",
             "0.60",
-            "Sigmoid midpoint parameter used when gradient_mode=global.",
+            "Sigmoid midpoint parameter used when gradient_mode=global. Higher delays high occupancy "
+            "until worse terrain; lower marks terrain costly sooner.",
         ),
 
         arg(
             "neighbor_search_radius_m",
-            "1.2",
-            "Neighborhood radius in meters for plane fit per cell.",
+            "1.6",
+            "Neighborhood radius in meters for plane fit per cell. Higher smooths over a larger area "
+            "and is more stable but less local; lower reacts to small terrain changes but is noisier.",
         ),
         arg(
             "slope_angle_limit_deg",
             "35.0",
-            "Slope angle in degrees at which slope cost saturates.",
+            "Slope angle in degrees at which slope cost saturates. Higher tolerates steeper slopes "
+            "before max cost; lower penalizes slopes earlier.",
         ),
         arg(
             "roughness_norm_m",
             "0.1",
-            "Roughness normalization in meters.",
+            "Roughness normalization in meters. Higher tolerates rougher terrain before max cost; "
+            "lower penalizes small height variation sooner.",
         ),
         arg(
             "min_neighbor_points",
-            "3",
-            "Minimum neighbor samples for traversability PCA.",
+            "15",
+            "Minimum neighbor samples for traversability PCA. Higher requires more support and rejects "
+            "sparse/noisy cells; lower computes costs with fewer points but is less reliable.",
         ),
     ]
 
@@ -234,6 +263,7 @@ def generate_launch_description():
             "local_sigmoid_x0",
             float,
         ),
+        "output_lookup_radius_cells": typed("output_lookup_radius_cells", int),
 
         "neighbor_search_radius_m": typed("neighbor_search_radius_m", float),
         "slope_angle_limit_deg": typed("slope_angle_limit_deg", float),

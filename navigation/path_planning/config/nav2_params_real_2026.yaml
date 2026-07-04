@@ -258,8 +258,8 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 0.5
-      publish_frequency: 0.5
+      update_frequency: 2.0
+      publish_frequency: 2.0
       global_frame: map
       # global_frame: odom
       robot_base_frame: base_link
@@ -280,9 +280,11 @@ global_costmap:
       # Current setup: global costmap is loaded from saved RAW map file through custom gradient layer,
       # not from StaticLayer and not from a live topic.
       plugins: ["gradient_layer", "live_local_patch_layer"]
+      # plugins: ["gradient_layer"]
+      #Keep this order : gradient layer then live local patch layer otherwise the blank map will overlay it
       gradient_layer:
         plugin: "gradient_layer::GradientLayer"
-        enabled: true
+        enabled: false
         use_map_file: true
         map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml"
         map_flip_x: false
@@ -299,6 +301,11 @@ global_costmap:
         map_subscribe_reliable: true
         expand_update_bounds: true
         transform_tolerance: 0.5
+
+        persistent_patch: true
+        persistence_timeout: 8.0
+        persistence_min_cost: 1
+
       # live_gradient_layer:
       #   plugin: "gradient_layer::GradientLayer"
       #   enabled: true

@@ -100,7 +100,6 @@ static_assert(
 // Filter Threshold Params
 extern const float maxObstacleHeight = 2.0;     // maximum obstacle height of 2 meters 
 extern const float sensorMaxRangeLimit = 10; // only keep points with in a radius of x meters   
-extern const float sensorMinRangeLimit = 1.5; // remove points within a radius of 0.6 meters of Lidar
 extern const float filterAngleLimit = 35; // slope angle threshold     
 extern const float filterMaxRoughness = 0.1;      
 extern const int filterHeightMapArrayLength = sensorMaxRangeLimit*2 / mapResolution;    // size of the local height mat grid
@@ -123,8 +122,14 @@ extern const int localMapArrayLength = localMapLength / mapResolution;
 extern const float visualizationRadius = 40;
 extern const float visualizationFrequency = 2; // n, skip n scans then publish, n=0, visualize at each scan
 
-// Robot Params
-extern const float robotRadius = 0.4;
+// Robot self-filter box in the LiDAR/source frame. Points inside this box are ignored.
+inline constexpr bool lidarBodyBoxFilterEnabled = true;
+inline constexpr float lidarBodyBoxMinX = -1.00f;
+inline constexpr float lidarBodyBoxMaxX = 0.70f;
+inline constexpr float lidarBodyBoxMinY = -0.64f;
+inline constexpr float lidarBodyBoxMaxY = 0.30f;
+inline constexpr float lidarBodyBoxMinZ = -1.90f;
+inline constexpr float lidarBodyBoxMaxZ = -0.25f;
 
 // Traversability Params
 extern const int traversabilityObserveTimeTh = 10;

@@ -888,6 +888,26 @@ private:
                     continue;
                 }
 
+                // Extend bbox along each face's outward normal by cube_width
+                // so that the bbox center lands at the true cube center
+                // instead of the visible corner.
+                for (const auto &side : side_faces) {
+                    Vec3 outward = side.normal;
+                    const Vec3 rover_to_face{
+                        side.centroid.x, side.centroid.y, side.centroid.z};
+                    if (dot_vec(rover_to_face, outward) < 0.0)
+                        outward = scale_vec(outward, -1.0);
+                    // outward now points away from rover (towards hidden side)
+                    if (outward.x > 0.0)
+                        bbox_max.x = std::max(bbox_max.x, bbox_max.x + outward.x * cube_width_m_);
+                    else
+                        bbox_min.x = std::min(bbox_min.x, bbox_min.x + outward.x * cube_width_m_);
+                    if (outward.y > 0.0)
+                        bbox_max.y = std::max(bbox_max.y, bbox_max.y + outward.y * cube_width_m_);
+                    else
+                        bbox_min.y = std::min(bbox_min.y, bbox_min.y + outward.y * cube_width_m_);
+                }
+
                 center = {
                     0.5 * (bbox_min.x + bbox_max.x),
                     0.5 * (bbox_min.y + bbox_max.y),

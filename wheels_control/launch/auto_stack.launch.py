@@ -1,6 +1,7 @@
 import launch
 import launch_ros
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, EmitEvent, IncludeLaunchDescription, LogInfo, TimerAction, ExecuteProcess
+from launch.event_handlers import OnProcessExit
+from launch.actions import DeclareLaunchArgument , OpaqueFunction, RegisterEventHandler, IncludeLaunchDescription, LogInfo, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
@@ -11,7 +12,6 @@ import os
 _C_RESET = "\033[0m"
 _C_BOLD_GREEN = "\033[1;32m"
 _C_BOLD_YELLOW = "\033[1;33m"
-DEFAULT_ARUCO_STACK_DELAY = "18.0"
 
 
 def launch_setup(context: launch.LaunchContext, *args, **kwargs):
@@ -55,17 +55,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     homing = LaunchConfiguration("homing", default=default_homing)
     publish_urdf = LaunchConfiguration("pub_urdf", default=default_pub_urdf)
     launch_lidar = LaunchConfiguration("launch_lidar", default=default_launch_lidar)
-
-    delay_str = LaunchConfiguration(
-        "aruco_stack_delay_sec",
-        default=DEFAULT_ARUCO_STACK_DELAY,
-    ).perform(context)
-    try:
-        aruco_delay_s = float(delay_str)
-    except ValueError:
-        aruco_delay_s = float(DEFAULT_ARUCO_STACK_DELAY)
-    if aruco_delay_s < 0.0:
-        aruco_delay_s = 0.0
 
     # ------------- Launch Nodes -------------
     cs_interface = launch_ros.actions.Node(
@@ -148,6 +137,17 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         launch_arguments={}.items(),
     )
 
+    wait_for_nav_camera_2 = ExecuteProcess(
+        cmd=[
+            "bash", "-lc",
+            "until ros2 topic echo --once /NAV/feed_camera_nav_2 >/dev/null 2>&1; do "
+            "echo 'Waiting for /NAV/feed_camera_nav_2...'; "
+            "sleep 1; "
+            "done"
+        ],
+        output="screen",
+    )
+
 
     #----------- ArUco Launch Files ---------
 
@@ -189,31 +189,18 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
     # Must run after camera_node_nav.launch.py finishes stagger + activate + SetBool
     # (nav_2 ~35s). Earlier ArUco start produced empty feeds and looked like a "hang".
     # should be later than the activation of the oak1w at least 50 sec
-    delayed_aruco_launch = TimerAction(
-        period=75.0,
-        actions=[
-            LogInfo(
-                msg=f"{_C_BOLD_GREEN}Launching ArUco + lidar_aruco stack...{_C_RESET}"
-            ),
-            aruco_launch,
-            LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
-            aruco_lidar_detection_launch,
-            LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node with lidar launched {_C_RESET}"),
-
+    full_aruco_launch = [
+        LogInfo(msg=f"{_C_BOLD_GREEN}Launching ArUco + lidar_aruco stack...{_C_RESET}"),
+        aruco_launch,
+        LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
+        aruco_lidar_detection_launch,
+        LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node with lidar launched {_C_RESET}"),
         ]
-    )
-
-    LogInfo(msg=f"{_C_BOLD_YELLOW} Before jetson stats {_C_RESET}"),
-
     
     jetson_stats = launch_ros.actions.Node(
         package="jetson_stats",
         executable="launch_stats"
     )
-    LogInfo(msg=f"{_C_BOLD_YELLOW} After jetson stats {_C_RESET}"),
-    LogInfo(msg=f"{_C_BOLD_YELLOW} Before static transform erc map tf {_C_RESET}"),
-
-
 
     # Static transform from erc_map → map
     erc_to_map_tf = launch_ros.actions.Node(
@@ -243,6 +230,18 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     LogInfo(msg=f"{_C_BOLD_YELLOW} After slip control node {_C_RESET}"),
 
+    launch_after_nav_camera_2 = RegisterEventHandler(
+        OnProcessExit(
+            target_action=wait_for_nav_camera_2,
+            on_exit=[
+                LogInfo(msg=f"{_C_BOLD_GREEN}/NAV/feed_camera_nav_2 is publishing. Launching dependent stack...{_C_RESET}"),
+                *full_aruco_launch,
+                jetson_stats,
+                slip_control_node,
+            ],
+        )
+    )
+
 
 
     return [
@@ -262,17 +261,14 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         custom_local_ekf_node,
         ouster_launch,
         nav_cameras_launch,
-        delayed_aruco_launch,
-        jetson_stats,
-        slip_control_node,
+        wait_for_nav_camera_2,
+        launch_after_nav_camera_2,
+        # full_aruco_launch,
+        # jetson_stats,
+        # slip_control_node,
     ]
 
 def generate_launch_description():
     return launch.LaunchDescription([
-        DeclareLaunchArgument(
-            "aruco_stack_delay_sec",
-            default_value=DEFAULT_ARUCO_STACK_DELAY,
-            description="Seconds after stack start before ArUco + lidar_aruco launches (cameras need stream first).",
-        ),
         OpaqueFunction(function=launch_setup),
     ])

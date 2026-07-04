@@ -12,17 +12,18 @@
  *   - `/filtered_pointcloud_visual_low_res`
  *   - `/pointcloud_2_laserscan`
  *
- * This node transforms incoming PointCloud2 LiDAR data into the map frame, filters points by range,
- * and bins them into a robot-centered 2D height grid. Each occupied grid cell stores the observed
- * maximum height below the configured obstacle-height threshold, producing a downsampled point cloud
- * representation of the local terrain.
+ * This node transforms incoming PointCloud2 LiDAR data into the map frame, filters points by range
+ * and by a LiDAR/source-frame robot body exclusion box, then bins them into a robot-centered 2D height
+ * grid. Each occupied grid cell stores the observed maximum height below the configured
+ * obstacle-height threshold, producing a downsampled point cloud representation of the local terrain.
  *
  * The filter supports optional sensor-frame voxel downsampling and point striding to reduce CPU load
  * on dense LiDAR clouds. TF is used to locate both the LiDAR/source frame and the robot base frame,
  * allowing the output map to stay centered around the robot while being published in the map frame.
  *
  * Typical use:
- * - Remove near/far LiDAR points outside the configured sensor range.
+ * - Remove far LiDAR points outside the configured sensor range.
+ * - Remove self-returns inside the rover body box in LiDAR/source-frame coordinates.
  * - Build a lightweight local height map for navigation or traversability analysis.
  * - Reduce dense 3D LiDAR data into a lower-cost terrain representation.
  */
@@ -79,6 +80,13 @@ private:
     int point_stride_{1};
     /// Voxel leaf in **sensor** frame (m); 0 = disabled. Runs before transform; use ~mapResolution–2× for speed.
     float sensor_voxel_leaf_m_{0.0f};
+    bool use_lidar_body_box_filter_{lidarBodyBoxFilterEnabled};
+    float lidar_body_box_min_x_m_{lidarBodyBoxMinX};
+    float lidar_body_box_max_x_m_{lidarBodyBoxMaxX};
+    float lidar_body_box_min_y_m_{lidarBodyBoxMinY};
+    float lidar_body_box_max_y_m_{lidarBodyBoxMaxY};
+    float lidar_body_box_min_z_m_{lidarBodyBoxMinZ};
+    float lidar_body_box_max_z_m_{lidarBodyBoxMaxZ};
 
 
 public:
@@ -98,6 +106,13 @@ public:
             point_stride_ = 1;
         }
         sensor_voxel_leaf_m_ = static_cast<float>(this->declare_parameter<double>("sensor_voxel_leaf_m", 0.0));
+        use_lidar_body_box_filter_ = this->declare_parameter<bool>("use_lidar_body_box_filter", lidarBodyBoxFilterEnabled);
+        lidar_body_box_min_x_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_min_x_m", lidarBodyBoxMinX));
+        lidar_body_box_max_x_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_max_x_m", lidarBodyBoxMaxX));
+        lidar_body_box_min_y_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_min_y_m", lidarBodyBoxMinY));
+        lidar_body_box_max_y_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_max_y_m", lidarBodyBoxMaxY));
+        lidar_body_box_min_z_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_min_z_m", lidarBodyBoxMinZ));
+        lidar_body_box_max_z_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_max_z_m", lidarBodyBoxMaxZ));
 
         if (point_stride_ > 1 || sensor_voxel_leaf_m_ > 1e-6f) {
             RCLCPP_INFO(
@@ -105,6 +120,13 @@ public:
                 "Filter downsampling: point_stride=%d sensor_voxel_leaf_m=%.3f (0=off)",
                 point_stride_, static_cast<double>(sensor_voxel_leaf_m_));
         }
+        RCLCPP_INFO(
+            this->get_logger(),
+            "LiDAR body box filter: %s x=[%.2f, %.2f] y=[%.2f, %.2f] z=[%.2f, %.2f] m in source frame",
+            use_lidar_body_box_filter_ ? "on" : "off",
+            lidar_body_box_min_x_m_, lidar_body_box_max_x_m_,
+            lidar_body_box_min_y_m_, lidar_body_box_max_y_m_,
+            lidar_body_box_min_z_m_, lidar_body_box_max_z_m_);
 
         auto qos = rclcpp::SensorDataQoS();
 
@@ -214,8 +236,7 @@ public:
         for (int i = 0; i < filterHeightMapArrayLength; ++i)
             std::memset(initFlag[i], 0, filterHeightMapArrayLength * sizeof(bool));
 
-        // Fused single-pass: range filter + transform + height-map binning
-        const float minR2 = sensorMinRangeLimit * sensorMinRangeLimit;
+        // Fused single-pass: range filter + self-filter + transform + height-map binning
         const float maxR2 = sensorMaxRangeLimit * sensorMaxRangeLimit;
         const float invRes = 1.0f / mapResolution;
 
@@ -234,9 +255,18 @@ public:
         for (size_t i = 0; i < npts; i += stride) {
             const auto &p = cloud_for_loop->points[i];
             float r2 = p.x * p.x + p.y * p.y + p.z * p.z;
-            if (r2 < minR2 || r2 > maxR2) continue;
+            if (r2 > maxR2) continue;
 
-            Eigen::Vector3f pt = rot * Eigen::Vector3f(p.x, p.y, p.z) + trans;
+            const Eigen::Vector3f sensor_pt(p.x, p.y, p.z);
+            if (use_lidar_body_box_filter_) {
+                if (sensor_pt.x() >= lidar_body_box_min_x_m_ && sensor_pt.x() <= lidar_body_box_max_x_m_ &&
+                    sensor_pt.y() >= lidar_body_box_min_y_m_ && sensor_pt.y() <= lidar_body_box_max_y_m_ &&
+                    sensor_pt.z() >= lidar_body_box_min_z_m_ && sensor_pt.z() <= lidar_body_box_max_z_m_) {
+                    continue;
+                }
+            }
+
+            Eigen::Vector3f pt = rot * sensor_pt + trans;
 
             int idx = static_cast<int>((pt.x() - localMapOrigin.x) * invRes);
             int idy = static_cast<int>((pt.y() - localMapOrigin.y) * invRes);
@@ -244,13 +274,16 @@ public:
                 continue;
 
             float z = pt.z();
+            if (z > maxObstacleHeight) {
+                continue;
+            }
             if (!initFlag[idx][idy]) {
                 minHeight[idx][idy] = z;
-                maxHeight[idx][idy] = std::min(maxObstacleHeight, z);
+                maxHeight[idx][idy] = z;
                 initFlag[idx][idy] = true;
             } else {
                 if (z < minHeight[idx][idy]) minHeight[idx][idy] = z;
-                if (z < maxObstacleHeight && z > maxHeight[idx][idy]) maxHeight[idx][idy] = z;
+                if (z > maxHeight[idx][idy]) maxHeight[idx][idy] = z;
             }
         }
 
@@ -286,7 +319,6 @@ public:
     
         // DEBUG
         int num_printed = 0;
-        int num_too_close = 0;
     
         // Create a temporary cloud to hold filtered points
         pcl::PointCloud<PointType>::Ptr filteredCloud(new pcl::PointCloud<PointType>());
@@ -309,13 +341,8 @@ public:
                                         (laserCloudIn->points[index].y * laserCloudIn->points[index].y) + 
                                         (laserCloudIn->points[index].z * laserCloudIn->points[index].z));
     
-                // remove point if it's within the threshold range
-                if (pointDepth2 < sensorMinRangeLimit)
-                {
-                    num_too_close++;
-                    continue;
-                }
-                // otherwise, store it into the range matrix and reset obstacle status
+                // Store the range and reset obstacle status. Self-filtering is
+                // performed in cloudHandler() with the base_link body box.
                 rangeMatrix.at<float>(i, j) = pointDepth2;
                 obstacleMatrix.at<int>(i, j) = 0;
                 
@@ -413,6 +440,8 @@ public:
             // points out of boundry
             if (idx < 0 || idy < 0 || idx >= filterHeightMapArrayLength || idy >= filterHeightMapArrayLength)
                 continue;
+            if (laserCloudOut->points[i].z > maxObstacleHeight)
+                continue;
             // // obstacle point (decided by curb or slope filter)
             // if (laserCloudOut->points[i].intensity == 100)
             //     obstFlag[idx][idy] = true;
@@ -420,15 +449,11 @@ public:
             // maybe can add an average filter to smooth out the point readings from ouster as they are noisy
             if (initFlag[idx][idy] == false){
                 minHeight[idx][idy] = laserCloudOut->points[i].z;
-                // Initialize directly, then cap it
-                maxHeight[idx][idy] = std::min(maxObstacleHeight, laserCloudOut->points[i].z);
+                maxHeight[idx][idy] = laserCloudOut->points[i].z;
                 initFlag[idx][idy] = true;
             } else {
                 minHeight[idx][idy] = std::min(minHeight[idx][idy], laserCloudOut->points[i].z);
-                // Only update if below threshold
-                if (laserCloudOut->points[i].z < maxObstacleHeight) {
-                    maxHeight[idx][idy] = std::max(maxHeight[idx][idy], laserCloudOut->points[i].z);
-                }
+                maxHeight[idx][idy] = std::max(maxHeight[idx][idy], laserCloudOut->points[i].z);
             }
         }
         // intermediate cloud

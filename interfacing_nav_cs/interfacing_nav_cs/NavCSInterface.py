@@ -68,9 +68,9 @@ MODE_TO_CS = {
     "Auto": 3
 }
 
-#Nav EKF Topic (pose in the map frame)
+#Nav EKF Topic (pose in the erc map frame)
 from nav_msgs.msg import Odometry
-NAV_POSE_TOPIC = "fused_nav_ekf_odom"
+NAV_POSE_TOPIC = "erc_map_localization"
 
 # Configuration file paths
 CONFIG_BASE_PATH = '/home/xplore/dev_ws/src/custom_msg/config'

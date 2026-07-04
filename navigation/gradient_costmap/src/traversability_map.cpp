@@ -20,10 +20,10 @@
  * the height residuals around that plane. The resulting traversability cost is converted into occupancy
  * values suitable for local navigation.
  *
- * The map can operate in robot-centered local mode, where only cells observed in the current scan are
- * published, or in fixed-origin/global mode, where accumulated map memory is preserved. An optional
- * inflation step expands high-cost traversability regions using a distance-decay kernel so navigation
- * can account for robot footprint and safety margin.
+ * The map can operate in robot-centered local mode or fixed-origin/global mode. Observed cell costs are
+ * kept in map memory until the cell is reobserved and overwritten; an optional output lookup radius
+ * bridges small point/grid alignment shifts. An optional inflation step expands high-cost traversability
+ * regions using a distance-decay kernel so navigation can account for robot footprint and safety margin.
  *
  * Typical use:
  * - Convert filtered LiDAR terrain points into a 2D traversability cost map.
@@ -95,6 +95,7 @@ private:
     double fixed_origin_y_;
     uint64_t current_scan_id_;
     std::unordered_map<mapCell_t*, uint64_t> last_observed_scan_;
+    int output_lookup_radius_cells_{2};
     int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
     float alpha_inflation = this->declare_parameter<float>("inflation_factor", 1.0f); // inflation factor, can be tuned based on how much we want to inflate
     float sigmoid_k = this->declare_parameter<float>("sigmoid_k", 0.5f); // weight for slope in occupancy calculation
@@ -138,6 +139,11 @@ public:
         use_robot_centered_origin_ = this->declare_parameter<bool>("use_robot_centered_origin", true);
         fixed_origin_x_ = this->declare_parameter<double>("fixed_origin_x", -localMapLength / 2.0);
         fixed_origin_y_ = this->declare_parameter<double>("fixed_origin_y", -localMapLength / 2.0);
+        output_lookup_radius_cells_ = this->declare_parameter<int>("output_lookup_radius_cells", 2);
+        if (output_lookup_radius_cells_ < 0) {
+            RCLCPP_WARN(this->get_logger(), "output_lookup_radius_cells must be >= 0, clamping to 0");
+            output_lookup_radius_cells_ = 0;
+        }
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             pointcloud_topic_, 10, std::bind(&TraversabilityMapping::cloudHandler, this, std::placeholders::_1));
@@ -156,23 +162,44 @@ public:
 
     ~TraversabilityMapping(){}
 
-    bool isCellFreshForOutput(const mapCell_t *cell) const {
-        if (cell == nullptr || cell->observeTimes <= 0) {
-            return false;
+    bool isCellKnownForOutput(const mapCell_t *cell) const {
+        return cell != nullptr && cell->observeTimes > 0;
+    }
+
+    mapCell_t* getOutputCellFromPoint(const PointType &point) {
+        PointType query = point;
+        mapCell_t *cell = getCellFromPoint(&query);
+        if (isCellKnownForOutput(cell) || output_lookup_radius_cells_ <= 0) {
+            return cell;
         }
 
-        // In global mode, keep long-term map memory.
-        if (!use_robot_centered_origin_) {
-            return true;
+        mapCell_t *best_cell = nullptr;
+        int best_dist_sq = output_lookup_radius_cells_ * output_lookup_radius_cells_ + 1;
+
+        for (int dx = -output_lookup_radius_cells_; dx <= output_lookup_radius_cells_; ++dx) {
+            for (int dy = -output_lookup_radius_cells_; dy <= output_lookup_radius_cells_; ++dy) {
+                if (dx == 0 && dy == 0) continue;
+
+                const int dist_sq = dx * dx + dy * dy;
+                if (dist_sq > output_lookup_radius_cells_ * output_lookup_radius_cells_) continue;
+
+                PointType neighbor = point;
+                neighbor.x += dx * mapResolution;
+                neighbor.y += dy * mapResolution;
+
+                mapCell_t *candidate = getCellFromPoint(&neighbor);
+                if (!isCellKnownForOutput(candidate)) continue;
+
+                if (best_cell == nullptr ||
+                    dist_sq < best_dist_sq ||
+                    (dist_sq == best_dist_sq && candidate->occupancy > best_cell->occupancy)) {
+                    best_cell = candidate;
+                    best_dist_sq = dist_sq;
+                }
+            }
         }
 
-        auto it = last_observed_scan_.find(const_cast<mapCell_t*>(cell));
-        if (it == last_observed_scan_.end()) {
-            return false;
-        }
-
-        // In local mode we only publish values from the current measurement cycle.
-        return it->second == current_scan_id_;
+        return best_cell;
     }
 
     void allocateMemory(){
@@ -365,8 +392,8 @@ public:
                 point.x = origin_x + i * mapResolution + half_res;
                 point.y = origin_y + j * mapResolution + half_res;
 
-                mapCell_t *cell = getCellFromPoint(&point);
-                if (!isCellFreshForOutput(cell)) continue;
+                mapCell_t *cell = getOutputCellFromPoint(point);
+                if (!isCellKnownForOutput(cell)) continue;
 
                 int index = i + j * localMapArrayLength;
                 occupancyMap2DInflated.data[index] = 0;
@@ -643,8 +670,8 @@ public:
                 point.x = occupancyMap2D.info.origin.position.x + i * mapResolution + mapResolution/2.0;
                 point.y = occupancyMap2D.info.origin.position.y + j * mapResolution + mapResolution/2.0;
                 
-                mapCell_t *cell = getCellFromPoint(&point);
-                if (isCellFreshForOutput(cell)) {
+                mapCell_t *cell = getOutputCellFromPoint(point);
+                if (isCellKnownForOutput(cell)) {
                     int index = i + j * localMapArrayLength;
                     occupancyMap2D.data[index] = int(cell->occupancy * 100);
                 }

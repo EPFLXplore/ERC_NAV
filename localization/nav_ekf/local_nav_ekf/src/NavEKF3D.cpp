@@ -554,6 +554,7 @@ public:
         std::bind(&NavEKF3DNode::wheel_odom_callback, this, std::placeholders::_1));
 
     ekf_pub_ = create_publisher<nav_msgs::msg::Odometry>("/fused_nav_ekf_odom", pub_qos);
+    erc_map_pub_ = create_publisher<nav_msgs::msg::Odometry>("erc_map_localization", pub_qos);
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/fused_nav_ekf_path", pub_qos);
     ros_time_pub_ = create_publisher<builtin_interfaces::msg::Time>("/NAV/ros_time", pub_qos);
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -733,6 +734,7 @@ private:
 
   void aruco_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     if (!include_aruco_) return;
+    RCLCPP_WARN(get_logger(), "ArUco OODDOOOOOOOOOOOOOOOOOOOOOM ");
     const double mx = msg->pose.pose.position.x;
     const double my = msg->pose.pose.position.y;
     buf_aruco_x_.push(mx - ekf_->state(IDX_X));
@@ -957,6 +959,61 @@ private:
     }
   }
 
+  // Look up map -> base_link (only present if some other node is publishing
+  // map -> odom) and publish it in the ERC map coordinate convention:
+  //   x_erc   =  x_map
+  //   y_erc   = -y_map
+  //   yaw_erc = -yaw_map
+  // Publishes nothing if the map -> odom TF does not exist.
+  void publish_erc_map_localization(const rclcpp::Time & stamp) {
+    geometry_msgs::msg::TransformStamped tf_map_base;
+    try {
+      if (!tf_buffer_->canTransform("map", "base_link", tf2::TimePointZero)) {
+        return;
+      }
+      tf_map_base = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                          "erc_map_localization skipped: cannot lookup TF map <- base_link: %s",
+                          ex.what());
+      return;
+    }
+
+    tf2::Quaternion q_map_base(
+        tf_map_base.transform.rotation.x,
+        tf_map_base.transform.rotation.y,
+        tf_map_base.transform.rotation.z,
+        tf_map_base.transform.rotation.w);
+    if (q_map_base.length2() < 1e-12) return;
+    q_map_base.normalize();
+
+    double roll_map, pitch_map, yaw_map;
+    tf2::Matrix3x3(q_map_base).getRPY(roll_map, pitch_map, yaw_map);
+
+    const auto &t = tf_map_base.transform.translation;
+    const double x_erc   = t.x;
+    const double y_erc   = -t.y;
+    const double z_erc   = t.z;
+    const double yaw_erc = normalize_angle(-yaw_map);
+    const double pitch_erc = normalize_angle(-pitch_map);
+
+
+    tf2::Quaternion q_erc;
+    q_erc.setRPY(roll_map, pitch_erc, yaw_erc);
+    q_erc.normalize();
+
+    nav_msgs::msg::Odometry msg;
+    msg.header.stamp = stamp;
+    msg.header.frame_id = "erc_map";
+    msg.child_frame_id = "base_link";
+    msg.pose.pose.position.x = x_erc;
+    msg.pose.pose.position.y = y_erc;
+    msg.pose.pose.position.z = z_erc;
+    msg.pose.pose.orientation = tf2::toMsg(q_erc);
+
+    erc_map_pub_->publish(msg);
+  }
+
   // ---------------- Main prediction / publish loop ----------------
   void timer_callback() {
     const auto current_time = this->now();
@@ -1020,6 +1077,9 @@ private:
     transform_stamped.transform.rotation      = tf2::toMsg(q_out);
     tf_broadcaster_->sendTransform(transform_stamped);
 
+    // ---- Publish ERC-frame localization from map -> base_link (if available) ----
+    publish_erc_map_localization(current_time);
+
     // ---- Publish EKF path for RViz ----
     geometry_msgs::msg::PoseStamped path_pose;
     path_pose.header = odom_msg.header;
@@ -1070,6 +1130,7 @@ private:
   std::shared_ptr<tf2_ros::Buffer>                              tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener>                   tf_listener_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr         ekf_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr         erc_map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   nav_msgs::msg::Path path_msg_;
   size_t max_path_poses_ = 9000;

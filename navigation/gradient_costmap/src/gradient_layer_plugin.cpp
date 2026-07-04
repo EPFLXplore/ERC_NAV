@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -100,6 +101,9 @@ void GradientLayer::onInitialize()
   declareParameter("map_subscribe_reliable", rclcpp::ParameterValue(true));
   declareParameter("expand_update_bounds", rclcpp::ParameterValue(true));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.2));
+  declareParameter("persistent_patch", rclcpp::ParameterValue(false));
+  declareParameter("persistence_timeout", rclcpp::ParameterValue(8.0));
+  declareParameter("persistence_min_cost", rclcpp::ParameterValue(1));
 
   std::string topic;
   std::string map_yaml_filename;
@@ -114,6 +118,11 @@ void GradientLayer::onInitialize()
   node->get_parameter(name_ + ".map_subscribe_reliable", map_subscribe_reliable);
   node->get_parameter(name_ + ".expand_update_bounds", expand_update_bounds_);
   node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
+  node->get_parameter(name_ + ".persistent_patch", persistent_patch_);
+  node->get_parameter(name_ + ".persistence_timeout", persistence_timeout_);
+  int persistence_min_cost_param{1};
+  node->get_parameter(name_ + ".persistence_min_cost", persistence_min_cost_param);
+  persistence_min_cost_ = static_cast<unsigned char>(std::clamp(persistence_min_cost_param, 0, 252));
 
   if (use_map_file_) {
     file_map_loaded_ = loadMapFromYaml(map_yaml_filename);
@@ -330,6 +339,23 @@ bool GradientLayer::refreshGridTransforms(const std::string & master_frame_id)
   return true;
 }
 
+void GradientLayer::resizePersistenceIfNeeded(const nav2_costmap_2d::Costmap2D & master_grid)
+{
+  const auto size_x = master_grid.getSizeInCellsX();
+  const auto size_y = master_grid.getSizeInCellsY();
+  if (size_x == persistent_size_x_ && size_y == persistent_size_y_) {
+    return;
+  }
+
+  persistent_size_x_ = size_x;
+  persistent_size_y_ = size_y;
+  const size_t n = static_cast<size_t>(size_x) * static_cast<size_t>(size_y);
+  persistent_costs_.assign(n, nav2_costmap_2d::FREE_SPACE);
+  persistent_stamps_ms_.assign(n, 0);
+  gradient_owned_cells_.assign(n, 0);
+  gradient_touched_cells_.assign(n, 0);
+}
+
 void GradientLayer::updateBounds(
   double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/,
   double * min_x, double * min_y, double * max_x, double * max_y)
@@ -387,14 +413,37 @@ void GradientLayer::updateBounds(
     {ox + w_m, oy + h_m}
   };
 
+  double current_min_x = std::numeric_limits<double>::max();
+  double current_min_y = std::numeric_limits<double>::max();
+  double current_max_x = std::numeric_limits<double>::lowest();
+  double current_max_y = std::numeric_limits<double>::lowest();
+
   for (const auto & c : corners_grid) {
     double wx, wy;
     master_from_grid_.apply(c[0], c[1], wx, wy);
-    *min_x = std::min(*min_x, wx);
-    *min_y = std::min(*min_y, wy);
-    *max_x = std::max(*max_x, wx);
-    *max_y = std::max(*max_y, wy);
+    current_min_x = std::min(current_min_x, wx);
+    current_min_y = std::min(current_min_y, wy);
+    current_max_x = std::max(current_max_x, wx);
+    current_max_y = std::max(current_max_y, wy);
   }
+
+  *min_x = std::min(*min_x, current_min_x);
+  *min_y = std::min(*min_y, current_min_y);
+  *max_x = std::max(*max_x, current_max_x);
+  *max_y = std::max(*max_y, current_max_y);
+
+  if (has_previous_bounds_) {
+    *min_x = std::min(*min_x, previous_min_x_);
+    *min_y = std::min(*min_y, previous_min_y_);
+    *max_x = std::max(*max_x, previous_max_x_);
+    *max_y = std::max(*max_y, previous_max_y_);
+  }
+
+  previous_min_x_ = current_min_x;
+  previous_min_y_ = current_min_y;
+  previous_max_x_ = current_max_x;
+  previous_max_y_ = current_max_y;
+  has_previous_bounds_ = true;
 }
 
 void GradientLayer::updateCosts(
@@ -411,8 +460,8 @@ void GradientLayer::updateCosts(
         double wx, wy;
         master_grid.mapToWorld(i, j, wx, wy);
 
-        const int map_x = static_cast<int>((wx - file_origin_x_) / file_resolution_);
-        const int map_y = static_cast<int>((wy - file_origin_y_) / file_resolution_);
+        const int map_x = static_cast<int>(std::floor((wx - file_origin_x_) / file_resolution_));
+        const int map_y = static_cast<int>(std::floor((wy - file_origin_y_) / file_resolution_));
 
         if (map_x < 0 || map_y < 0 || map_x >= file_width_ || map_y >= file_height_) {
           continue;
@@ -446,15 +495,21 @@ void GradientLayer::updateCosts(
 
   if (!active_map_ || !grid_from_master_.valid) return;
 
+  resizePersistenceIfNeeded(master_grid);
+  std::fill(gradient_touched_cells_.begin(), gradient_touched_cells_.end(), 0);
+
   const double inv_res   = 1.0 / active_map_->info.resolution;
   const double grid_ox   = active_map_->info.origin.position.x;
   const double grid_oy   = active_map_->info.origin.position.y;
   const int    grid_w    = static_cast<int>(active_map_->info.width);
   const int    grid_h    = static_cast<int>(active_map_->info.height);
   const auto & grid_data = active_map_->data;
+  const int64_t now_ms = clock_ ? clock_->now().nanoseconds() / 1000000 : 0;
+  const int64_t timeout_ms = static_cast<int64_t>(std::max(0.0, persistence_timeout_) * 1000.0);
 
   for (int i = min_i; i < max_i; ++i) {
     for (int j = min_j; j < max_j; ++j) {
+      const size_t master_index = master_grid.getIndex(i, j);
       double wx_master, wy_master;
       master_grid.mapToWorld(i, j, wx_master, wy_master);
 
@@ -462,21 +517,101 @@ void GradientLayer::updateCosts(
       double wx_grid, wy_grid;
       grid_from_master_.apply(wx_master, wy_master, wx_grid, wy_grid);
 
-      const int map_x = static_cast<int>((wx_grid - grid_ox) * inv_res);
-      const int map_y = static_cast<int>((wy_grid - grid_oy) * inv_res);
+      const int map_x = static_cast<int>(std::floor((wx_grid - grid_ox) * inv_res));
+      const int map_y = static_cast<int>(std::floor((wy_grid - grid_oy) * inv_res));
 
       if (map_x < 0 || map_y < 0 || map_x >= grid_w || map_y >= grid_h) {
+        if (persistent_patch_ && master_index < persistent_costs_.size()) {
+          if (persistent_stamps_ms_[master_index] > 0 &&
+              now_ms - persistent_stamps_ms_[master_index] <= timeout_ms) {
+            if (master_grid.getCost(i, j) != persistent_costs_[master_index]) {
+              master_grid.setCost(i, j, persistent_costs_[master_index]);
+            }
+            gradient_owned_cells_[master_index] = 1;
+            if (master_index < gradient_touched_cells_.size()) {
+              gradient_touched_cells_[master_index] = 1;
+            }
+          }
+        }
         continue;
       }
 
       const int index = map_y * grid_w + map_x;
       const int8_t cost = grid_data[index];
 
-      if (cost < 0) continue;  // unknown
+      if (cost < 0) {
+        continue;
+      }
 
-      // Scale 0-100 occupancy to 0-254 costmap range
+      // Zero is an explicit clear from the traversability producer. Only apply
+      // it to cells previously written by this layer so flat terrain does not
+      // erase unrelated obstacle layers.
+      if (cost <= 0) {
+        if (master_index < gradient_touched_cells_.size()) {
+          gradient_touched_cells_[master_index] = 1;
+        }
+        if (master_index < gradient_owned_cells_.size() && gradient_owned_cells_[master_index]) {
+          if (master_index < persistent_costs_.size() &&
+              master_grid.getCost(i, j) == persistent_costs_[master_index]) {
+            master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
+          }
+          gradient_owned_cells_[master_index] = 0;
+          if (master_index < persistent_stamps_ms_.size()) {
+            persistent_stamps_ms_[master_index] = 0;
+          }
+        }
+        continue;
+      }
+
+      // Scale 1-100 occupancy to 2-252 costmap range.
       const unsigned char scaled_cost = static_cast<unsigned char>((cost * 252) / 100);
-      master_grid.setCost(i, j, scaled_cost);
+      if (persistent_patch_ && master_index < persistent_costs_.size()) {
+        if (scaled_cost < persistence_min_cost_) {
+          continue;
+        }
+        persistent_costs_[master_index] = scaled_cost;
+        persistent_stamps_ms_[master_index] = now_ms;
+        gradient_touched_cells_[master_index] = 1;
+        if (master_grid.getCost(i, j) != persistent_costs_[master_index]) {
+          master_grid.setCost(i, j, persistent_costs_[master_index]);
+        }
+        gradient_owned_cells_[master_index] = 1;
+      } else {
+        if (master_grid.getCost(i, j) != scaled_cost) {
+          master_grid.setCost(i, j, scaled_cost);
+        }
+        if (master_index < gradient_owned_cells_.size()) {
+          gradient_owned_cells_[master_index] = 1;
+        }
+        if (master_index < gradient_touched_cells_.size()) {
+          gradient_touched_cells_[master_index] = 1;
+        }
+        if (master_index < persistent_costs_.size()) {
+          persistent_costs_[master_index] = scaled_cost;
+        }
+      }
+    }
+  }
+
+  for (int i = min_i; i < max_i; ++i) {
+    for (int j = min_j; j < max_j; ++j) {
+      const size_t master_index = master_grid.getIndex(i, j);
+      if (master_index >= gradient_owned_cells_.size() ||
+          master_index >= gradient_touched_cells_.size() ||
+          master_index >= persistent_costs_.size()) {
+        continue;
+      }
+
+      if (!gradient_owned_cells_[master_index] || gradient_touched_cells_[master_index]) {
+        continue;
+      }
+
+      if (master_grid.getCost(i, j) == persistent_costs_[master_index]) {
+        master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
+      }
+      gradient_owned_cells_[master_index] = 0;
+      persistent_stamps_ms_[master_index] = 0;
+      persistent_costs_[master_index] = nav2_costmap_2d::FREE_SPACE;
     }
   }
 }

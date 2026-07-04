@@ -187,7 +187,8 @@ private:
     /*Run the kinematics manager to compute the motion*/
     if (current_rover_state == ROVER_MODE::ACKERMANN || current_rover_state == ROVER_MODE::AUTO) {
       if(current_rover_state == ROVER_MODE::AUTO && v_x < 0){
-        r_z = -r_z;
+        // r_z = -r_z;
+        r_z = r_z;
       }
 
       bool prev_crab_mode = crab_mode;

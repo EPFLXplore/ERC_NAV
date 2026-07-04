@@ -6,6 +6,7 @@
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -44,7 +45,11 @@ public:
     nav2_costmap_2d::Costmap2D & master_grid,
     int min_i, int min_j, int max_i, int max_j) override;
 
-  virtual void reset() override { return; }
+  virtual void reset() override
+  {
+    has_previous_bounds_ = false;
+    current_ = true;
+  }
 
   virtual void onFootprintChanged() override { return; }
 
@@ -58,6 +63,8 @@ private:
   // Returns true if both transforms are valid and usable this cycle.
   bool refreshGridTransforms(const std::string & master_frame_id);
 
+  void resizePersistenceIfNeeded(const nav2_costmap_2d::Costmap2D & master_grid);
+
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr sub_;
   nav_msgs::msg::OccupancyGrid::SharedPtr latest_map_;
   nav_msgs::msg::OccupancyGrid::SharedPtr active_map_;  // snapshot used within a single update cycle
@@ -65,6 +72,7 @@ private:
 
   bool use_map_file_{false};
   bool expand_update_bounds_{true};
+  bool persistent_patch_{false};
   bool file_map_loaded_{false};
   double file_resolution_{0.0};
   double file_origin_x_{0.0};
@@ -74,6 +82,21 @@ private:
   bool file_flip_x_{false};
   bool file_flip_y_{false};
   std::vector<unsigned char> file_data_;
+
+  bool has_previous_bounds_{false};
+  double previous_min_x_{0.0};
+  double previous_min_y_{0.0};
+  double previous_max_x_{0.0};
+  double previous_max_y_{0.0};
+
+  std::vector<unsigned char> persistent_costs_;
+  std::vector<int64_t> persistent_stamps_ms_;
+  std::vector<unsigned char> gradient_owned_cells_;
+  std::vector<unsigned char> gradient_touched_cells_;
+  unsigned int persistent_size_x_{0};
+  unsigned int persistent_size_y_{0};
+  double persistence_timeout_{8.0};
+  unsigned char persistence_min_cost_{1};
 
   // Cached per-cycle planar transforms between the incoming grid frame and
   // the master costmap's global frame.  master_from_grid_ is used to expand
