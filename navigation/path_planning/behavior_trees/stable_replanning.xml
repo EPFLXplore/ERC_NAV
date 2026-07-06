@@ -5,7 +5,7 @@
 
       <PipelineSequence name="NavigateWithStablePath">
 
-        <RateController hz="1.0">
+        <RateController hz="5.0">
           <Sequence name="ComputeAndAcceptStableCandidate">
             <RestampGoal input_goal="{goal}"
                          output_goal="{current_goal}"/>

@@ -60,25 +60,27 @@ private:
 
     std::chrono::time_point<std::chrono::high_resolution_clock> last_time;
 
-    int pubCount;
-    
-    // Map Arrays
-    int mapArrayCount;
-    int **mapArrayInd; // it saves the index of this submap in vector mapArray
-    int **predictionArrayFlag;
-    vector<childMap_t*> mapArray;
+    // Dense traversability grid. This replaces the previous 2x2-cell submap lookup so
+    // neighborhood searches operate directly in map-cell coordinates.
+    float grid_size_m_{globalMapDim};
+    float grid_resolution_m_{mapResolution};
+    float output_map_size_m_{localMapLength};
+    int map_width_cells_{0};
+    int map_height_cells_{0};
+    int output_map_cells_{0};
+    float map_origin_x_{0.0f};
+    float map_origin_y_{0.0f};
+    vector<mapCell_t> map_cells_;
+    vector<PointType> map_points_;
 
-    // Local Map Extraction
+    // Robot pose in the map frame used for local output window placement.
     PointType robotPoint;
-    PointType localMapOriginPoint;
-    grid_t localMapOriginGrid;
 
     // Global Variables for Traversability Calculation
     cv::Mat matCov, matEig, matVec;
 
     // Lists for New Scan
-    vector<mapCell_t*> observingList1; // thread 1: save new observed cells
-    vector<mapCell_t*> observingList2; // thread 2: calculate traversability of new observed cells
+    vector<mapCell_t*> observingList1; // save newly observed cells for traversability update
 
     // Inflation Parameters
     int cost;
@@ -90,16 +92,29 @@ private:
     std::string output_elevation_topic_;
     std::string map_frame_;
     std::string base_frame_;
+    std::string source_frame_;
     bool use_robot_centered_origin_;
     double fixed_origin_x_;
     double fixed_origin_y_;
+    bool lidar_dead_zone_enabled_{true};
+    float lidar_dead_zone_min_angle_deg_{-70.0f};
+    float lidar_dead_zone_max_angle_deg_{-20.0f};
+    float lidar_dead_zone_radius_m_{10.0f};
+    bool has_lidar_from_map_transform_{false};
+    Eigen::Matrix3f lidar_from_map_rot_{Eigen::Matrix3f::Identity()};
+    Eigen::Vector3f lidar_from_map_trans_{Eigen::Vector3f::Zero()};
     uint64_t current_scan_id_;
     std::unordered_map<mapCell_t*, uint64_t> last_observed_scan_;
     int output_lookup_radius_cells_{2};
     int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
-    float alpha_inflation = this->declare_parameter<float>("inflation_factor", 1.0f); // inflation factor, can be tuned based on how much we want to inflate
-    float sigmoid_k = this->declare_parameter<float>("sigmoid_k", 0.5f); // weight for slope in occupancy calculation
-    float sigmoid_x0 = this->declare_parameter<float>("sigmoid_x0", 0.5f); // threshold for slope in occupancy calculation
+    float alpha_inflation = static_cast<float>(this->declare_parameter<double>("inflation_factor", 1.0)); // inflation factor, can be tuned based on how much we want to inflate
+    float sigmoid_k = static_cast<float>(this->declare_parameter<double>("sigmoid_k", 0.5)); // weight for slope in occupancy calculation
+    float sigmoid_x0 = static_cast<float>(this->declare_parameter<double>("sigmoid_x0", 0.5)); // threshold for slope in occupancy calculation
+    float neighbor_search_radius_m_ = static_cast<float>(this->declare_parameter<double>("neighbor_search_radius_m", 0.6));
+    float slope_angle_limit_deg_ = static_cast<float>(this->declare_parameter<double>("slope_angle_limit_deg", filterAngleLimit));
+    float roughness_norm_m_ = static_cast<float>(this->declare_parameter<double>("roughness_norm_m", filterMaxRoughness));
+    int min_neighbor_points_ = this->declare_parameter<int>("min_neighbor_points", 3);
+    int min_neighbor_quadrants_ = this->declare_parameter<int>("min_neighbor_quadrants", 3);
     
     
     float applySigmoidToOccupancy(float p) const {
@@ -119,8 +134,6 @@ private:
 
 public:
     TraversabilityMapping() : Node("traversability_mapping"),
-        pubCount(1),
-        mapArrayCount(0),
         current_scan_id_(0) {
 
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -136,13 +149,60 @@ public:
         output_elevation_topic_ = this->declare_parameter<std::string>("output_elevation_topic", "/elevation_pointcloud");
         map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
         base_frame_ = this->declare_parameter<std::string>("base_frame", "base_link");
+        source_frame_ = this->declare_parameter<std::string>("source_frame", "Lidar_v2_1");
         use_robot_centered_origin_ = this->declare_parameter<bool>("use_robot_centered_origin", true);
         fixed_origin_x_ = this->declare_parameter<double>("fixed_origin_x", -localMapLength / 2.0);
         fixed_origin_y_ = this->declare_parameter<double>("fixed_origin_y", -localMapLength / 2.0);
+        grid_size_m_ = static_cast<float>(this->declare_parameter<double>("grid_size_m", globalMapDim));
+        grid_resolution_m_ = static_cast<float>(this->declare_parameter<double>("grid_resolution_m", mapResolution));
+        lidar_dead_zone_enabled_ = this->declare_parameter<bool>("lidar_dead_zone_enabled", true);
+        lidar_dead_zone_min_angle_deg_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_min_angle_deg", -70.0));
+        lidar_dead_zone_max_angle_deg_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_max_angle_deg", -20.0));
+        lidar_dead_zone_radius_m_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_radius_m", 10.0));
         output_lookup_radius_cells_ = this->declare_parameter<int>("output_lookup_radius_cells", 2);
+        if (grid_size_m_ <= 0.0f) {
+            RCLCPP_WARN(this->get_logger(), "grid_size_m must be > 0, using %.3f", static_cast<float>(globalMapDim));
+            grid_size_m_ = globalMapDim;
+        }
+        if (grid_resolution_m_ <= 0.0f) {
+            RCLCPP_WARN(this->get_logger(), "grid_resolution_m must be > 0, using %.3f", mapResolution);
+            grid_resolution_m_ = mapResolution;
+        }
+        map_width_cells_ = std::max(1, static_cast<int>(std::round(grid_size_m_ / grid_resolution_m_)));
+        map_height_cells_ = map_width_cells_;
+        output_map_cells_ = std::max(1, static_cast<int>(std::round(output_map_size_m_ / grid_resolution_m_)));
+        map_origin_x_ = -0.5f * map_width_cells_ * grid_resolution_m_;
+        map_origin_y_ = -0.5f * map_height_cells_ * grid_resolution_m_;
         if (output_lookup_radius_cells_ < 0) {
             RCLCPP_WARN(this->get_logger(), "output_lookup_radius_cells must be >= 0, clamping to 0");
             output_lookup_radius_cells_ = 0;
+        }
+        if (lidar_dead_zone_radius_m_ < 0.0f) {
+            RCLCPP_WARN(this->get_logger(), "lidar_dead_zone_radius_m must be >= 0, clamping to 0");
+            lidar_dead_zone_radius_m_ = 0.0f;
+        }
+        if (neighbor_search_radius_m_ < grid_resolution_m_) {
+            RCLCPP_WARN(this->get_logger(), "neighbor_search_radius_m must be >= grid_resolution_m, clamping to %.3f", grid_resolution_m_);
+            neighbor_search_radius_m_ = grid_resolution_m_;
+        }
+        if (slope_angle_limit_deg_ <= 0.0f) {
+            RCLCPP_WARN(this->get_logger(), "slope_angle_limit_deg must be > 0, using %.3f", filterAngleLimit);
+            slope_angle_limit_deg_ = filterAngleLimit;
+        }
+        if (roughness_norm_m_ <= 0.0f) {
+            RCLCPP_WARN(this->get_logger(), "roughness_norm_m must be > 0, using %.3f", filterMaxRoughness);
+            roughness_norm_m_ = filterMaxRoughness;
+        }
+        if (min_neighbor_points_ < 3) {
+            RCLCPP_WARN(this->get_logger(), "min_neighbor_points must be >= 3 for plane fitting, clamping to 3");
+            min_neighbor_points_ = 3;
+        }
+        if (min_neighbor_quadrants_ < 1) {
+            RCLCPP_WARN(this->get_logger(), "min_neighbor_quadrants must be >= 1, clamping to 1");
+            min_neighbor_quadrants_ = 1;
+        } else if (min_neighbor_quadrants_ > 4) {
+            RCLCPP_WARN(this->get_logger(), "min_neighbor_quadrants must be <= 4, clamping to 4");
+            min_neighbor_quadrants_ = 4;
         }
 
         subFilteredGroundCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -184,8 +244,8 @@ public:
                 if (dist_sq > output_lookup_radius_cells_ * output_lookup_radius_cells_) continue;
 
                 PointType neighbor = point;
-                neighbor.x += dx * mapResolution;
-                neighbor.y += dy * mapResolution;
+                neighbor.x += dx * grid_resolution_m_;
+                neighbor.y += dy * grid_resolution_m_;
 
                 mapCell_t *candidate = getCellFromPoint(&neighbor);
                 if (!isCellKnownForOutput(candidate)) continue;
@@ -206,20 +266,27 @@ public:
         laserCloud.reset(new pcl::PointCloud<PointType>());
         laserCloudElevation.reset(new pcl::PointCloud<PointType>());
 
-        mapArrayInd = new int*[mapArrayLength];
-        predictionArrayFlag = new int*[mapArrayLength];
-        for (int i = 0; i < mapArrayLength; ++i){
-            mapArrayInd[i] = new int[mapArrayLength];
-            predictionArrayFlag[i] = new int[mapArrayLength];
+        const int total_cells = map_width_cells_ * map_height_cells_;
+        map_cells_.resize(total_cells);
+        map_points_.resize(total_cells);
+
+        for (int y = 0; y < map_height_cells_; ++y) {
+            for (int x = 0; x < map_width_cells_; ++x) {
+                const int index = x + y * map_width_cells_;
+                map_points_[index].x = map_origin_x_ + (x + 0.5f) * grid_resolution_m_;
+                map_points_[index].y = map_origin_y_ + (y + 0.5f) * grid_resolution_m_;
+                map_points_[index].z = std::numeric_limits<float>::quiet_NaN();
+                map_points_[index].intensity = 0.0f;
+
+                map_cells_[index].xyz = &map_points_[index];
+                map_cells_[index].grid.mapID = 0;
+                map_cells_[index].grid.cubeX = 0;
+                map_cells_[index].grid.cubeY = 0;
+                map_cells_[index].grid.gridX = x;
+                map_cells_[index].grid.gridY = y;
+                map_cells_[index].grid.gridIndex = index;
+            }
         }
-
-        for (int i = 0; i < mapArrayLength; ++i)
-            for (int j = 0; j < mapArrayLength; ++j)
-                mapArrayInd[i][j] = -1;
-
-        for (int i = 0; i < mapArrayLength; ++i)
-            for (int j = 0; j < mapArrayLength; ++j)
-                predictionArrayFlag[i][j] = 0;
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -288,31 +355,12 @@ public:
     }
 
     void updateElevationMap(PointType *point){
-        // 1. Get submap index
-        int cubeX, cubeY;
-        getPointCubeIndex(&cubeX, &cubeY, point);
-        if (cubeX < 0 || cubeX >= mapArrayLength || cubeY < 0 || cubeY >= mapArrayLength)
+        mapCell_t *cell = getCellFromPoint(point);
+        if (cell == nullptr) {
             return;
-
-        // 2. Assign submap ID
-        if (mapArrayInd[cubeX][cubeY] == -1){
-            childMap_t *childMap = new childMap_t(mapArrayCount, cubeX, cubeY);
-            mapArrayCount++;
-            mapArray.push_back(childMap);
-            mapArrayInd[cubeX][cubeY] = childMap->subInd;
         }
 
-        // 3. Get submap that the point belongs to
-        childMap_t *subMap = mapArray[mapArrayInd[cubeX][cubeY]];
-
-        // 4. Get grid index
-        int gridX = (point->x - subMap->originX) / mapResolution;
-        int gridY = (point->y - subMap->originY) / mapResolution;
-        if (gridX < 0 || gridY < 0 || gridX >= mapCubeArrayLength || gridY >= mapCubeArrayLength)
-            return;
-
-        // 5. Update cell
-        updateOccupancyCell(subMap->cellArray[gridX][gridY], point);
+        updateOccupancyCell(cell, point);
     }
 
     void updateOccupancyCell(mapCell_t *cell, PointType *point){
@@ -323,11 +371,13 @@ public:
         // updateOccupancyBel(cell, false);
         
         cell->observeTimes++;
-        last_observed_scan_[cell] = current_scan_id_;
         
         updateElevationBGK(cell, point);    // fuses elevation from all points within a cell
-        
-        observingList1.push_back(cell);
+
+        if (last_observed_scan_[cell] != current_scan_id_) {
+            last_observed_scan_[cell] = current_scan_id_;
+            observingList1.push_back(cell);
+        }
     }
 
     // Not used
@@ -363,14 +413,14 @@ public:
         occupancyMap2DInflated.header.stamp = this->get_clock()->now();
         
         // Set map parameters
-        occupancyMap2DInflated.info.resolution = mapResolution;
-        occupancyMap2DInflated.info.width = localMapArrayLength;
-        occupancyMap2DInflated.info.height = localMapArrayLength;
+        occupancyMap2DInflated.info.resolution = grid_resolution_m_;
+        occupancyMap2DInflated.info.width = output_map_cells_;
+        occupancyMap2DInflated.info.height = output_map_cells_;
         
         // Set origin
         if (use_robot_centered_origin_) {
-            occupancyMap2DInflated.info.origin.position.x = robotPoint.x - localMapLength/2.0;
-            occupancyMap2DInflated.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+            occupancyMap2DInflated.info.origin.position.x = robotPoint.x - output_map_size_m_/2.0;
+            occupancyMap2DInflated.info.origin.position.y = robotPoint.y - output_map_size_m_/2.0;
         } else {
             occupancyMap2DInflated.info.origin.position.x = fixed_origin_x_;
             occupancyMap2DInflated.info.origin.position.y = fixed_origin_y_;
@@ -378,24 +428,30 @@ public:
         occupancyMap2DInflated.info.origin.position.z = 0.0;
         // Fill data
         occupancyMap2DInflated.data.clear();
-        occupancyMap2DInflated.data.resize(localMapArrayLength * localMapArrayLength, -1);
+        occupancyMap2DInflated.data.resize(output_map_cells_ * output_map_cells_, -1);
 
 
         const float origin_x = occupancyMap2DInflated.info.origin.position.x;
         const float origin_y = occupancyMap2DInflated.info.origin.position.y;
-        const float half_res = mapResolution / 2.0f;
+        const float half_res = grid_resolution_m_ / 2.0f;
         const float inv_rad1 = 1.0f / (radius_inflation + 1);
 
-        for (int i = 0; i < localMapArrayLength; ++i) {
-            for (int j = 0; j < localMapArrayLength; ++j) {
+        for (int i = 0; i < output_map_cells_; ++i) {
+            for (int j = 0; j < output_map_cells_; ++j) {
                 PointType point;
-                point.x = origin_x + i * mapResolution + half_res;
-                point.y = origin_y + j * mapResolution + half_res;
+                point.x = origin_x + i * grid_resolution_m_ + half_res;
+                point.y = origin_y + j * grid_resolution_m_ + half_res;
+                point.z = 0.0f;
+
+                int index = i + j * output_map_cells_;
+                if (isInLidarDeadZone(point)) {
+                    occupancyMap2DInflated.data[index] = 100;
+                    continue;
+                }
 
                 mapCell_t *cell = getOutputCellFromPoint(point);
                 if (!isCellKnownForOutput(cell)) continue;
 
-                int index = i + j * localMapArrayLength;
                 occupancyMap2DInflated.data[index] = 0;
 
                 cost = int(applySigmoidToOccupancy(cell->occupancy) * 100);
@@ -405,9 +461,9 @@ public:
                     for (int n = -radius_inflation; n <= radius_inflation; ++n) {
                         int x = i + m;
                         int y = j + n;
-                        if (x < 0 || x >= localMapArrayLength || y < 0 || y >= localMapArrayLength)
+                        if (x < 0 || x >= output_map_cells_ || y < 0 || y >= output_map_cells_)
                             continue;
-                        int kernel_idx = x + y * localMapArrayLength;
+                        int kernel_idx = x + y * output_map_cells_;
                         cost_kernel = std::exp(-alpha_inflation * std::sqrt(float(m * m + n * n)) * inv_rad1);
                         cost_inflated = int(cost * (1 + cost_kernel));
                         cost_inflated = std::min(cost_inflated, 100);
@@ -418,25 +474,6 @@ public:
                 }
             }
         }
-    }
-
-    void getPointCubeIndex(int *cubeX, int *cubeY, PointType *point){
-        // Convert world coordinates (meters) to submap grid indices
-        // Each submap is mapCubeLength × mapCubeLength (10m × 10m)
-        // rootCubeIndex shifts the coordinate system to handle negative coordinates
-        
-        // Calculate which submap grid cell the point belongs to
-        // Add mapCubeLength/2.0 to handle points centered on grid boundaries
-        // Divide by mapCubeLength to get grid index
-        // Add rootCubeIndex to offset from origin (allows negative world coordinates)
-        *cubeX = int((point->x + mapCubeLength/2.0) / mapCubeLength) + rootCubeIndex;
-        *cubeY = int((point->y + mapCubeLength/2.0) / mapCubeLength) + rootCubeIndex;
-
-        // Handle negative coordinates correctly
-        // Integer division rounds toward zero, but we need floor behavior for negative numbers
-        // If point is in negative territory, decrement the index by 1
-        if (point->x + mapCubeLength/2.0 < 0)  --*cubeX;
-        if (point->y + mapCubeLength/2.0 < 0)  --*cubeY;
     }
 
     void TraversabilityThread(){
@@ -482,7 +519,10 @@ public:
         vector<PointType> neighborPoints;
         getNeighborCells(cell, neighborPoints);
 
-        if (neighborPoints.size() < 3)
+        if (neighborPoints.size() < static_cast<size_t>(min_neighbor_points_))
+            return;
+
+        if (!hasEnoughNeighborCoverage(cell, neighborPoints))
             return;
 
         // ===== NEW: Convert to Eigen format =====
@@ -500,11 +540,6 @@ public:
         Eigen::MatrixXf matPoints = Eigen::Map<const Eigen::Matrix<float, -1, -1, Eigen::RowMajor>>(
             xyzVector.data(), xyzVector.size() / 3, 3);
         
-        // ===== Height Pre-Check =====
-        float minElevation = matPoints.col(2).minCoeff();
-        float maxElevation = matPoints.col(2).maxCoeff();
-        float maxDifference = maxElevation - minElevation;
-
         // **************** Calculate Slope ****************
         // The slope s of a cell is calculated by fitting a plane in a circular region around the cell with a diameter corresponding
         // to the maximum diameter of the robot. The angle between the plane normal and the z-axis of the global coordinate
@@ -517,7 +552,7 @@ public:
         float slopeAngle = (std::acos(std::abs(matVec.at<float>(2, 2))) / M_PI) * 180;
         float occupancy;
         float slopeCost;
-        slopeCost = slopeAngle / filterAngleLimit;
+        slopeCost = slopeAngle / slope_angle_limit_deg_;
         slopeCost = std::min(slopeCost, 1.0f);
         // if (std::isnan(slopeAngle))
         // {
@@ -552,7 +587,7 @@ public:
 
         mean /= N;
         roughness = std::sqrt(sq_sum / N - mean * mean);
-        roughness = roughness / filterMaxRoughness;
+        roughness = roughness / roughness_norm_m_;
         roughness = std::min(roughness, 1.0f);
 
         // Calculate cell occupancy
@@ -576,31 +611,61 @@ public:
     }
 
     void getNeighborCells(mapCell_t *cell, vector<PointType> &neighborPoints){
-        // Get neighboring cells within a radius for analysis
-        float searchRadius = 0.6; // meters
-        int searchGrids = searchRadius / mapResolution;
+        const int centerX = cell->grid.gridX;
+        const int centerY = cell->grid.gridY;
+        const int maxRadiusCells = std::max(1, static_cast<int>(std::ceil(neighbor_search_radius_m_ / grid_resolution_m_)));
 
-        grid_t grid = cell->grid;
-        childMap_t *subMap = mapArray[grid.mapID];
+        for (int radiusCells = 1; radiusCells <= maxRadiusCells; ++radiusCells) {
+            neighborPoints.clear();
+            const float radius_m = std::min(neighbor_search_radius_m_, radiusCells * grid_resolution_m_);
+            const float radius_sq = radius_m * radius_m;
 
-        for (int i = -searchGrids; i <= searchGrids; ++i) {
-            for (int j = -searchGrids; j <= searchGrids; ++j) {
-                int x = grid.gridX + i;
-                int y = grid.gridY + j;
-                
-                if (x < 0 || x >= mapCubeArrayLength || y < 0 || y >= mapCubeArrayLength)
-                    continue;
-                    
-                mapCell_t *neighborCell = subMap->cellArray[x][y];
-                if (neighborCell->observeTimes > 0) {
-                    PointType p;
-                    p.x = neighborCell->xyz->x;
-                    p.y = neighborCell->xyz->y;
-                    p.z = neighborCell->elevation;
-                    neighborPoints.push_back(p);
+            for (int dx = -radiusCells; dx <= radiusCells; ++dx) {
+                for (int dy = -radiusCells; dy <= radiusCells; ++dy) {
+                    const float dist_sq = static_cast<float>(dx * dx + dy * dy) * grid_resolution_m_ * grid_resolution_m_;
+                    if (dist_sq > radius_sq) {
+                        continue;
+                    }
+
+                    mapCell_t *neighborCell = getCellAt(centerX + dx, centerY + dy);
+                    if (neighborCell != nullptr && neighborCell->observeTimes > 0) {
+                        PointType p;
+                        p.x = neighborCell->xyz->x;
+                        p.y = neighborCell->xyz->y;
+                        p.z = neighborCell->elevation;
+                        neighborPoints.push_back(p);
+                    }
                 }
             }
+
+            if (neighborPoints.size() >= static_cast<size_t>(min_neighbor_points_)) {
+                return;
+            }
         }
+    }
+
+    bool hasEnoughNeighborCoverage(const mapCell_t *cell, const vector<PointType> &neighborPoints) const {
+        bool quadrants[4] = {false, false, false, false};
+
+        for (const auto &p : neighborPoints) {
+            const float dx = p.x - cell->xyz->x;
+            const float dy = p.y - cell->xyz->y;
+            if (std::abs(dx) < 1e-6f && std::abs(dy) < 1e-6f) {
+                continue;
+            }
+
+            const int quadrant = (dx >= 0.0f ? 0 : 1) + (dy >= 0.0f ? 0 : 2);
+            quadrants[quadrant] = true;
+        }
+
+        int occupiedQuadrants = 0;
+        for (bool hasNeighbor : quadrants) {
+            if (hasNeighbor) {
+                ++occupiedQuadrants;
+            }
+        }
+
+        return occupiedQuadrants >= min_neighbor_quadrants_;
     }
 
     bool getRobotPosition(){
@@ -611,11 +676,45 @@ public:
             robotPoint.y = transform.transform.translation.y;
             robotPoint.z = transform.transform.translation.z;
 
+            updateLidarDeadZoneTransform();
+
             return true;
         }
         catch (tf2::TransformException& ex){ 
             RCLCPP_ERROR(this->get_logger(), "Transform Failure: %s", ex.what());
             return false;
+        }
+    }
+
+    void updateLidarDeadZoneTransform(){
+        has_lidar_from_map_transform_ = false;
+
+        if (!lidar_dead_zone_enabled_) {
+            return;
+        }
+
+        if (source_frame_.empty() || source_frame_ == map_frame_) {
+            lidar_from_map_rot_.setIdentity();
+            lidar_from_map_trans_.setZero();
+            has_lidar_from_map_transform_ = true;
+            return;
+        }
+
+        try {
+            auto transform = tf_buffer_->lookupTransform(source_frame_, map_frame_, tf2::TimePointZero);
+            const auto &t = transform.transform.translation;
+            const auto &q = transform.transform.rotation;
+
+            Eigen::Quaternionf quat(q.w, q.x, q.y, q.z);
+            quat.normalize();
+            lidar_from_map_rot_ = quat.toRotationMatrix();
+            lidar_from_map_trans_ = Eigen::Vector3f(t.x, t.y, t.z);
+            has_lidar_from_map_transform_ = true;
+        }
+        catch (tf2::TransformException& ex){
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "LiDAR dead-zone transform failure (%s <- %s): %s",
+                source_frame_.c_str(), map_frame_.c_str(), ex.what());
         }
     }
 
@@ -646,14 +745,14 @@ public:
         occupancyMap2D.header.stamp = this->get_clock()->now();
         
         // Set map parameters
-        occupancyMap2D.info.resolution = mapResolution;
-        occupancyMap2D.info.width = localMapArrayLength;
-        occupancyMap2D.info.height = localMapArrayLength;
+        occupancyMap2D.info.resolution = grid_resolution_m_;
+        occupancyMap2D.info.width = output_map_cells_;
+        occupancyMap2D.info.height = output_map_cells_;
         
         // Set origin
         if (use_robot_centered_origin_) {
-            occupancyMap2D.info.origin.position.x = robotPoint.x - localMapLength/2.0;
-            occupancyMap2D.info.origin.position.y = robotPoint.y - localMapLength/2.0;
+            occupancyMap2D.info.origin.position.x = robotPoint.x - output_map_size_m_/2.0;
+            occupancyMap2D.info.origin.position.y = robotPoint.y - output_map_size_m_/2.0;
         } else {
             occupancyMap2D.info.origin.position.x = fixed_origin_x_;
             occupancyMap2D.info.origin.position.y = fixed_origin_y_;
@@ -662,17 +761,23 @@ public:
         
         // Fill data
         occupancyMap2D.data.clear();
-        occupancyMap2D.data.resize(localMapArrayLength * localMapArrayLength, -1);
+        occupancyMap2D.data.resize(output_map_cells_ * output_map_cells_, -1);
 
-        for (int i = 0; i < localMapArrayLength; ++i) {
-            for (int j = 0; j < localMapArrayLength; ++j) {
+        for (int i = 0; i < output_map_cells_; ++i) {
+            for (int j = 0; j < output_map_cells_; ++j) {
                 PointType point;
-                point.x = occupancyMap2D.info.origin.position.x + i * mapResolution + mapResolution/2.0;
-                point.y = occupancyMap2D.info.origin.position.y + j * mapResolution + mapResolution/2.0;
+                point.x = occupancyMap2D.info.origin.position.x + i * grid_resolution_m_ + grid_resolution_m_/2.0;
+                point.y = occupancyMap2D.info.origin.position.y + j * grid_resolution_m_ + grid_resolution_m_/2.0;
+                point.z = 0.0f;
+
+                int index = i + j * output_map_cells_;
+                if (isInLidarDeadZone(point)) {
+                    occupancyMap2D.data[index] = 100;
+                    continue;
+                }
                 
                 mapCell_t *cell = getOutputCellFromPoint(point);
                 if (isCellKnownForOutput(cell)) {
-                    int index = i + j * localMapArrayLength;
                     occupancyMap2D.data[index] = int(cell->occupancy * 100);
                 }
             }
@@ -687,61 +792,91 @@ public:
         pubOccupancyMapLocalInflated->publish(occupancyMap2DInflated);
     }
 
+    bool getGridIndexFromPoint(const PointType &point, int &gridX, int &gridY) const {
+        gridX = static_cast<int>(std::floor((point.x - map_origin_x_) / grid_resolution_m_));
+        gridY = static_cast<int>(std::floor((point.y - map_origin_y_) / grid_resolution_m_));
+
+        return gridX >= 0 && gridX < map_width_cells_ &&
+               gridY >= 0 && gridY < map_height_cells_;
+    }
+
+    mapCell_t* getCellAt(int gridX, int gridY) {
+        if (gridX < 0 || gridX >= map_width_cells_ || gridY < 0 || gridY >= map_height_cells_) {
+            return nullptr;
+        }
+
+        return &map_cells_[gridX + gridY * map_width_cells_];
+    }
+
     mapCell_t* getCellFromPoint(PointType *point){
-        int cubeX, cubeY;
-        getPointCubeIndex(&cubeX, &cubeY, point);
-        
-        if (cubeX < 0 || cubeX >= mapArrayLength || cubeY < 0 || cubeY >= mapArrayLength)
-            return NULL;
-            
-        if (mapArrayInd[cubeX][cubeY] == -1)
-            return NULL;
-            
-        childMap_t *subMap = mapArray[mapArrayInd[cubeX][cubeY]];
-        
-        int gridX = (point->x - subMap->originX) / mapResolution;
-        int gridY = (point->y - subMap->originY) / mapResolution;
-        
-        if (gridX < 0 || gridY < 0 || gridX >= mapCubeArrayLength || gridY >= mapCubeArrayLength)
-            return NULL;
-            
-        return subMap->cellArray[gridX][gridY];
+        int gridX, gridY;
+        if (!getGridIndexFromPoint(*point, gridX, gridY)) {
+            return nullptr;
+        }
+
+        return getCellAt(gridX, gridY);
+    }
+
+    float normalizeAngleDeg(float angle_deg) const {
+        while (angle_deg <= -180.0f) angle_deg += 360.0f;
+        while (angle_deg > 180.0f) angle_deg -= 360.0f;
+        return angle_deg;
+    }
+
+    bool angleInSectorDeg(float angle_deg, float min_deg, float max_deg) const {
+        angle_deg = normalizeAngleDeg(angle_deg);
+        min_deg = normalizeAngleDeg(min_deg);
+        max_deg = normalizeAngleDeg(max_deg);
+
+        if (min_deg <= max_deg) {
+            return angle_deg >= min_deg && angle_deg <= max_deg;
+        }
+
+        return angle_deg >= min_deg || angle_deg <= max_deg;
+    }
+
+    bool isInLidarDeadZone(const PointType &point) const {
+        if (!lidar_dead_zone_enabled_ || lidar_dead_zone_radius_m_ <= 0.0f || !has_lidar_from_map_transform_) {
+            return false;
+        }
+
+        const Eigen::Vector3f map_point(point.x, point.y, point.z);
+        const Eigen::Vector3f lidar_point = lidar_from_map_rot_ * map_point + lidar_from_map_trans_;
+
+        const float dist_sq = lidar_point.x() * lidar_point.x() + lidar_point.y() * lidar_point.y();
+        if (dist_sq > lidar_dead_zone_radius_m_ * lidar_dead_zone_radius_m_) {
+            return false;
+        }
+
+        const float angle_deg = std::atan2(lidar_point.y(), lidar_point.x()) * 180.0f / static_cast<float>(M_PI);
+        return angleInSectorDeg(angle_deg, lidar_dead_zone_min_angle_deg_, lidar_dead_zone_max_angle_deg_);
     }
 
     void publishTraversabilityMap(){
         if (pubElevationCloud->get_subscription_count() == 0)
             return;
 
-        // 1. Find robot current cube index
-        int currentCubeX, currentCubeY;
-        getPointCubeIndex(&currentCubeX, &currentCubeY, &robotPoint);
-        
-        // 2. Loop through all the sub-maps that are nearby
-        int visualLength = int(visualizationRadius / mapCubeLength);
+        int robotGridX, robotGridY;
+        if (!getGridIndexFromPoint(robotPoint, robotGridX, robotGridY)) {
+            return;
+        }
+
+        const int visualRadiusCells = static_cast<int>(std::ceil(visualizationRadius / grid_resolution_m_));
+        const float visualRadiusSq = visualizationRadius * visualizationRadius;
         laserCloudElevation->clear();
         
-        for (int i = -visualLength; i <= visualLength; ++i){
-            for (int j = -visualLength; j <= visualLength; ++j){
+        for (int dx = -visualRadiusCells; dx <= visualRadiusCells; ++dx){
+            for (int dy = -visualRadiusCells; dy <= visualRadiusCells; ++dy){
+                const float distSq = static_cast<float>(dx * dx + dy * dy) * grid_resolution_m_ * grid_resolution_m_;
+                if (distSq > visualRadiusSq) {
+                    continue;
+                }
 
-                if (sqrt(float(i*i+j*j)) >= visualLength) continue;
-
-                int idx = i + currentCubeX;
-                int idy = j + currentCubeY;
-
-                if (idx < 0 || idx >= mapArrayLength ||  idy < 0 || idy >= mapArrayLength) continue;
-
-                if (mapArrayInd[idx][idy] == -1) continue;
-
-                childMap_t *subMap = mapArray[mapArrayInd[idx][idy]];
-
-                for (int m = 0; m < mapCubeArrayLength; ++m){
-                    for (int n = 0; n < mapCubeArrayLength; ++n){
-                        if (subMap->cellArray[m][n]->observeTimes > 0){
-                            PointType p = *(subMap->cellArray[m][n]->xyz);
-                            p.intensity = subMap->cellArray[m][n]->occupancy;
-                            laserCloudElevation->push_back(p);
-                        }
-                    }
+                mapCell_t *cell = getCellAt(robotGridX + dx, robotGridY + dy);
+                if (cell != nullptr && cell->observeTimes > 0){
+                    PointType p = *(cell->xyz);
+                    p.intensity = cell->occupancy;
+                    laserCloudElevation->push_back(p);
                 }
             }
         }

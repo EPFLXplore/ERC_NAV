@@ -198,9 +198,9 @@ public:
     R_orientation_rpy(2, 2) = 3e-4;    // yaw   ≈ 1°
     
     R_orientation_rpy_vio.setZero();
-    R_orientation_rpy_vio(0, 0) = 8e-4;   // roll  std ≈ 1.28 deg
-    R_orientation_rpy_vio(1, 1) = 8e-4;   // pitch std ≈ 1.28 deg
-    R_orientation_rpy_vio(2, 2) = 8e-3;   // yaw   std ≈ 2.56 deg
+    R_orientation_rpy_vio(0, 0) = 10e-3;   // roll  std ≈
+    R_orientation_rpy_vio(1, 1) = 10e-3;   // pitch std ≈ 
+    R_orientation_rpy_vio(2, 2) = 29e-3;   // yaw   std ≈
 
     R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.015;   // std 0.12 m
     R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.007;   // two times lower, because its a correction.
@@ -968,7 +968,10 @@ private:
   void publish_erc_map_localization(const rclcpp::Time & stamp) {
     geometry_msgs::msg::TransformStamped tf_map_base;
     try {
-      if (!tf_buffer_->canTransform("map", "base_link", tf2::TimePointZero)) {
+      // Passing a non-null error_msg suppresses tf2's internal console warning
+      // for unknown frames; it reports the reason through error_msg instead.
+      std::string tf_error;
+      if (!tf_buffer_->canTransform("map", "base_link", tf2::TimePointZero, &tf_error)) {
         return;
       }
       tf_map_base = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);

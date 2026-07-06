@@ -124,12 +124,12 @@ extern const float visualizationFrequency = 2; // n, skip n scans then publish, 
 
 // Robot self-filter box in the LiDAR/source frame. Points inside this box are ignored.
 inline constexpr bool lidarBodyBoxFilterEnabled = true;
-inline constexpr float lidarBodyBoxMinX = -1.00f;
-inline constexpr float lidarBodyBoxMaxX = 0.70f;
-inline constexpr float lidarBodyBoxMinY = -0.64f;
-inline constexpr float lidarBodyBoxMaxY = 0.30f;
-inline constexpr float lidarBodyBoxMinZ = -1.90f;
-inline constexpr float lidarBodyBoxMaxZ = -0.25f;
+inline constexpr float lidarBodyBoxMinX = -1.0f;
+inline constexpr float lidarBodyBoxMaxX = 0.50f;
+inline constexpr float lidarBodyBoxMinY = -0.70f;
+inline constexpr float lidarBodyBoxMaxY = 0.45f;
+inline constexpr float lidarBodyBoxMinZ = -3.0f;
+inline constexpr float lidarBodyBoxMaxZ = 3.0f;
 
 // Traversability Params
 extern const int traversabilityObserveTimeTh = 10;

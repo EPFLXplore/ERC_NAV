@@ -104,16 +104,28 @@ def generate_launch_description():
 
         arg(
             "filter_point_stride",
-            "3",
+            "1",
             "traversability_filter: process every k-th point after optional voxel downsampling. "
             "Higher is faster but less detailed; lower keeps more points but costs more CPU.",
         ),
         arg(
             "filter_sensor_voxel_leaf_m",
-            "0.1",
+            "0.05",
             "traversability_filter: voxel grid leaf size in meters in the incoming lidar frame. "
             "Higher downsamples more and smooths detail; lower preserves detail but costs more CPU. "
             "0.0 disables voxel downsampling.",
+        ),
+        arg(
+            "filter_noise_radius_m", 
+            "0.10", # must be bigger than the size of voxel
+            "traversability_filter: PCL RadiusOutlierRemoval radius in meters AFTER optional voxel downsampling. "
+            "0.0 disables radius noise filtering; higher removes more isolated sparse returns.",
+        ),
+        arg(
+            "filter_noise_min_neighbors",
+            "8",
+            "traversability_filter: minimum neighbors inside filter_noise_radius_m required to keep a point. "
+            "Higher removes more isolated points but can erase sparse valid terrain.",
         ),
         arg(
             "filter_max_lidar_z_m",
@@ -124,35 +136,66 @@ def generate_launch_description():
 
         arg(
             "local_inflation_radius",
-            "5",
+            "2",
             "Inflation radius in cells used when gradient_mode=local. Higher expands obstacles/costs "
             "farther; lower keeps inflated costs tighter.",
         ),
         arg(
             "local_inflation_factor",
-            "5.0",
+            "20.0",
             "Inflation decay factor used when gradient_mode=local. Higher makes inflated cost decay "
             "faster with distance; lower spreads stronger costs farther.",
         ),
         arg(
             "local_sigmoid_k",
-            "15.0", #4.0
+            "155.0", #4.0
             "Sigmoid slope parameter used when gradient_mode=local. Higher makes the cost transition "
             "sharper around x0; lower makes traversability costs more gradual.",
         ),
         arg(
             "local_sigmoid_x0",
-            "0.5", #0.95
+            "0.95", #0.95
             "Sigmoid midpoint parameter used when gradient_mode=local. Higher delays high occupancy "
             "until worse terrain; lower marks terrain costly sooner.",
         ),
         arg(
             "output_lookup_radius_cells",
-            "15",
+            "0",
             "traversability_map: observed-cell lookup radius in grid cells when publishing output maps. "
             "Higher fills small observation/grid gaps more aggressively; lower leaves more unknown cells.",
         ),
-
+        arg(
+            "grid_size_m",
+            "10.0",
+            "traversability_map: dense map grid side length in meters. Higher covers a larger stored area "
+            "but uses more memory; lower is lighter but clips points outside the grid.",
+        ),
+        arg(
+            "grid_resolution_m",
+            "0.1",
+            "traversability_map: dense map grid resolution in meters/cell. Lower is finer but more CPU/memory; "
+            "higher is coarser and smoother.",
+        ),
+        arg(
+            "lidar_dead_zone_enabled",
+            "true",
+            "traversability_map: mark the LiDAR blind/dead angular sector as max cost in output maps.",
+        ),
+        arg(
+            "lidar_dead_zone_min_angle_deg",
+            "-70.0",
+            "traversability_map: minimum dead-zone bearing in degrees in the LiDAR/source-frame XY plane.",
+        ),
+        arg(
+            "lidar_dead_zone_max_angle_deg",
+            "-20.0",
+            "traversability_map: maximum dead-zone bearing in degrees in the LiDAR/source-frame XY plane.",
+        ),
+        arg(
+            "lidar_dead_zone_radius_m",
+            "10.0",
+            "traversability_map: radial extent in meters for the LiDAR dead-zone max-cost sector.",
+        ),
         arg(
             "global_inflation_radius",
             "1",
@@ -180,27 +223,33 @@ def generate_launch_description():
 
         arg(
             "neighbor_search_radius_m",
-            "1.6",
+            "0.25",
             "Neighborhood radius in meters for plane fit per cell. Higher smooths over a larger area "
             "and is more stable but less local; lower reacts to small terrain changes but is noisier.",
         ),
         arg(
             "slope_angle_limit_deg",
-            "35.0",
+            "50.0",
             "Slope angle in degrees at which slope cost saturates. Higher tolerates steeper slopes "
             "before max cost; lower penalizes slopes earlier.",
         ),
         arg(
             "roughness_norm_m",
-            "0.1",
+            "1.0",
             "Roughness normalization in meters. Higher tolerates rougher terrain before max cost; "
             "lower penalizes small height variation sooner.",
         ),
         arg(
             "min_neighbor_points",
-            "15",
+            "5",
             "Minimum neighbor samples for traversability PCA. Higher requires more support and rejects "
             "sparse/noisy cells; lower computes costs with fewer points but is less reliable.",
+        ),
+        arg(
+            "min_neighbor_quadrants",
+            "4",
+            "Minimum number of XY quadrants around a cell that must contain observed neighbors before "
+            "fitting traversability. Higher rejects one-sided edge fits; lower accepts sparser geometry.",
         ),
     ]
 
@@ -228,6 +277,8 @@ def generate_launch_description():
         "use_msg_frame_id": lc("use_msg_frame_id"),
         "point_stride": typed("filter_point_stride", int),
         "sensor_voxel_leaf_m": typed("filter_sensor_voxel_leaf_m", float),
+        "noise_radius_m": typed("filter_noise_radius_m", float),
+        "noise_min_neighbors": typed("filter_noise_min_neighbors", int),
         "max_lidar_z_m": typed("filter_max_lidar_z_m", float),
     }
 
@@ -264,11 +315,14 @@ def generate_launch_description():
             float,
         ),
         "output_lookup_radius_cells": typed("output_lookup_radius_cells", int),
+        "grid_size_m": typed("grid_size_m", float),
+        "grid_resolution_m": typed("grid_resolution_m", float),
 
         "neighbor_search_radius_m": typed("neighbor_search_radius_m", float),
         "slope_angle_limit_deg": typed("slope_angle_limit_deg", float),
         "roughness_norm_m": typed("roughness_norm_m", float),
         "min_neighbor_points": typed("min_neighbor_points", int),
+        "min_neighbor_quadrants": typed("min_neighbor_quadrants", int),
     }
 
     traversability_filter = Node(

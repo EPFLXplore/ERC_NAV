@@ -101,14 +101,14 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.1
-      movement_time_allowance: 60.0
-    # Goal checker parameters
+      movement_time_allowance: 6000.0
 
+    # Goal checker parameters
     simple_goal_checker:
       stateful: false
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.2 # 0.2 rad : 11.5°
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 7.0 # 0.2 rad : 11.5°
 
 
 
@@ -138,6 +138,7 @@ controller_server:
       allow_reversing: false # LEAVE IT TO TRUE
       rotate_to_heading_min_angle: 0.785
       max_angular_accel: 0.25
+      max_angular_vel: 0.5
       # min_distance_to_obstacle: 1.35
       stateful: true
 
@@ -381,7 +382,7 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 1.0
+    expected_planner_frequency: 5.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
     # Switched to SmacPlanner2D because global costmap has no inflation/obstacle layers.
@@ -397,19 +398,19 @@ planner_server:
       max_planning_time: 5.0
       cost_travel_multiplier: 5.0 # 2.0 is great, 0.0 is classic A* without cost
       use_final_approach_orientation: true
-      smoother:
-          # max_iterations: bounds maximum computation time by limiting smoothing passes
-          max_iterations: 1000
-          # w_smooth: higher values smooth the path more aggressively (creates rounder curves)
-          w_smooth: 0.5
-          # w_data: higher values keep the path closer to the original A* output (less smoothing)
-          w_data: 0.1
-          # tolerance: convergence threshold; lower values allow more smoothing iterations before stopping
-          tolerance: 1.0e-10
-          # do_refinement: applies extra refinement smoothing passes for macro-trend smoothing
-          do_refinement: true
-          # refinement_num: number of recursive smoothing cycles (higher = smoother but slower)
-          refinement_num: 2
+      # smoother:
+      #     # max_iterations: bounds maximum computation time by limiting smoothing passes
+      #     max_iterations: 1000
+      #     # w_smooth: higher values smooth the path more aggressively (creates rounder curves)
+      #     w_smooth: 0.1
+      #     # w_data: higher values keep the path closer to the original A* output (less smoothing)
+      #     w_data: 0.5
+      #     # tolerance: convergence threshold; lower values allow more smoothing iterations before stopping
+      #     tolerance: 1.0e-10
+      #     # do_refinement: applies extra refinement smoothing passes for macro-trend smoothing
+      #     do_refinement: true
+      #     # refinement_num: number of recursive smoothing cycles (higher = smoother but slower)
+      #     refinement_num: 2
 
       # Previous Hybrid-A* settings kept for reference:
       # plugin: "nav2_smac_planner/SmacPlannerHybrid"

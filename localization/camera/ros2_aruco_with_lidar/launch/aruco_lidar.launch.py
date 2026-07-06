@@ -91,7 +91,7 @@ def generate_launch_description():
         # ---- Lidar filter params ----
         # lidar filter
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
-        DeclareLaunchArgument('tolerance_radius', default_value='1.0'), #1.5 HAS TO BE A TYPE DOUBLE
+        DeclareLaunchArgument('tolerance_radius', default_value='2.0'), #1.5 HAS TO BE A TYPE DOUBLE
         DeclareLaunchArgument('hauteur_z_min', default_value='0.0'),
         DeclareLaunchArgument('hauteur_z_max', default_value='0.75'),
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),

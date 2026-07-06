@@ -29,6 +29,7 @@
  */
 
 #include "utility.h"
+#include <pcl/filters/radius_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
 #include <algorithm>
 #include <cmath>
@@ -48,6 +49,7 @@ private:
     // Point Cloud
     pcl::PointCloud<PointType>::Ptr laserCloudIn; // projected full velodyne cloud
     pcl::PointCloud<PointType>::Ptr laserCloudWork; // optional voxel output (reused buffer)
+    pcl::PointCloud<PointType>::Ptr laserCloudDenoised; // optional radius outlier output (reused buffer)
     pcl::PointCloud<PointType>::Ptr laserCloudOut; // filtered and downsampled point cloud
     pcl::PointCloud<PointType>::Ptr laserCloudObstacles; // cloud for saving points that are classified as obstables, convert them to laser scan
     // Transform Listener
@@ -66,6 +68,8 @@ private:
     // for downsample
     float **minHeight;
     float **maxHeight;
+    float **sumHeight;
+    int **heightCount;
     bool **obstFlag;
     bool **initFlag;
     int cloudWidth = 0;
@@ -80,6 +84,9 @@ private:
     int point_stride_{1};
     /// Voxel leaf in **sensor** frame (m); 0 = disabled. Runs before transform; use ~mapResolution–2× for speed.
     float sensor_voxel_leaf_m_{0.0f};
+    float noise_radius_m_{0.0f};
+    int noise_min_neighbors_{2};
+    float max_lidar_z_m_{0.5f};
     bool use_lidar_body_box_filter_{lidarBodyBoxFilterEnabled};
     float lidar_body_box_min_x_m_{lidarBodyBoxMinX};
     float lidar_body_box_max_x_m_{lidarBodyBoxMaxX};
@@ -106,6 +113,15 @@ public:
             point_stride_ = 1;
         }
         sensor_voxel_leaf_m_ = static_cast<float>(this->declare_parameter<double>("sensor_voxel_leaf_m", 0.0));
+        noise_radius_m_ = static_cast<float>(this->declare_parameter<double>("noise_radius_m", 0.0));
+        noise_min_neighbors_ = this->declare_parameter<int>("noise_min_neighbors", 2);
+        if (noise_radius_m_ < 0.0f) {
+            noise_radius_m_ = 0.0f;
+        }
+        if (noise_min_neighbors_ < 1) {
+            noise_min_neighbors_ = 1;
+        }
+        max_lidar_z_m_ = static_cast<float>(this->declare_parameter<double>("max_lidar_z_m", 0.5));
         use_lidar_body_box_filter_ = this->declare_parameter<bool>("use_lidar_body_box_filter", lidarBodyBoxFilterEnabled);
         lidar_body_box_min_x_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_min_x_m", lidarBodyBoxMinX));
         lidar_body_box_max_x_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_max_x_m", lidarBodyBoxMaxX));
@@ -114,11 +130,15 @@ public:
         lidar_body_box_min_z_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_min_z_m", lidarBodyBoxMinZ));
         lidar_body_box_max_z_m_ = static_cast<float>(this->declare_parameter<double>("lidar_body_box_max_z_m", lidarBodyBoxMaxZ));
 
-        if (point_stride_ > 1 || sensor_voxel_leaf_m_ > 1e-6f) {
+        if (point_stride_ > 1 || sensor_voxel_leaf_m_ > 1e-6f || noise_radius_m_ > 1e-6f) {
             RCLCPP_INFO(
                 this->get_logger(),
-                "Filter downsampling: point_stride=%d sensor_voxel_leaf_m=%.3f (0=off)",
-                point_stride_, static_cast<double>(sensor_voxel_leaf_m_));
+                "Filter downsampling: point_stride=%d sensor_voxel_leaf_m=%.3f (0=off), noise_radius_m=%.3f noise_min_neighbors=%d, max_lidar_z_m=%.3f",
+                point_stride_,
+                static_cast<double>(sensor_voxel_leaf_m_),
+                static_cast<double>(noise_radius_m_),
+                noise_min_neighbors_,
+                static_cast<double>(max_lidar_z_m_));
         }
         RCLCPP_INFO(
             this->get_logger(),
@@ -147,6 +167,7 @@ public:
     void allocateMemory(){
         laserCloudIn.reset(new pcl::PointCloud<PointType>());
         laserCloudWork.reset(new pcl::PointCloud<PointType>());
+        laserCloudDenoised.reset(new pcl::PointCloud<PointType>());
         laserCloudOut.reset(new pcl::PointCloud<PointType>());
         laserCloudObstacles.reset(new pcl::PointCloud<PointType>());
 
@@ -159,12 +180,16 @@ public:
 
         minHeight = new float*[filterHeightMapArrayLength];
         maxHeight = new float*[filterHeightMapArrayLength];
+        sumHeight = new float*[filterHeightMapArrayLength];
+        heightCount = new int*[filterHeightMapArrayLength];
         obstFlag = new bool*[filterHeightMapArrayLength];
         initFlag = new bool*[filterHeightMapArrayLength];
 
         for (int i = 0; i < filterHeightMapArrayLength; ++i){
             minHeight[i] = new float[filterHeightMapArrayLength];
             maxHeight[i] = new float[filterHeightMapArrayLength];
+            sumHeight[i] = new float[filterHeightMapArrayLength];
+            heightCount[i] = new int[filterHeightMapArrayLength];
             obstFlag[i] = new bool[filterHeightMapArrayLength];
             initFlag[i] = new bool[filterHeightMapArrayLength];
         }
@@ -181,6 +206,8 @@ public:
         for (int i = 0; i < filterHeightMapArrayLength; ++i){
             fill(minHeight[i], minHeight[i] + filterHeightMapArrayLength, FLT_MAX);
             fill(maxHeight[i], maxHeight[i] + filterHeightMapArrayLength, -FLT_MAX);
+            fill(sumHeight[i], sumHeight[i] + filterHeightMapArrayLength, 0.0f);
+            fill(heightCount[i], heightCount[i] + filterHeightMapArrayLength, 0);
             fill(obstFlag[i], obstFlag[i] + filterHeightMapArrayLength, false);
             fill(initFlag[i], initFlag[i] + filterHeightMapArrayLength, false);
         }
@@ -232,21 +259,33 @@ public:
         localMapOrigin.x = roundedX - sensorMaxRangeLimit;
         localMapOrigin.y = roundedY - sensorMaxRangeLimit;
 
-        // Reset only initFlag; height arrays are read only where initFlag==true
-        for (int i = 0; i < filterHeightMapArrayLength; ++i)
+        // Reset per-scan height bins.
+        for (int i = 0; i < filterHeightMapArrayLength; ++i) {
             std::memset(initFlag[i], 0, filterHeightMapArrayLength * sizeof(bool));
+            std::fill(sumHeight[i], sumHeight[i] + filterHeightMapArrayLength, 0.0f);
+            std::fill(heightCount[i], heightCount[i] + filterHeightMapArrayLength, 0);
+        }
 
         // Fused single-pass: range filter + self-filter + transform + height-map binning
         const float maxR2 = sensorMaxRangeLimit * sensorMaxRangeLimit;
         const float invRes = 1.0f / mapResolution;
 
-        const pcl::PointCloud<PointType> *cloud_for_loop = laserCloudIn.get();
+        pcl::PointCloud<PointType>::ConstPtr cloud_for_loop = laserCloudIn;
         if (sensor_voxel_leaf_m_ > 1e-6f) {
             pcl::VoxelGrid<PointType> vg;
             vg.setInputCloud(laserCloudIn);
             vg.setLeafSize(sensor_voxel_leaf_m_, sensor_voxel_leaf_m_, sensor_voxel_leaf_m_);
             vg.filter(*laserCloudWork);
-            cloud_for_loop = laserCloudWork.get();
+            cloud_for_loop = laserCloudWork;
+        }
+
+        if (noise_radius_m_ > 1e-6f) {
+            pcl::RadiusOutlierRemoval<PointType> radius_filter;
+            radius_filter.setInputCloud(cloud_for_loop);
+            radius_filter.setRadiusSearch(noise_radius_m_);
+            radius_filter.setMinNeighborsInRadius(noise_min_neighbors_);
+            radius_filter.filter(*laserCloudDenoised);
+            cloud_for_loop = laserCloudDenoised;
         }
 
         const size_t npts = cloud_for_loop->points.size();
@@ -256,6 +295,7 @@ public:
             const auto &p = cloud_for_loop->points[i];
             float r2 = p.x * p.x + p.y * p.y + p.z * p.z;
             if (r2 > maxR2) continue;
+            if (p.z > max_lidar_z_m_) continue;
 
             const Eigen::Vector3f sensor_pt(p.x, p.y, p.z);
             if (use_lidar_body_box_filter_) {
@@ -280,10 +320,14 @@ public:
             if (!initFlag[idx][idy]) {
                 minHeight[idx][idy] = z;
                 maxHeight[idx][idy] = z;
+                sumHeight[idx][idy] = z;
+                heightCount[idx][idy] = 1;
                 initFlag[idx][idy] = true;
             } else {
                 if (z < minHeight[idx][idy]) minHeight[idx][idy] = z;
                 if (z > maxHeight[idx][idy]) maxHeight[idx][idy] = z;
+                sumHeight[idx][idy] += z;
+                heightCount[idx][idy]++;
             }
         }
 
@@ -295,7 +339,7 @@ public:
                 PointType tp;
                 tp.x = localMapOrigin.x + i * mapResolution + mapResolution * 0.5f;
                 tp.y = localMapOrigin.y + j * mapResolution + mapResolution * 0.5f;
-                tp.z = maxHeight[i][j];
+                tp.z = sumHeight[i][j] / std::max(1, heightCount[i][j]);
                 tp.intensity = 0;
                 laserCloudOut->push_back(tp);
             }
@@ -450,10 +494,14 @@ public:
             if (initFlag[idx][idy] == false){
                 minHeight[idx][idy] = laserCloudOut->points[i].z;
                 maxHeight[idx][idy] = laserCloudOut->points[i].z;
+                sumHeight[idx][idy] = laserCloudOut->points[i].z;
+                heightCount[idx][idy] = 1;
                 initFlag[idx][idy] = true;
             } else {
                 minHeight[idx][idy] = std::min(minHeight[idx][idy], laserCloudOut->points[i].z);
                 maxHeight[idx][idy] = std::max(maxHeight[idx][idy], laserCloudOut->points[i].z);
+                sumHeight[idx][idy] += laserCloudOut->points[i].z;
+                heightCount[idx][idy]++;
             }
         }
         // intermediate cloud
@@ -468,7 +516,7 @@ public:
                 PointType thisPoint;
                 thisPoint.x = localMapOrigin.x + i * mapResolution + mapResolution / 2.0;
                 thisPoint.y = localMapOrigin.y + j * mapResolution + mapResolution / 2.0;
-                thisPoint.z = maxHeight[i][j];
+                thisPoint.z = sumHeight[i][j] / std::max(1, heightCount[i][j]);
 
                 thisPoint.intensity = 0; // free
                 laserCloudTemp->push_back(thisPoint);
@@ -516,7 +564,7 @@ public:
                         if (initFlag[idx][idy] == true){
                             xTrainVec.push_back(localMapOrigin.x + idx * mapResolution + mapResolution / 2.0);
                             xTrainVec.push_back(localMapOrigin.y + idy * mapResolution + mapResolution / 2.0);
-                            yTrainVecElev.push_back(maxHeight[idx][idy]);
+                            yTrainVecElev.push_back(sumHeight[idx][idy] / std::max(1, heightCount[idx][idy]));
                             yTrainVecOccu.push_back(obstFlag[idx][idy] == true ? 1 : 0);
                         }
                     }

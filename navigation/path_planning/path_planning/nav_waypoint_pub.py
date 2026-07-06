@@ -54,7 +54,7 @@ class WaypointFollower(Node):
         #   "erc_map"  -> waypoint_list is written in ERC coords and converted to map
         #
         # =====================================================================
-        self.declare_parameter("waypoint_input_coordinates", "map") # WATCH OUT FOR MEEE !!!!
+        self.declare_parameter("waypoint_input_coordinates", "erc_map") # WATCH OUT FOR MEEE !!!!
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("robot_frame", "base_link")
         self.declare_parameter("wheel_odom_topic", "/fused_nav_ekf_odom")
@@ -199,15 +199,25 @@ class WaypointFollower(Node):
         #
         # =====================================================================
 
+        # waypoint_list = [
+        #     (6.6, 0.0, 0.0),
+        #     (6.6, 4.2, 0.0),
+        #     (13.3, 4.9, 0.0),
+        #     (13.3, 14.1, 0.0),
+        #     (2.8, 14.1, 0.0),
+        #     (2.8, 11.0, 0.0),
+        #     (-0.7, 11.0, 0.0),
+        #     (0.0, 0.0, 0.0),
+        # ]
+
         waypoint_list = [
-            (6.6, 0.0, 0.0),
-            (6.6, 4.2, 0.0),
-            (13.3, 4.9, 0.0),
-            (13.3, 14.1, 0.0),
-            (2.8, 14.1, 0.0),
-            (2.8, 11.0, 0.0),
-            (-0.7, 11.0, 0.0),
-            (0.0, 0.0, 0.0),
+            (-3.0, 3.0, 0.0),
+            (1.4, 5.0, 0.0),
+            (1.4, 11.0, 0.0),
+            (5.4, 6.0, 0.0),
+            (10.4, 11.0, 0.0),
+            (10.4, 2.0, 0.0),
+            (-7.4, 2.6, 0.0),
         ]
 
         for i, (x_in, y_in, yaw_in) in enumerate(waypoint_list):
@@ -460,7 +470,7 @@ class WaypointFollower(Node):
                 f"distance={distance:.2f} m"
             )
 
-            if self.current_speed > 0.03:
+            if self.current_speed > 0.01:
                 eta = distance / self.current_speed
                 self.get_logger().info(
                     f"ETA to waypoint {self.curr_waypoint_index}: {eta:.2f} s"
