@@ -142,19 +142,19 @@ def generate_launch_description():
         ),
         arg(
             "local_inflation_factor",
-            "20.0",
+            "0.0001",
             "Inflation decay factor used when gradient_mode=local. Higher makes inflated cost decay "
             "faster with distance; lower spreads stronger costs farther.",
         ),
         arg(
             "local_sigmoid_k",
-            "155.0", #4.0
+            "0.5", #4.0
             "Sigmoid slope parameter used when gradient_mode=local. Higher makes the cost transition "
             "sharper around x0; lower makes traversability costs more gradual.",
         ),
         arg(
             "local_sigmoid_x0",
-            "0.95", #0.95
+            "0.3", #0.95
             "Sigmoid midpoint parameter used when gradient_mode=local. Higher delays high occupancy "
             "until worse terrain; lower marks terrain costly sooner.",
         ),
@@ -229,7 +229,7 @@ def generate_launch_description():
         ),
         arg(
             "slope_angle_limit_deg",
-            "50.0",
+            "60.0",
             "Slope angle in degrees at which slope cost saturates. Higher tolerates steeper slopes "
             "before max cost; lower penalizes slopes earlier.",
         ),
@@ -241,7 +241,7 @@ def generate_launch_description():
         ),
         arg(
             "min_neighbor_points",
-            "5",
+            "8",
             "Minimum neighbor samples for traversability PCA. Higher requires more support and rejects "
             "sparse/noisy cells; lower computes costs with fewer points but is less reliable.",
         ),

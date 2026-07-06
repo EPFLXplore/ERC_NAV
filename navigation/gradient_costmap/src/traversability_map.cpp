@@ -33,6 +33,7 @@
 
 #include "utility.h"
 #include <unordered_map>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 class TraversabilityMapping : public rclcpp::Node {
 
@@ -105,17 +106,21 @@ private:
     Eigen::Vector3f lidar_from_map_trans_{Eigen::Vector3f::Zero()};
     uint64_t current_scan_id_;
     std::unordered_map<mapCell_t*, uint64_t> last_observed_scan_;
+    rclcpp::Time current_scan_time_;
+    std::unordered_map<mapCell_t*, rclcpp::Time> last_observed_time_;
     int output_lookup_radius_cells_{2};
     int radius_inflation = this->declare_parameter<int>("inflation_radius", 5); // in cells
     float alpha_inflation = static_cast<float>(this->declare_parameter<double>("inflation_factor", 1.0)); // inflation factor, can be tuned based on how much we want to inflate
-    float sigmoid_k = static_cast<float>(this->declare_parameter<double>("sigmoid_k", 0.5)); // weight for slope in occupancy calculation
-    float sigmoid_x0 = static_cast<float>(this->declare_parameter<double>("sigmoid_x0", 0.5)); // threshold for slope in occupancy calculation
+    float sigmoid_k = static_cast<float>(this->declare_parameter<double>("sigmoid_k", 3.0)); // weight for slope in occupancy calculation
+    float sigmoid_x0 = static_cast<float>(this->declare_parameter<double>("sigmoid_x0", 0.7)); // threshold for slope in occupancy calculation
     float neighbor_search_radius_m_ = static_cast<float>(this->declare_parameter<double>("neighbor_search_radius_m", 0.6));
     float slope_angle_limit_deg_ = static_cast<float>(this->declare_parameter<double>("slope_angle_limit_deg", filterAngleLimit));
     float roughness_norm_m_ = static_cast<float>(this->declare_parameter<double>("roughness_norm_m", filterMaxRoughness));
     int min_neighbor_points_ = this->declare_parameter<int>("min_neighbor_points", 3);
     int min_neighbor_quadrants_ = this->declare_parameter<int>("min_neighbor_quadrants", 3);
-    
+    float cell_clear_timeout_s_ = static_cast<float>(this->declare_parameter<double>("cell_clear_timeout_s", 1.0)); // cells with no new points for this long revert to unknown; 0 disables
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
+
     
     float applySigmoidToOccupancy(float p) const {
         p = std::clamp(p, 0.0f, 1.0f);
@@ -218,9 +223,79 @@ public:
         pubElevationCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_elevation_topic_, 5);
 
         allocateMemory();
+
+        param_cb_handle_ = this->add_on_set_parameters_callback(
+            std::bind(&TraversabilityMapping::onSetParameters, this, std::placeholders::_1));
     }
 
     ~TraversabilityMapping(){}
+
+    // Live parameter tuning (ros2 param set / rqt_reconfigure). Validates the whole batch first so a
+    // rejected set never half-applies, then updates the members read by the scan/publish path under mtx.
+    rcl_interfaces::msg::SetParametersResult onSetParameters(const std::vector<rclcpp::Parameter> &params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto &p : params) {
+            const std::string &name = p.get_name();
+            std::string reason;
+            if (name == "pointcloud_topic" || name == "output_local_topic" ||
+                name == "output_local_inflated_topic" || name == "output_elevation_topic" ||
+                name == "map_frame" || name == "base_frame" || name == "source_frame" ||
+                name == "grid_size_m" || name == "grid_resolution_m") {
+                reason = name + " is structural (topics/frames/grid allocation); restart the node to change it";
+            } else if (name == "inflation_radius" && p.as_int() < 0) {
+                reason = "inflation_radius must be >= 0";
+            } else if (name == "neighbor_search_radius_m" && p.as_double() < grid_resolution_m_) {
+                reason = "neighbor_search_radius_m must be >= grid_resolution_m";
+            } else if (name == "slope_angle_limit_deg" && p.as_double() <= 0.0) {
+                reason = "slope_angle_limit_deg must be > 0";
+            } else if (name == "roughness_norm_m" && p.as_double() <= 0.0) {
+                reason = "roughness_norm_m must be > 0";
+            } else if (name == "min_neighbor_points" && p.as_int() < 3) {
+                reason = "min_neighbor_points must be >= 3 for plane fitting";
+            } else if (name == "min_neighbor_quadrants" && (p.as_int() < 1 || p.as_int() > 4)) {
+                reason = "min_neighbor_quadrants must be in [1, 4]";
+            } else if (name == "output_lookup_radius_cells" && p.as_int() < 0) {
+                reason = "output_lookup_radius_cells must be >= 0";
+            } else if (name == "lidar_dead_zone_radius_m" && p.as_double() < 0.0) {
+                reason = "lidar_dead_zone_radius_m must be >= 0";
+            } else if (name == "cell_clear_timeout_s" && p.as_double() < 0.0) {
+                reason = "cell_clear_timeout_s must be >= 0 (0 disables)";
+            }
+            if (!reason.empty()) {
+                result.successful = false;
+                result.reason = reason;
+                return result;
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(mtx);
+        for (const auto &p : params) {
+            const std::string &name = p.get_name();
+            if      (name == "inflation_radius")           radius_inflation = static_cast<int>(p.as_int());
+            else if (name == "inflation_factor")           alpha_inflation = static_cast<float>(p.as_double());
+            else if (name == "sigmoid_k")                  sigmoid_k = static_cast<float>(p.as_double());
+            else if (name == "sigmoid_x0")                 sigmoid_x0 = static_cast<float>(p.as_double());
+            else if (name == "neighbor_search_radius_m")   neighbor_search_radius_m_ = static_cast<float>(p.as_double());
+            else if (name == "slope_angle_limit_deg")      slope_angle_limit_deg_ = static_cast<float>(p.as_double());
+            else if (name == "roughness_norm_m")           roughness_norm_m_ = static_cast<float>(p.as_double());
+            else if (name == "min_neighbor_points")        min_neighbor_points_ = static_cast<int>(p.as_int());
+            else if (name == "min_neighbor_quadrants")     min_neighbor_quadrants_ = static_cast<int>(p.as_int());
+            else if (name == "output_lookup_radius_cells") output_lookup_radius_cells_ = static_cast<int>(p.as_int());
+            else if (name == "lidar_dead_zone_enabled")    lidar_dead_zone_enabled_ = p.as_bool();
+            else if (name == "lidar_dead_zone_min_angle_deg") lidar_dead_zone_min_angle_deg_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_dead_zone_max_angle_deg") lidar_dead_zone_max_angle_deg_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_dead_zone_radius_m")   lidar_dead_zone_radius_m_ = static_cast<float>(p.as_double());
+            else if (name == "cell_clear_timeout_s")       cell_clear_timeout_s_ = static_cast<float>(p.as_double());
+            else if (name == "fixed_origin_x")             fixed_origin_x_ = p.as_double();
+            else if (name == "fixed_origin_y")             fixed_origin_y_ = p.as_double();
+            else if (name == "use_robot_centered_origin")  use_robot_centered_origin_ = p.as_bool();
+            else continue;
+            RCLCPP_INFO(this->get_logger(), "Runtime update: %s = %s", name.c_str(), p.value_to_string().c_str());
+        }
+        return result;
+    }
 
     bool isCellKnownForOutput(const mapCell_t *cell) const {
         return cell != nullptr && cell->observeTimes > 0;
@@ -307,6 +382,7 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
 
         ++current_scan_id_;
+        current_scan_time_ = this->now();
         
         auto t1 = std::chrono::high_resolution_clock::now();
         if (use_robot_centered_origin_) {
@@ -376,6 +452,7 @@ public:
 
         if (last_observed_scan_[cell] != current_scan_id_) {
             last_observed_scan_[cell] = current_scan_id_;
+            last_observed_time_[cell] = current_scan_time_;
             observingList1.push_back(cell);
         }
     }
@@ -485,6 +562,40 @@ public:
         }
     }
 
+    // Reset a cell to its never-observed state so it drops out of the output grids and
+    // its stale elevation no longer feeds neighbor plane fits. Call with mtx held.
+    void resetCell(mapCell_t *cell){
+        cell->log_odds = 0.5f;
+        cell->observeTimes = 0;
+        cell->elevation = -FLT_MAX;
+        cell->elevationVar = 1e3f;
+        cell->occupancy = 0.0f;
+        cell->occupancyVar = 1e3f;
+        cell->xyz->z = std::numeric_limits<float>::quiet_NaN();
+        cell->xyz->intensity = 0.0f;
+    }
+
+    // Clear cells that received no points for cell_clear_timeout_s_. Returns the number of
+    // cells cleared. Call with mtx held.
+    size_t clearStaleCells(){
+        if (cell_clear_timeout_s_ <= 0.0f || last_observed_time_.empty())
+            return 0;
+
+        const rclcpp::Time now = this->now();
+        size_t cleared = 0;
+        for (auto it = last_observed_time_.begin(); it != last_observed_time_.end();) {
+            if ((now - it->second).seconds() > cell_clear_timeout_s_) {
+                resetCell(it->first);
+                last_observed_scan_.erase(it->first);
+                it = last_observed_time_.erase(it);
+                ++cleared;
+            } else {
+                ++it;
+            }
+        }
+        return cleared;
+    }
+
     void traversabilityMapCalculation(){
         // Copy data with lock
 
@@ -492,11 +603,13 @@ public:
         {
             std::lock_guard<std::mutex> lock(mtx);
 
-            if (observingList1.empty())
+            const size_t clearedCells = clearStaleCells();
+
+            if (observingList1.empty() && clearedCells == 0)
             {
                 return;
-            
-            } 
+
+            }
             cellsToProcess.swap(observingList1);
         }
         

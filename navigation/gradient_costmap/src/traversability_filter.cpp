@@ -31,6 +31,7 @@
 #include "utility.h"
 #include <pcl/filters/radius_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -94,6 +95,7 @@ private:
     float lidar_body_box_max_y_m_{lidarBodyBoxMaxY};
     float lidar_body_box_min_z_m_{lidarBodyBoxMinZ};
     float lidar_body_box_max_z_m_{lidarBodyBoxMaxZ};
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
 
 public:
@@ -162,6 +164,57 @@ public:
         allocateMemory();
 
         pointcloud2laserscanInitialization();
+
+        param_cb_handle_ = this->add_on_set_parameters_callback(
+            std::bind(&TraversabilityFilter::onSetParameters, this, std::placeholders::_1));
+    }
+
+    // Live parameter tuning (ros2 param set / rqt_reconfigure). The node spins single-threaded, so
+    // updating members between cloud callbacks is safe. Validate the batch first, then apply.
+    rcl_interfaces::msg::SetParametersResult onSetParameters(const std::vector<rclcpp::Parameter> &params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto &p : params) {
+            const std::string &name = p.get_name();
+            std::string reason;
+            if (name == "input_cloud_topic" || name == "output_cloud_topic" ||
+                name == "map_frame" || name == "base_frame") {
+                reason = name + " is structural (topics/frames); restart the node to change it";
+            } else if (name == "point_stride" && p.as_int() < 1) {
+                reason = "point_stride must be >= 1";
+            } else if ((name == "sensor_voxel_leaf_m" || name == "noise_radius_m") && p.as_double() < 0.0) {
+                reason = name + " must be >= 0 (0 disables)";
+            } else if (name == "noise_min_neighbors" && p.as_int() < 1) {
+                reason = "noise_min_neighbors must be >= 1";
+            }
+            if (!reason.empty()) {
+                result.successful = false;
+                result.reason = reason;
+                return result;
+            }
+        }
+
+        for (const auto &p : params) {
+            const std::string &name = p.get_name();
+            if      (name == "point_stride")              point_stride_ = static_cast<int>(p.as_int());
+            else if (name == "sensor_voxel_leaf_m")       sensor_voxel_leaf_m_ = static_cast<float>(p.as_double());
+            else if (name == "noise_radius_m")            noise_radius_m_ = static_cast<float>(p.as_double());
+            else if (name == "noise_min_neighbors")       noise_min_neighbors_ = static_cast<int>(p.as_int());
+            else if (name == "max_lidar_z_m")             max_lidar_z_m_ = static_cast<float>(p.as_double());
+            else if (name == "use_msg_frame_id")          use_msg_frame_id_ = p.as_bool();
+            else if (name == "source_frame")              source_frame_ = p.as_string();
+            else if (name == "use_lidar_body_box_filter") use_lidar_body_box_filter_ = p.as_bool();
+            else if (name == "lidar_body_box_min_x_m")    lidar_body_box_min_x_m_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_body_box_max_x_m")    lidar_body_box_max_x_m_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_body_box_min_y_m")    lidar_body_box_min_y_m_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_body_box_max_y_m")    lidar_body_box_max_y_m_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_body_box_min_z_m")    lidar_body_box_min_z_m_ = static_cast<float>(p.as_double());
+            else if (name == "lidar_body_box_max_z_m")    lidar_body_box_max_z_m_ = static_cast<float>(p.as_double());
+            else continue;
+            RCLCPP_INFO(this->get_logger(), "Runtime update: %s = %s", name.c_str(), p.value_to_string().c_str());
+        }
+        return result;
     }
 
     void allocateMemory(){
