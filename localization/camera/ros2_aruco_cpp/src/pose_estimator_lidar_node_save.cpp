@@ -33,11 +33,7 @@
 #include <Eigen/Dense>
 
 #include <cmath>
-#include <cstdio>
-#include <limits>
 #include <optional>
-#include <string>
-#include <unordered_map>
 #include <vector>
 #include <algorithm>
 #include <numeric>
@@ -70,12 +66,6 @@ static inline double wrap(double a)
     a = std::fmod(a + M_PI, 2.0 * M_PI);
     if (a < 0.0) a += 2.0 * M_PI;
     return a - M_PI;
-}
-
-/* Shortest signed angular difference a - b in degrees, in (-180, 180]. */
-static inline double ang_diff_deg(double a, double b)
-{
-    return std::remainder(a - b, 360.0);
 }
 
 static geometry_msgs::msg::Quaternion yaw_to_quat(double yaw)
@@ -270,9 +260,6 @@ private:
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
     static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
-    /** Phase-2 init: max deviation of a marker's yaw_from_start vs the
-     *  phase-1 yaw before the marker is treated as a mislabeled cube. */
-    static constexpr double INIT_YAW_GATE_RAD = 25.0 * M_PI / 180.0;
     /* Previously used to throttle yaw; throttling after a fresh (x,y) solve
      * leaves heading inconsistent with position (wrong map→odom yaw). */
 
@@ -302,9 +289,6 @@ private:
     InitPhase init_phase_;
     int  init_counter_phase1_;
     int  init_counter_phase2_;
-    /* Phase-1 averaged yaw, reference for the phase-2 yaw gate. */
-    double phase1_yaw_ref_{0.0};
-    bool   have_phase1_yaw_ref_{false};
     rclcpp::Time last_callback_time_;
     /** Last accepted handle_marker_message valid marker count (post-init rate-limit bypass). */
     int last_handled_valid_marker_count_{-1};
@@ -336,10 +320,6 @@ private:
     bool have_last_cube_phi_{false};
     double last_cube_detect_recv_sec_{-1.0};
     double last_cube_phi_recv_sec_{-1.0};
-
-    /* ---- bearing diagnostics (all touched from solver_cbg_ only) ---- */
-    std::unordered_map<int, double> last_camera_bearing_deg_;
-    std::unordered_map<std::string, rclcpp::Time> last_bearing_log_time_;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    odom_pub_;
@@ -722,43 +702,7 @@ private:
         }
         double final_x = sum_x / inlier_count;
         double final_y = sum_y / inlier_count;
-
-        /* yaw: same MAD outlier rejection as translation, on circular
-         * deviations from the plain mean (one bad sample otherwise
-         * shifts the unfiltered circular mean by dev/N). */
         double avg_yaw = circular_mean_yaw(yaw_list);
-        int yaw_inlier_count = static_cast<int>(yaw_list.size());
-        if (yaw_list.size() >= 3) {
-            std::vector<double> dev(yaw_list.size());
-            for (size_t i = 0; i < yaw_list.size(); ++i)
-                dev[i] = wrap(yaw_list[i] - avg_yaw);
-
-            auto vec_median = [](std::vector<double> v) {
-                std::sort(v.begin(), v.end());
-                const size_t m = v.size();
-                return (m % 2 == 0)
-                    ? 0.5 * (v[m / 2 - 1] + v[m / 2])
-                    : v[m / 2];
-            };
-            const double med = vec_median(dev);
-            std::vector<double> abs_dev(dev.size());
-            for (size_t i = 0; i < dev.size(); ++i)
-                abs_dev[i] = std::fabs(dev[i] - med);
-            const double yaw_mad = vec_median(abs_dev);
-            const double yaw_thresh =
-                std::max(3.0 * yaw_mad, 5.0 * M_PI / 180.0);
-
-            std::vector<double> inlier_yaws;
-            inlier_yaws.reserve(yaw_list.size());
-            for (size_t i = 0; i < yaw_list.size(); ++i) {
-                if (std::fabs(dev[i] - med) < yaw_thresh)
-                    inlier_yaws.push_back(yaw_list[i]);
-            }
-            if (inlier_yaws.size() >= 3) {
-                avg_yaw = circular_mean_yaw(inlier_yaws);
-                yaw_inlier_count = static_cast<int>(inlier_yaws.size());
-            }
-        }
 
         geometry_msgs::msg::TransformStamped tf_msg;
         tf_msg.header.stamp = stamp_now(this);
@@ -769,11 +713,9 @@ private:
         tf_msg.transform.translation.z = 0.0;
         tf_msg.transform.rotation = yaw_to_quat(avg_yaw);
 
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-            "Robust init TF: t=(%.3f, %.3f), yaw=%.2f deg "
-            "(xy inliers %d/%d, yaw inliers %d/%d)",
-            final_x, final_y, avg_yaw * 180.0 / M_PI,
-            inlier_count, N, yaw_inlier_count, N);
+        // RCLCPP_INFO(get_logger(),
+        //     "Robust init TF: t=(%.3f, %.3f), yaw=%.2f deg",
+        //     final_x, final_y, avg_yaw * 180.0 / M_PI);
         return tf_msg;
     }
 
@@ -860,7 +802,6 @@ private:
         return std::nullopt;
 #else
         const char *ctx = (log_ctx && log_ctx[0]) ? log_ctx : "ECOS";
-        (void)ctx;
         const int M = static_cast<int>(meas.size());
         if (M < 2) {
             // RCLCPP_WARN(get_logger(),
@@ -870,7 +811,6 @@ private:
 
         for (int k = 0; k < M; ++k) {
             const double vnorm = std::hypot(meas[k].vx, meas[k].vy);
-            (void)vnorm;
             // RCLCPP_INFO(get_logger(),
             //     "[%s] meas[%d] lm=(%.4f, %.4f) r=%.4f v=(%.5f, %.5f) |v|=%.6f",
             //     ctx, k, meas[k].ax, meas[k].ay, meas[k].range,
@@ -1029,132 +969,12 @@ private:
     }
 
     /* ================================================================ */
-    /*  Per-source bearing diagnostics                                  */
-    /*                                                                  */
-    /*  CAM   = /aruco_markers     (camera-only bearings)               */
-    /*  LIDAR = /cube_markers      (detect_cube LiDAR centres)          */
-    /*  PHI   = /cube_markers_phi  (camera fallback, drill sector)      */
-    /*                                                                  */
-    /*  Per marker: raw = ar_angles_list as published; base = that      */
-    /*  angle transformed to base_link; posBrg = atan2(y, x) of the     */
-    /*  transformed position. dAngPos = base - posBrg: non-zero means   */
-    /*  the source's angle and position fields disagree (frame or       */
-    /*  convention bug in the publisher). dCam = base - last CAM        */
-    /*  bearing for the same id: the camera-vs-LiDAR discrepancy.       */
-    /*  Logged at most once per second per source.                      */
-    /* ================================================================ */
-    void log_bearing_diagnostics(
-        const char *src_tag,
-        const ros2_aruco_interfaces::msg::ArucoMarkers &msg,
-        bool is_camera_source)
-    {
-        const size_t n = std::min(
-            msg.marker_ids.size(),
-            std::min(msg.poses.size(), msg.ar_angles_list.size()));
-        if (n == 0) return;
-
-        constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
-        const rclcpp::Time t_now = now();
-        rclcpp::Time &last_log = last_bearing_log_time_[src_tag];
-        const bool do_log = (last_log.nanoseconds() == 0) ||
-            (t_now - last_log).seconds() >= 1.0;
-
-        /* Rover pose in map from the broadcast map->odom TF composed with
-         * the latest EKF odom (NaN before the first init TF exists). */
-        double rov_x = NaN, rov_y = NaN, rov_yaw_rad = NaN;
-        if (prev_map_odom_tf_.has_value()) {
-            const auto &tr = prev_map_odom_tf_->transform;
-            Eigen::Matrix4d T_map_base =
-                pose_to_mat(tr.translation.x, tr.translation.y,
-                            quat_to_yaw(tr.rotation)) *
-                pose_to_mat(odom_pos_x_, odom_pos_y_, odom_yaw_);
-            rov_x = T_map_base(0, 3);
-            rov_y = T_map_base(1, 3);
-            rov_yaw_rad = std::atan2(T_map_base(1, 0), T_map_base(0, 0));
-        }
-        const double rov_yaw_deg = rov_yaw_rad * 180.0 / M_PI;
-
-        std::string line;
-        char buf[288];
-        for (size_t k = 0; k < n; ++k) {
-            const int id = static_cast<int>(msg.marker_ids[k]);
-            const double raw_deg = msg.ar_angles_list[k];
-
-            double bearing_rad = 0.0;
-            const bool have_ang =
-                marker_bearing_in_base_link(msg, k, bearing_rad);
-            const double ang_deg =
-                have_ang ? bearing_rad * 180.0 / M_PI : NaN;
-
-            double bx = NaN, by = NaN;
-            const bool have_pos =
-                marker_position_in_base_link(msg, k, bx, by);
-            const double pos_brg_deg =
-                have_pos ? std::atan2(by, bx) * 180.0 / M_PI : NaN;
-            const double range = have_pos ? std::hypot(bx, by) : NaN;
-
-            const double d_ang_pos = (have_ang && have_pos)
-                ? ang_diff_deg(ang_deg, pos_brg_deg) : NaN;
-
-            if (is_camera_source && have_ang) {
-                last_camera_bearing_deg_[id] = ang_deg;
-            }
-
-            if (!do_log) continue;
-
-            double d_cam = NaN;
-            if (!is_camera_source && have_ang) {
-                const auto it = last_camera_bearing_deg_.find(id);
-                if (it != last_camera_bearing_deg_.end()) {
-                    d_cam = ang_diff_deg(ang_deg, it->second);
-                }
-            }
-
-            /* Expected bearing to this landmark given the rover's map
-             * pose/heading; dExp = measured - expected. */
-            double exp_deg = NaN, d_exp = NaN;
-            if (std::isfinite(rov_yaw_rad) &&
-                id >= 0 && id < static_cast<int>(landmark_poses_.size())) {
-                const auto &lm = landmark_poses_[id];
-                if (std::abs(lm.first) < MAP_SIZE &&
-                    std::abs(lm.second) < MAP_SIZE) {
-                    exp_deg = wrap(std::atan2(lm.second - rov_y,
-                                              lm.first - rov_x) -
-                                   rov_yaw_rad) * 180.0 / M_PI;
-                    if (have_ang) {
-                        d_exp = ang_diff_deg(ang_deg, exp_deg);
-                    }
-                }
-            }
-
-            std::snprintf(buf, sizeof(buf),
-                " | id=%d raw=%.1f base=%.1f posBrg=%.1f dAngPos=%.1f "
-                "r=%.2f pos=(%.2f, %.2f) exp=%.1f dExp=%.1f dCam=%.1f",
-                id, raw_deg, ang_deg, pos_brg_deg, d_ang_pos,
-                range, bx, by, exp_deg, d_exp, d_cam);
-            line += buf;
-        }
-
-        if (do_log && !line.empty()) {
-            last_log = t_now;
-            RCLCPP_INFO(get_logger(),
-                "[BEARING %s] rover_map=(%.2f, %.2f) yaw_map=%.1f deg "
-                "frame=%s%s",
-                src_tag, rov_x, rov_y, rov_yaw_deg,
-                msg.header.frame_id.c_str(), line.c_str());
-        }
-    }
-
-    /* ================================================================ */
     /*  Phase-1 input: camera-only ArUco detections                     */
     /*  Active only while init_phase_ == CAMERA.                        */
     /* ================================================================ */
     void aruco_callback(
         const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg)
     {
-        /* Diagnostics + camera-reference update run in every phase so
-         * LIDAR/PHI bearings stay comparable after init. */
-        log_bearing_diagnostics("CAM", *msg, /*is_camera_source=*/true);
         if (init_phase_ != InitPhase::CAMERA) return;
         handle_marker_message(msg, /*from_camera=*/true);
     }
@@ -1242,7 +1062,6 @@ private:
     void cube_detect_callback(
         const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg)
     {
-        log_bearing_diagnostics("LIDAR", *msg, /*is_camera_source=*/false);
         if (init_phase_ == InitPhase::CAMERA) return;
         {
             std::lock_guard<std::mutex> lk(cube_merge_mutex_);
@@ -1256,7 +1075,6 @@ private:
     void cube_phi_callback(
         const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg)
     {
-        log_bearing_diagnostics("PHI", *msg, /*is_camera_source=*/false);
         if (init_phase_ == InitPhase::CAMERA) return;
         {
             std::lock_guard<std::mutex> lk(cube_merge_mutex_);
@@ -1354,44 +1172,21 @@ private:
                 continue;
             }
 
-            if (init_phase_ != InitPhase::DONE) {
-                const double lm_bearing_from_start = std::atan2(
-                    lm.second - erc_start_pos_[1],
-                    lm.first - erc_start_pos_[0]);
-                const double yaw_from_start = wrap(
-                    lm_bearing_from_start - bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s MARKER DEBUG] phase=%d msg_i=%zu id=%d frame=%s "
-                    "lm=(%.3f, %.3f) base=(%.3f, %.3f) range=%.3f "
-                    "bearing=%.2f deg lm_bearing_start=%.2f deg "
-                    "yaw_from_start=%.2f deg",
-                    src_tag, phase_id, k, idx, msg->header.frame_id.c_str(),
-                    lm.first, lm.second, base_x, base_y, range,
-                    bearing_rad * 180.0 / M_PI,
-                    lm_bearing_from_start * 180.0 / M_PI,
-                    yaw_from_start * 180.0 / M_PI);
-
-                /* Phase-2 yaw gate: a marker whose implied yaw disagrees
-                 * with the phase-1 yaw is a mislabeled cube (e.g. detect_cube
-                 * sector computed before map->odom was valid); one such
-                 * sample tilts the unfiltered init yaw average. */
-                if (init_phase_ == InitPhase::CUBE && have_phase1_yaw_ref_) {
-                    const double yaw_dev =
-                        std::fabs(wrap(yaw_from_start - phase1_yaw_ref_));
-                    if (yaw_dev > INIT_YAW_GATE_RAD) {
-                        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                            "[%s SKIP marker] id=%d yaw_from_start=%.1f deg "
-                            "deviates %.1f deg from phase-1 yaw %.1f deg "
-                            "(gate %.0f deg) — likely mislabeled cube",
-                            src_tag, idx,
-                            yaw_from_start * 180.0 / M_PI,
-                            yaw_dev * 180.0 / M_PI,
-                            phase1_yaw_ref_ * 180.0 / M_PI,
-                            INIT_YAW_GATE_RAD * 180.0 / M_PI);
-                        continue;
-                    }
-                }
-            }
+            const double lm_bearing_from_start = std::atan2(
+                lm.second - erc_start_pos_[1],
+                lm.first - erc_start_pos_[0]);
+            const double yaw_from_start = wrap(
+                lm_bearing_from_start - bearing_rad);
+            // RCLCPP_INFO(get_logger(),
+            //     "[%s MARKER DEBUG] phase=%d msg_i=%zu id=%d frame=%s "
+            //     "lm=(%.3f, %.3f) base=(%.3f, %.3f) range=%.3f "
+            //     "bearing=%.2f deg lm_bearing_start=%.2f deg "
+            //     "yaw_from_start=%.2f deg",
+            //     src_tag, phase_id, k, idx, msg->header.frame_id.c_str(),
+            //     lm.first, lm.second, base_x, base_y, range,
+            //     bearing_rad * 180.0 / M_PI,
+            //     lm_bearing_from_start * 180.0 / M_PI,
+            //     yaw_from_start * 180.0 / M_PI);
 
             valid_markers.push_back({
                 idx,
@@ -1445,13 +1240,13 @@ private:
                 double x0 = erc_start_pos_[0], y0 = erc_start_pos_[1];
                 double yawA = wrap(
                     std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s INIT n=1 DEBUG] id=%d lm=(%.3f, %.3f) "
-                    "bearing=%.2f deg lm_bearing=%.2f deg yawA=%.2f deg",
-                    src_tag, mA.landmark_index, A.first, A.second,
-                    mA.bearing_rad * 180.0 / M_PI,
-                    std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
-                    yawA * 180.0 / M_PI);
+                // RCLCPP_INFO(get_logger(),
+                //     "[%s INIT n=1 DEBUG] id=%d lm=(%.3f, %.3f) "
+                //     "bearing=%.2f deg lm_bearing=%.2f deg yawA=%.2f deg",
+                //     src_tag, mA.landmark_index, A.first, A.second,
+                //     mA.bearing_rad * 180.0 / M_PI,
+                //     std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
+                //     yawA * 180.0 / M_PI);
 
                 yaw_estimate_ = yawA;
                 x_estimate_ = x0;
@@ -1477,20 +1272,20 @@ private:
                     std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
                 double yawB = wrap(
                     std::atan2(B.second - y0, B.first - x0) - mB.bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s INIT n=2 DEBUG] idA=%d bearingA=%.2f deg "
-                    "lmBearingA=%.2f deg yawA=%.2f deg | "
-                    "idB=%d bearingB=%.2f deg lmBearingB=%.2f deg "
-                    "yawB=%.2f deg",
-                    src_tag,
-                    mA.landmark_index,
-                    mA.bearing_rad * 180.0 / M_PI,
-                    std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
-                    yawA * 180.0 / M_PI,
-                    mB.landmark_index,
-                    mB.bearing_rad * 180.0 / M_PI,
-                    std::atan2(B.second - y0, B.first - x0) * 180.0 / M_PI,
-                    yawB * 180.0 / M_PI);
+                // RCLCPP_INFO(get_logger(),
+                //     "[%s INIT n=2 DEBUG] idA=%d bearingA=%.2f deg "
+                //     "lmBearingA=%.2f deg yawA=%.2f deg | "
+                //     "idB=%d bearingB=%.2f deg lmBearingB=%.2f deg "
+                //     "yawB=%.2f deg",
+                //     src_tag,
+                //     mA.landmark_index,
+                //     mA.bearing_rad * 180.0 / M_PI,
+                //     std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
+                //     yawA * 180.0 / M_PI,
+                //     mB.landmark_index,
+                //     mB.bearing_rad * 180.0 / M_PI,
+                //     std::atan2(B.second - y0, B.first - x0) * 180.0 / M_PI,
+                //     yawB * 180.0 / M_PI);
                 // yaw_estimate_ = wrap(0.5 * (yawA + yawB));
                 //circular mean
                 yaw_estimate_ = circular_mean_yaw({yawA, yawB});
@@ -1566,7 +1361,7 @@ private:
         /*  POST-INIT CONTINUOUS UPDATES                                */
         /* ============================================================ */
         } else {
-            if (n >= 3) {
+            if (n >= 2) {
                 auto measurements =
                     build_measurements(valid_markers, *msg);
                 if (static_cast<int>(measurements.size()) != n) {
@@ -1623,23 +1418,7 @@ private:
             }
 
             if (solved_new_xy_) {
-                auto tf = build_map_odom_tf(
-                    x_estimate_, y_estimate_, yaw_estimate_);
-                prev_map_odom_tf_ = tf;
-                transform_msg = tf;
                 is_measurement_valid = true;
-            }
-
-            if (prev_map_odom_tf_.has_value()) {
-                auto tf_out = prev_map_odom_tf_.value();
-                tf_out.header.stamp = stamp_now(this);
-                tf_broadcaster_->sendTransform(tf_out);
-                if (solved_new_xy_) {
-                    // RCLCPP_INFO(get_logger(),
-                    //     "[UPDATE] x=%.3f, y=%.3f, yaw=%.2f deg",
-                    //     x_estimate_, y_estimate_,
-                    //     yaw_estimate_ * 180.0 / M_PI);
-                }
             }
         }
 
@@ -1649,9 +1428,9 @@ private:
         if (is_measurement_valid && transform_msg.has_value()) {
             if (init_phase_ == InitPhase::CAMERA && from_camera) {
                 accumulate_phase1(*transform_msg);
-            } else if (init_phase_ == InitPhase::CUBE && !from_camera) {
+            }/* else if (init_phase_ == InitPhase::CUBE && !from_camera) {
                 accumulate_phase2(*transform_msg);
-            }
+            }*/
         }
 
         /* ---- publish odom ---- */
@@ -1689,11 +1468,8 @@ private:
         // so downstream lidar nodes can label cubes correctly.
         prev_map_odom_tf_ =
             calculate_robust_tf_avg(phase1_tfs_, phase1_yaws_);
-        phase1_yaw_ref_ =
-            quat_to_yaw(prev_map_odom_tf_->transform.rotation);
-        have_phase1_yaw_ref_ = true;
         tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
-        init_phase_ = InitPhase::CUBE;
+        init_phase_ = InitPhase::DONE;
 
         // RCLCPP_INFO(get_logger(),
         //     "PHASE 1 DONE (camera bearings): broadcasting initial "
@@ -1731,27 +1507,22 @@ private:
             double dxy = std::hypot(
                 p2.translation.x - p1.translation.x,
                 p2.translation.y - p1.translation.y);
-            /* Rover map yaw per phase: map->odom yaw + current odom yaw
-             * (odom ~ 0 while stationary at init, so this is ~ the TF yaw). */
-            const double yaw1_deg =
-                wrap(quat_to_yaw(p1.rotation) + odom_yaw_) * 180.0 / M_PI;
-            const double yaw2_deg =
-                wrap(quat_to_yaw(p2.rotation) + odom_yaw_) * 180.0 / M_PI;
-            const double dyaw = ang_diff_deg(yaw2_deg, yaw1_deg);
-            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                "PHASE 2 refinement vs PHASE 1: rover yaw_map P1=%.2f deg "
-                "-> P2=%.2f deg (dyaw=%.2f deg), dxy=%.3f m",
-                yaw1_deg, yaw2_deg, dyaw, dxy);
+            double dyaw =
+                std::fabs(wrap(quat_to_yaw(p2.rotation) -
+                               quat_to_yaw(p1.rotation))) * 180.0 / M_PI;
+            // RCLCPP_INFO(get_logger(),
+            //     "PHASE 2 refinement vs PHASE 1: dxy=%.3f m, dyaw=%.2f deg",
+            //     dxy, dyaw);
         }
 
         prev_map_odom_tf_ = refined;
         tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
         init_phase_ = InitPhase::DONE;
 
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-            "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF. "
-            "Rate-limiting to %.1f Hz",
-            1.0 / CALLBACK_PERIOD_LIMIT);
+        // RCLCPP_INFO(get_logger(),
+        //     "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF. "
+        //     "Rate-limiting to %.1f Hz",
+        //     1.0 / CALLBACK_PERIOD_LIMIT);
     }
 };
 

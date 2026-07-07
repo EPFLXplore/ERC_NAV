@@ -243,7 +243,7 @@ private:
             m.pose.position.z = 0.0;
             m.pose.orientation.w = 1.0;
             m.scale.x = 2.0*tolerance_radius_;  // diameter = 2 * 1m radius
-            m.scale.y = 0.6;
+            m.scale.y = 2.0*tolerance_radius_;
             m.scale.z = 0.02; // flat disc
             m.color.r = 0.0f;
             m.color.g = 1.0f;

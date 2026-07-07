@@ -13,6 +13,7 @@ find_package(rclpy REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav2_behavior_tree REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(pluginlib REQUIRED)
 
@@ -53,6 +54,7 @@ ament_target_dependencies(path_planning_bt_nodes
   nav_msgs
   geometry_msgs
   nav2_behavior_tree
+  nav2_msgs
   behaviortree_cpp_v3
   pluginlib
 )

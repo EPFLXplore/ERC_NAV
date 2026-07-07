@@ -145,11 +145,9 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
 
     #----------- ArUco Launch Files ---------
 
-    aruco_launch = IncludeLaunchDescription(
-        launch.launch_description_sources.PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare("ros2_aruco_cpp").find("ros2_aruco_cpp"), "launch", "aruco.launch.py")
-        )
-    )
+    # aruco_lidar.launch.py already starts multiview_aruco_node and
+    # pose_estimator_lidar_node; also including ros2_aruco_cpp/aruco.launch.py
+    # here runs both nodes twice (duplicate map->odom TF broadcasters).
     aruco_lidar_detection_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
             os.path.join(FindPackageShare("ros2_aruco_with_lidar").find("ros2_aruco_with_lidar"), "launch", "aruco_lidar.launch.py")
@@ -189,8 +187,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             LogInfo(
                 msg=f"{_C_BOLD_GREEN}Launching ArUco + lidar_aruco stack...{_C_RESET}"
             ),
-            aruco_launch,
-            LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node cpp launch waiting for lidar aruco{_C_RESET}"),
             aruco_lidar_detection_launch,
             LogInfo(msg=f"{_C_BOLD_YELLOW} Aruco node with lidar launched {_C_RESET}"),
 

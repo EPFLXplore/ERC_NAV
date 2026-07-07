@@ -89,33 +89,58 @@ def generate_launch_description():
         ),
 
         # ---- Lidar filter params ----
-        # lidar filter
+        # lidar filter (lidar_phi_filter_node: crops the raw cloud around the camera aruco landmarks)
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
-        DeclareLaunchArgument('tolerance_radius', default_value='2.0'), #1.5 HAS TO BE A TYPE DOUBLE
+        # ^ UNUSED: declared/loaded by lidar_phi_filter_node but never used in the filter (legacy phi-sector width)
+        DeclareLaunchArgument('tolerance_radius', default_value='1.2'), #1.5 HAS TO BE A TYPE DOUBLE
+        # ^ [m] keep lidar points within this radius of each landmark. High: survives bad landmark/map estimate but feeds more ground/clutter to RANSAC. Low: clean tight crop, but cube gets cut off if the landmark position is off
         DeclareLaunchArgument('hauteur_z_min', default_value='0.0'),
-        DeclareLaunchArgument('hauteur_z_max', default_value='0.75'),
+        # ^ [m, map frame] z floor. High: cuts more ground but also the cube bottom (fewer plane inliers). Low: keeps ground points -> ground can be fit as a "face"
+        DeclareLaunchArgument('hauteur_z_max', default_value='0.50'),
+        # ^ [m, map frame] z ceiling. High: keeps clutter above the cube (people, structures). Low: risks cutting the cube top (cube is ~0.32 m tall)
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
+        # ^ [m] RANSAC plane inlier distance. High: rough/curved clutter counts as planes, face dims inflate. Low: crisp planes only, sparse/noisy scans may not reach min_inliers
         DeclareLaunchArgument('max_iterations', default_value='300'),
+        # ^ RANSAC iterations per plane. High: more consistent best-plane fit, more CPU per tag. Low: faster but can settle on a suboptimal plane
         DeclareLaunchArgument('t', default_value='0.25'),
+        # ^ UNUSED: legacy face width [m] of the old 2D-line detector; the plane path uses cube_width_m instead
         DeclareLaunchArgument('min_inliers', default_value='20'),
+        # ^ min points per plane (a range-based dynamic floor also applies). High: only dense/close detections, far cube missed. Low: accepts sparse planes -> more false positives
         DeclareLaunchArgument('max_lines', default_value='3'),
+        # ^ UNUSED: legacy limit of the old 2D-line detector
         DeclareLaunchArgument('max_planes', default_value='3'),
+        # ^ RANSAC plane extractions per tag. High: digs past ground/walls to find the cube faces (more CPU). Low: only dominant planes, cube missed if clutter is fit first
         DeclareLaunchArgument('plane_group_centroid_max_m', default_value='0.80'),
+        # ^ [m] max centroid distance to group a 2nd side face / top with the 1st. High: planes from different objects merged into one cube. Low: valid 2nd face rejected -> center estimated from a single face (less accurate)
         DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.25'),
+        # ^ [m] allowed excess over nominal face dims (also scales the accept score). High: oversized/odd planes accepted as faces. Low: strict size match, partial or noisy faces rejected
         DeclareLaunchArgument('side_perpendicular_dot_max', default_value='0.75'),
+        # ^ max |dot| between two side-face normals to pair them (0 = strictly perpendicular). High: near-parallel planes can pair as "two faces". Low: true face pairs dropped when normals are noisy
         DeclareLaunchArgument('top_vertical_dot_min', default_value='0.35'),
+        # ^ min |normal.z| for a plane to count as top face. High: only near-horizontal planes are tops. Low: tilted side-ish planes get classified as top
         DeclareLaunchArgument('face_min_short_frac', default_value='0.20'),
+        # ^ min short dim as fraction of cube width. High: must see most of the face width. Low: thin slivers accepted as faces
         DeclareLaunchArgument('side_min_long_frac', default_value='0.20'),
+        # ^ min side-face long dim as fraction of cube height. High: must see most of the face height. Low: small patches accepted as side faces
         DeclareLaunchArgument('top_min_long_frac', default_value='0.20'),
+        # ^ min top-face long dim as fraction of cube width. High: must see most of the top. Low: small patches accepted as top faces
         DeclareLaunchArgument('face_score_tolerance_multiplier', default_value='5.0'),
+        # ^ multiplies face_dimension_tolerance_m for the size-score accept gate. High: looser, wrong-sized planes pass. Low: strict, partial views rejected
         DeclareLaunchArgument('max_face_diagonal_multiplier', default_value='1.1'),
+        # ^ max plane long dim vs face diagonal (<=0 disables). High: big planes (walls, ground patches) pass as faces. Low: slightly oversized real faces rejected
         DeclareLaunchArgument('max_center_error_m', default_value='3.0'),
+        # ^ [m] max gap between computed cube center and expected map landmark (<=0 = auto). High: tolerates localization drift but accepts wrong objects. Low: strict gate, true detections rejected when localization drifts
         DeclareLaunchArgument('accept_best_plane_fallback', default_value='true'),
+        # ^ if no plausible face found, take the biggest extracted plane as a side. true: almost always outputs a detection (clutter can become the "cube"). false: silent unless a real face matched
         DeclareLaunchArgument('process_rate_hz', default_value='13.0'),
+        # ^ processing throttle. High: fresher detections, more CPU. Low: saves CPU, laggier detections
         DeclareLaunchArgument('marker_lifetime_sec', default_value='1.0'),
+        # ^ [s] rviz marker persistence. High: markers linger after the cube moved (ghosting). Low: markers flicker between detections
         # before ransac
         DeclareLaunchArgument('max_distance_from_aruco', default_value='1.0'), #has to be a type double
+        # ^ [m] radial band half-width around the expected landmark range (pre-RANSAC point gate). High: more clutter admitted into RANSAC. Low: cube points dropped if the range estimate is off
         DeclareLaunchArgument('angular_tolerance_deg', default_value='20.0'),
+        # ^ [deg] angular gate around the expected bearing (pre-RANSAC). High: wide sector, neighbouring objects included. Low: narrow sector, cube missed if bearing estimate is off
 
         Node(
             package='ros2_aruco_with_lidar',

@@ -5,7 +5,7 @@
 
       <PipelineSequence name="NavigateWithStablePath">
 
-        <RateController hz="5.0">
+      <RateController hz="1.0">
           <Sequence name="ComputeAndAcceptStableCandidate">
             <RestampGoal input_goal="{goal}"
                          output_goal="{current_goal}"/>
@@ -14,12 +14,10 @@
                                path="{candidate_path}"
                                planner_id="GridBased"/>
 
+            <!-- Tunables live in nav2_params (bt_navigator: accept_candidate_path.*) -->
             <AcceptCandidatePath current_path="{path}"
                                  candidate_path="{candidate_path}"
-                                 output_path="{path}"
-                                 check_distance="1.0"
-                                 max_initial_angle_deg="100.0"
-                                 max_length_ratio="1.5"/>
+                                 output_path="{path}"/>
 
           </Sequence>
         </RateController>

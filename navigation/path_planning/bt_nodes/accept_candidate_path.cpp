@@ -1,7 +1,9 @@
 #include "path_planning/accept_candidate_path.hpp"
 #include "path_planning/restamp_goal.hpp"
 
+#include <chrono>
 #include <cmath>
+#include <limits>
 
 #include "behaviortree_cpp_v3/bt_factory.h"
 
@@ -14,6 +16,42 @@ AcceptCandidatePath::AcceptCandidatePath(
 : BT::SyncActionNode(name, config)
 {
   node_ = config.blackboard->get<rclcpp::Node::SharedPtr>("node");
+
+  declareParameters();
+
+  callback_group_ = node_->create_callback_group(
+    rclcpp::CallbackGroupType::MutuallyExclusive, false);
+  callback_group_executor_.add_callback_group(
+    callback_group_, node_->get_node_base_interface());
+
+  is_path_valid_client_ = node_->create_client<nav2_msgs::srv::IsPathValid>(
+    "is_path_valid", rmw_qos_profile_services_default, callback_group_);
+}
+
+void AcceptCandidatePath::declareParameters()
+{
+  const std::string ns = "accept_candidate_path.";
+
+  const auto declare = [this, &ns](const std::string & param, double default_value) {
+      if (!node_->has_parameter(ns + param)) {
+        node_->declare_parameter(ns + param, default_value);
+      }
+      return node_->get_parameter(ns + param).as_double();
+    };
+
+  check_distance_ = declare("check_distance", check_distance_);
+  max_initial_angle_deg_ = declare("max_initial_angle_deg", max_initial_angle_deg_);
+  max_length_ratio_ = declare("max_length_ratio", max_length_ratio_);
+  max_start_deviation_ = declare("max_start_deviation", max_start_deviation_);
+  force_accept_timeout_ = declare("force_accept_timeout", force_accept_timeout_);
+  is_path_valid_timeout_ = declare("is_path_valid_timeout", is_path_valid_timeout_);
+
+  RCLCPP_INFO(
+    logger_,
+    "Params: check_distance=%.2f max_initial_angle_deg=%.1f max_length_ratio=%.2f "
+    "max_start_deviation=%.2f force_accept_timeout=%.1f is_path_valid_timeout=%.2f",
+    check_distance_, max_initial_angle_deg_, max_length_ratio_,
+    max_start_deviation_, force_accept_timeout_, is_path_valid_timeout_);
 }
 
 BT::PortsList AcceptCandidatePath::providedPorts()
@@ -21,19 +59,7 @@ BT::PortsList AcceptCandidatePath::providedPorts()
   return {
     BT::InputPort<nav_msgs::msg::Path>("current_path"),
     BT::InputPort<nav_msgs::msg::Path>("candidate_path"),
-    BT::OutputPort<nav_msgs::msg::Path>("output_path"),
-
-    BT::InputPort<double>(
-      "check_distance", 1.0,
-      "Distance in meters used to compare the beginning of paths"),
-
-    BT::InputPort<double>(
-      "max_initial_angle_deg", 100.0,
-      "Reject candidate if its initial heading differs more than this"),
-
-    BT::InputPort<double>(
-      "max_length_ratio", 1.5,
-      "Reject candidate if local beginning is much longer than current path")
+    BT::OutputPort<nav_msgs::msg::Path>("output_path")
   };
 }
 
@@ -55,66 +81,170 @@ BT::NodeStatus AcceptCandidatePath::tick()
     return BT::NodeStatus::FAILURE;
   }
 
-    if (!has_current_path || current_path.poses.size() < 2) {
+  if (!has_current_path || current_path.poses.size() < 2) {
+    invalid_since_.reset();
     setOutput("output_path", candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate: no usable current path");
     return BT::NodeStatus::SUCCESS;
   }
 
   if (goalChanged(current_path, candidate_path)) {
+    invalid_since_.reset();
     setOutput("output_path", candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate: goal changed");
     return BT::NodeStatus::SUCCESS;
   }
 
   if (isCandidateAcceptable(current_path, candidate_path)) {
+    invalid_since_.reset();
     setOutput("output_path", candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate path");
     return BT::NodeStatus::SUCCESS;
   }
 
-  RCLCPP_WARN(logger_, "Reject candidate path");
-  return BT::NodeStatus::FAILURE;
+  return rejectCandidate(current_path, candidate_path);
+}
+
+BT::NodeStatus AcceptCandidatePath::rejectCandidate(
+  const nav_msgs::msg::Path & current_path,
+  const nav_msgs::msg::Path & candidate_path)
+{
+  if (currentPathInvalid(current_path)) {
+    if (!invalid_since_) {
+      invalid_since_ = node_->now();
+    }
+
+    const double invalid_for = (node_->now() - *invalid_since_).seconds();
+
+    if (invalid_for > force_accept_timeout_) {
+      invalid_since_.reset();
+      setOutput("output_path", candidate_path);
+      RCLCPP_WARN(
+        logger_,
+        "Force-accept divergent candidate: current path invalid for %.1f s > %.1f s",
+        invalid_for, force_accept_timeout_);
+      return BT::NodeStatus::SUCCESS;
+    }
+
+    RCLCPP_WARN(
+      logger_,
+      "Reject candidate, current path invalid for %.1f s (force-accept at %.1f s)",
+      invalid_for, force_accept_timeout_);
+  } else {
+    invalid_since_.reset();
+    RCLCPP_WARN(logger_, "Reject candidate path, keeping current path");
+  }
+
+  // Keep following the current path; rejection is normal operation and must
+  // not fail the tree (that would halt FollowPath and trigger recovery).
+  setOutput("output_path", current_path);
+  return BT::NodeStatus::SUCCESS;
+}
+
+bool AcceptCandidatePath::currentPathInvalid(const nav_msgs::msg::Path & path)
+{
+  if (!is_path_valid_client_->service_is_ready()) {
+    RCLCPP_WARN_THROTTLE(
+      logger_, *node_->get_clock(), 5000,
+      "is_path_valid service not available, assuming current path is valid");
+    return false;
+  }
+
+  auto request = std::make_shared<nav2_msgs::srv::IsPathValid::Request>();
+  request->path = path;
+
+  auto future = is_path_valid_client_->async_send_request(request);
+
+  const auto timeout = std::chrono::duration<double>(is_path_valid_timeout_);
+  if (callback_group_executor_.spin_until_future_complete(future, timeout) !=
+    rclcpp::FutureReturnCode::SUCCESS)
+  {
+    RCLCPP_WARN(logger_, "is_path_valid did not answer in time, assuming valid");
+    return false;
+  }
+
+  return !future.get()->is_valid;
 }
 
 bool AcceptCandidatePath::isCandidateAcceptable(
   const nav_msgs::msg::Path & current_path,
-  const nav_msgs::msg::Path & candidate_path)
+  const nav_msgs::msg::Path & candidate_path) const
 {
-  double check_distance = 1.0;
-  double max_initial_angle_deg = 100.0;
-  double max_length_ratio = 1.5;
-
-  getInput("check_distance", check_distance);
-  getInput("max_initial_angle_deg", max_initial_angle_deg);
-  getInput("max_length_ratio", max_length_ratio);
-
-  const double current_heading = initialHeading(current_path, check_distance);
-  const double candidate_heading = initialHeading(candidate_path, check_distance);
+  const double current_heading = initialHeading(current_path, check_distance_);
+  const double candidate_heading = initialHeading(candidate_path, check_distance_);
 
   const double heading_change_deg =
     std::abs(angleDiff(candidate_heading, current_heading)) * 180.0 / M_PI;
 
-  if (heading_change_deg > max_initial_angle_deg) {
+  if (heading_change_deg > max_initial_angle_deg_) {
     RCLCPP_WARN(
       logger_,
       "Reject candidate: heading change %.1f deg > %.1f deg",
       heading_change_deg,
-      max_initial_angle_deg);
+      max_initial_angle_deg_);
     return false;
   }
 
-  const double current_len = pathLength(current_path, check_distance);
-  const double candidate_len = pathLength(candidate_path, check_distance);
+  const double current_len = pathLength(current_path, check_distance_);
+  const double candidate_len = pathLength(candidate_path, check_distance_);
 
-  if (candidate_len > current_len * max_length_ratio) {
+  if (candidate_len > current_len * max_length_ratio_) {
     RCLCPP_WARN(
       logger_,
       "Reject candidate: local length %.2f > %.2f * %.2f",
       candidate_len,
       current_len,
-      max_length_ratio);
+      max_length_ratio_);
     return false;
+  }
+
+  if (!beginningMatches(current_path, candidate_path)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool AcceptCandidatePath::beginningMatches(
+  const nav_msgs::msg::Path & current_path,
+  const nav_msgs::msg::Path & candidate_path) const
+{
+  // Every candidate pose within check_distance_ of its start must stay within
+  // max_start_deviation_ of the beginning of the current path, so an accepted
+  // update never moves the section the controller is currently tracking.
+  double candidate_travelled = 0.0;
+
+  for (size_t i = 1; i < candidate_path.poses.size() &&
+    candidate_travelled < check_distance_; ++i)
+  {
+    const auto & prev = candidate_path.poses[i - 1].pose.position;
+    const auto & p = candidate_path.poses[i].pose.position;
+    candidate_travelled += std::hypot(p.x - prev.x, p.y - prev.y);
+
+    double min_dist = std::numeric_limits<double>::max();
+    double current_travelled = 0.0;
+
+    for (size_t j = 0; j < current_path.poses.size() &&
+      current_travelled < 2.0 * check_distance_; ++j)
+    {
+      if (j > 0) {
+        const auto & a = current_path.poses[j - 1].pose.position;
+        const auto & b = current_path.poses[j].pose.position;
+        current_travelled += std::hypot(b.x - a.x, b.y - a.y);
+      }
+
+      const auto & q = current_path.poses[j].pose.position;
+      min_dist = std::min(min_dist, std::hypot(p.x - q.x, p.y - q.y));
+    }
+
+    if (min_dist > max_start_deviation_) {
+      RCLCPP_WARN(
+        logger_,
+        "Reject candidate: start deviates %.2f m > %.2f m from current path",
+        min_dist,
+        max_start_deviation_);
+      return false;
+    }
   }
 
   return true;
@@ -203,7 +333,7 @@ bool AcceptCandidatePath::goalChanged(
 
   const double dist = std::hypot(b.x - a.x, b.y - a.y);
   return dist > 0.25;
-} 
+}
 
 }  // namespace path_planning
 
@@ -218,4 +348,3 @@ BT_REGISTER_NODES(factory)
     "RestampGoal");
 
 }
-
