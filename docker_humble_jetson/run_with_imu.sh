@@ -106,27 +106,97 @@ if nmcli -t -f TYPE,DEVICE connection show 2>/dev/null | awk -F: '($1 == "wifi" 
 fi
 ################################# END WIFI ACTIVE WARNING ##########################################
 
-################################# JETSON CLOCKS ##########################################
+# ################################# JETSON CLOCKS ##########################################
 
-JETSON_CPU_TARGET_KHZ=1497600
-JETSON_CPU_MIN_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
-JETSON_CPU_MAX_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
+# JETSON_CPU_TARGET_KHZ=1497600
+# JETSON_CPU_MIN_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
+# JETSON_CPU_MAX_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
 
-if [[ -r "$JETSON_CPU_MIN_FREQ_SYSFS" && -r "$JETSON_CPU_MAX_FREQ_SYSFS" ]]; then
-  jetson_cpu_min_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MIN_FREQ_SYSFS")
-  jetson_cpu_max_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MAX_FREQ_SYSFS")
-  if [[ -n "$jetson_cpu_min_khz" && -n "$jetson_cpu_max_khz" ]] &&
-    (( jetson_cpu_min_khz >= JETSON_CPU_TARGET_KHZ && jetson_cpu_max_khz >= JETSON_CPU_TARGET_KHZ )); then
-    echo -e "${BOLD_GREEN}CPU cpufreq already pinned at ${jetson_cpu_max_khz} kHz (min=${jetson_cpu_min_khz} kHz, target ${JETSON_CPU_TARGET_KHZ} kHz per jetson_clocks) — skipping jetson_clocks.${NC}"
-  else
-    echo -e "${BOLD_ORANGE}CPU cpufreq min=${jetson_cpu_min_khz:-?} max=${jetson_cpu_max_khz:-?} kHz (target min/max >= ${JETSON_CPU_TARGET_KHZ} kHz) — running jetson_clocks…${NC}"
-    sudo jetson_clocks
-  fi
-else
-  echo -e "${BOLD_ORANGE}Cannot read ${JETSON_CPU_MIN_FREQ_SYSFS} / ${JETSON_CPU_MAX_FREQ_SYSFS} — running jetson_clocks…${NC}"
-  sudo jetson_clocks
+# if [[ -r "$JETSON_CPU_MIN_FREQ_SYSFS" && -r "$JETSON_CPU_MAX_FREQ_SYSFS" ]]; then
+#   jetson_cpu_min_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MIN_FREQ_SYSFS")
+#   jetson_cpu_max_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MAX_FREQ_SYSFS")
+#   if [[ -n "$jetson_cpu_min_khz" && -n "$jetson_cpu_max_khz" ]] &&
+#     (( jetson_cpu_min_khz >= JETSON_CPU_TARGET_KHZ && jetson_cpu_max_khz >= JETSON_CPU_TARGET_KHZ )); then
+#     echo -e "${BOLD_GREEN}CPU cpufreq already pinned at ${jetson_cpu_max_khz} kHz (min=${jetson_cpu_min_khz} kHz, target ${JETSON_CPU_TARGET_KHZ} kHz per jetson_clocks) — skipping jetson_clocks.${NC}"
+#   else
+#     echo -e "${BOLD_ORANGE}CPU cpufreq min=${jetson_cpu_min_khz:-?} max=${jetson_cpu_max_khz:-?} kHz (target min/max >= ${JETSON_CPU_TARGET_KHZ} kHz) — running jetson_clocks…${NC}"
+#     sudo jetson_clocks
+#   fi
+# else
+#   echo -e "${BOLD_ORANGE}Cannot read ${JETSON_CPU_MIN_FREQ_SYSFS} / ${JETSON_CPU_MAX_FREQ_SYSFS} — running jetson_clocks…${NC}"
+#   sudo jetson_clocks
+# fi
+# ################################# END JETSON CLOCKS ##########################################
+
+
+################################# JETSON MAXN + CLOCKS ##########################################
+
+if ! command -v nvpmodel >/dev/null 2>&1; then
+  echo -e "${RED}nvpmodel is not installed or not in PATH.${NC}"
+  exit 1
 fi
-################################# END JETSON CLOCKS ##########################################
+
+if ! command -v jetson_clocks >/dev/null 2>&1; then
+  echo -e "${RED}jetson_clocks is not installed or not in PATH.${NC}"
+  exit 1
+fi
+
+# Ask for sudo once.
+sudo -v || exit 1
+
+get_nvpmodel_id() {
+  sudo nvpmodel -q 2>/dev/null | awk 'END { print $1 }'
+}
+
+get_nvpmodel_name() {
+  sudo nvpmodel -q 2>/dev/null |
+    sed -n 's/^NV Power Mode: //p'
+}
+
+nvpmodel_id=$(get_nvpmodel_id)
+nvpmodel_name=$(get_nvpmodel_name)
+
+if [[ "$nvpmodel_id" != "0" ]]; then
+  echo -e "${BOLD_ORANGE}Current power mode: ${nvpmodel_name:-unknown} (${nvpmodel_id:-unknown}).${NC}"
+  echo -e "${BOLD_ORANGE}Switching Jetson to MAXN mode...${NC}"
+
+  nvpmodel_output=$(sudo nvpmodel -m 0 2>&1)
+  nvpmodel_status=$?
+
+  [[ -n "$nvpmodel_output" ]] && echo "$nvpmodel_output"
+
+  if (( nvpmodel_status != 0 )); then
+    echo -e "${RED}Failed to switch the Jetson to MAXN mode.${NC}"
+    exit 1
+  fi
+
+  # Read the mode again instead of assuming that the command succeeded.
+  nvpmodel_id=$(get_nvpmodel_id)
+  nvpmodel_name=$(get_nvpmodel_name)
+
+  if [[ "$nvpmodel_id" != "0" ]]; then
+    echo -e "${RED}MAXN was requested, but the active mode is still ${nvpmodel_name:-unknown} (${nvpmodel_id:-unknown}).${NC}"
+    echo -e "${RED}A reboot may be required. Docker will not be started.${NC}"
+    exit 1
+  fi
+
+  echo -e "${BOLD_GREEN}Jetson successfully switched to MAXN mode.${NC}"
+else
+  echo -e "${BOLD_GREEN}Jetson is already in MAXN mode.${NC}"
+fi
+
+echo -e "${BOLD_ORANGE}Pinning CPU, GPU and EMC clocks...${NC}"
+
+if ! sudo /usr/bin/jetson_clocks --fan; then
+  echo -e "${RED}jetson_clocks failed.${NC}"
+  exit 1
+fi
+
+echo -e "${BOLD_GREEN}MAXN and jetson_clocks are active.${NC}"
+
+################################# END JETSON MAXN + CLOCKS ##########################################
+
+
 
 ################################# OUSTER LIDAR (Docker /etc/hosts) ############################
 # Rover convention: LiDAR static 169.254.55.x/24 (same /24 as other onboard hosts; driver uses

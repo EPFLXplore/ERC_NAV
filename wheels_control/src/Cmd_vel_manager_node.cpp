@@ -25,6 +25,7 @@ description:
 
 #include "custom_msg/msg/motorcmds.hpp" 
 #include "custom_msg/msg/wheelstatus.hpp"
+#include "custom_msg/msg/led_request.hpp"
 
 
 #include "wheels_control/definition.hpp"
@@ -48,8 +49,9 @@ class CmdvelManager : public rclcpp::Node
     {
       auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
 
-      pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", qos); 
-      
+      pub_cmd_vel = this->create_publisher<geometry_msgs::msg::Twist>("/NAV/cmd_vel_final", qos);
+
+      pub_avionics_leds  = this->create_publisher<custom_msg::msg::LEDRequest>("/EL/led_req", qos);
       sub_cmd_vel_manual = this->create_subscription<geometry_msgs::msg::Twist>(
         "/NAV/cmd_vel_manual", qos, std::bind(&CmdvelManager::callback_cmd_vel_manual, this, std::placeholders::_1));
 
@@ -74,6 +76,10 @@ class CmdvelManager : public rclcpp::Node
       if (msg->data == "Auto")
       {
         current_rover_state = ROVER_MODE::AUTO;
+        custom_msg::msg::LEDRequest led_msg;
+        led_msg.system = 0;
+        led_msg.mode = 2;
+        pub_avionics_leds->publish(led_msg);
         //RCLCPP_INFO(this->get_logger(), "went auto mode");
 
       }
@@ -81,14 +87,27 @@ class CmdvelManager : public rclcpp::Node
       {
         // check different state
         current_rover_state = ROVER_MODE::ACKERMANN;
+        custom_msg::msg::LEDRequest led_msg;
+        led_msg.system = 0;
+        led_msg.mode = 1;
+        pub_avionics_leds->publish(led_msg);
+
       }
       else if (msg->data == "Omni")
       {
         current_rover_state = ROVER_MODE::OMNI_DIRECTIONAL;
+        custom_msg::msg::LEDRequest led_msg;
+        led_msg.system = 0;
+        led_msg.mode = 1;
+        pub_avionics_leds->publish(led_msg);
       }
       else if (msg->data == "Off")
       {
         current_rover_state = ROVER_MODE::OFF;
+        custom_msg::msg::LEDRequest led_msg;
+        led_msg.system = 0;
+        led_msg.mode = 0;
+        pub_avionics_leds->publish(led_msg);
       }
     }
 
@@ -142,7 +161,9 @@ class CmdvelManager : public rclcpp::Node
 
     ROVER_MODE current_rover_state;
 
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel;      
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel;  
+    rclcpp::Publisher<custom_msg::msg::LEDRequest>::SharedPtr pub_avionics_leds;
+    
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_auto;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_manual;
