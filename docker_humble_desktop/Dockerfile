@@ -39,6 +39,17 @@ RUN apt-get install -y --no-install-recommends \
     libgtsam-dev \
     libgtsam-unstable-dev 
 
+RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
+    python3-gi \
+    python3-gi-cairo \
+    gir1.2-gstreamer-1.0 \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # Add USB rules
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
