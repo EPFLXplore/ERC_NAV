@@ -251,11 +251,12 @@ class NavCSInterface(Node):
         # ====================================================================
         # Camera Servo Control
         # ====================================================================
-        self.front_cam_servo_pub = self.create_publisher(
-            ServoRequest, 
-            self.el_names["SERVO_REQ_TOPIC"], 
-            QOS_DEPTH
-        )
+        # TODO: FIX
+        # self.front_cam_servo_pub = self.create_publisher(
+        #     ServoRequest, 
+        #     self.el_names["SERVO_REQ_TOPIC"], 
+        #     QOS_DEPTH
+        # )
 
         # ====================================================================
         # Speed Control Interface

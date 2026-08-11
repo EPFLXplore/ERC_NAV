@@ -209,8 +209,14 @@ OUSTER_HOSTNAME="os-122609000655.local"
 OUSTER_IPV4="169.254.55.180"
 
 # tune kernel receive buffer size
+echo -e "${BOLD_BLUE}Tuning kernel UDP socket buffers for Ouster LiDAR and CycloneDDS.${NC}"
 echo -e "${BOLD_BLUE}Warning: net.core.rmem_max is raised to 2 GiB (host-wide cap for socket receive buffers; uses kernel RAM when apps request large buffers).${NC}"
 sudo sysctl -w net.core.rmem_max=2147483647         # 2 GiB
+# CycloneDDS requests >= 1 MiB. Give it plenty of headroom.
+sudo sysctl -w net.core.wmem_max=33554432
+# Reasonable defaults for sockets that do not explicitly request a size.
+sudo sysctl -w net.core.rmem_default=8388608
+sudo sysctl -w net.core.wmem_default=8388608
 # sudo sysctl -w net.core.rmem_default=2147483647     # 2 GiB
 # normal jetson default is 212992
 

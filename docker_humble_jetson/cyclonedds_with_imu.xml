@@ -13,9 +13,34 @@
     </General>
     <!-- Unicast discovery fallback if multicast on the point-to-point IMU link is flaky -->
     <Discovery>
+      <!-- Do not declare another machine dead because of
+           a short network interruption. -->
+      <LeaseDuration>30s</LeaseDuration>
+
+      <!-- Re-advertise ourselves frequently so discovery
+           recovers quickly after a network interruption. -->
+      <SPDPInterval>1s</SPDPInterval>
       <Peers>
-        <Peer address="169.254.56.221"/>
+        <Peer Address="169.254.55.231"/>
+        <Peer Address="169.254.55.166"/>
+        <Peer Address="169.254.55.240"/>
+        <Peer Address="169.254.55.252"/>
+        <Peer Address="169.254.55.221"/>
       </Peers>
     </Discovery>
+    <Internal>
+
+      <!-- Absorb bursts / scheduling delays before the kernel
+           starts dropping UDP packets. -->
+      <SocketReceiveBufferSize min="8MiB"/>
+      <SocketSendBufferSize min="1MiB"/>
+
+      <!-- Allow reliable writers to retain more unacknowledged
+           data during temporary network problems. -->
+      <Watermarks>
+        <WhcHigh>8MiB</WhcHigh>
+      </Watermarks>
+
+    </Internal>
   </Domain>
 </CycloneDDS>
