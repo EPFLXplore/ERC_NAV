@@ -9,7 +9,8 @@
         <NetworkInterface name="enx0a76f8b03d57" priority="10" presence_required="true" multicast="default"/>
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
-      <MaxMessageSize>65500B</MaxMessageSize>
+      <MaxMessageSize>1400B</MaxMessageSize>
+      <FragmentSize>1344B</FragmentSize>
     </General>
     <!-- Unicast discovery fallback if multicast on the point-to-point IMU link is flaky -->
     <Discovery>
@@ -19,7 +20,7 @@
 
       <!-- Re-advertise ourselves frequently so discovery
            recovers quickly after a network interruption. -->
-      <SPDPInterval>1s</SPDPInterval>
+      <SPDPInterval>10s</SPDPInterval>
       <Peers>
         <Peer Address="169.254.55.231"/>
         <Peer Address="169.254.55.166"/>

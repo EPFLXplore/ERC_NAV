@@ -8,10 +8,8 @@
  * 2. CUBE phase: uses merged LiDAR/camera cube detections from /cube_markers
  *    and /cube_markers_phi to refine the transform.
  *
- * After initialization, the node continuously updates the rover position from
- * valid marker range/bearing measurements. With multiple markers, it solves for
- * (x, y) using ECOS SOCP when available, with fallback solvers if ECOS fails.
- * Yaw is then deduced from the solved position and marker bearings.
+ * After initialization, the node continuously updates the rover pose from
+ * valid marker range/bearing measurements with nonlinear optimization.
  *
  * The latest EKF odometry from /fused_nav_ekf_odom is used to build and publish
  * the map->odom transform, while the estimated map-frame rover pose is published
@@ -31,24 +29,24 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/time.h>
 #include <Eigen/Dense>
+#include <g2o/core/base_unary_edge.h>
+#include <g2o/core/base_vertex.h>
+#include <g2o/core/block_solver.h>
+#include <g2o/core/optimization_algorithm_levenberg.h>
+#include <g2o/core/sparse_optimizer.h>
+#include <g2o/solvers/dense/linear_solver_dense.h>
 
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
-#include <numeric>
-#include <cassert>
 #include <mutex>
-
-#ifdef HAS_ECOS
-extern "C" {
-#include "ecos.h"
-}
-#endif
 
 // CHANGE LANDMARK AND ERC_START_POS
 
@@ -96,14 +94,81 @@ static double quat_to_yaw(const geometry_msgs::msg::Quaternion &q)
     return std::atan2(R(1, 0), R(0, 0));
 }
 
-/* ------------------------------------------------------------------ */
-/*  Measurement for the SOCP solver                                   */
-/* ------------------------------------------------------------------ */
+class RoverPoseVertex final : public g2o::BaseVertex<3, Eigen::Vector3d>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-struct Measurement {
-    double ax, ay;   // landmark absolute position
-    double range;    // measured range
-    double vx, vy;   // bearing unit vector (pointing from landmark to rover)
+    void setToOriginImpl() override
+    {
+        _estimate.setZero();
+    }
+
+    void oplusImpl(const double *update) override
+    {
+        _estimate += Eigen::Map<const Eigen::Vector3d>(update);
+        _estimate[2] = wrap(_estimate[2]);
+    }
+
+    bool read(std::istream &) override { return false; }
+    bool write(std::ostream &) const override { return false; }
+};
+
+class RangeBearingEdge final
+    : public g2o::BaseUnaryEdge<2, Eigen::Vector2d, RoverPoseVertex>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    RangeBearingEdge(
+        const Eigen::Vector2d &landmark,
+        double measured_range,
+        double measured_bearing)
+        : landmark_(landmark),
+          measured_range_(measured_range),
+          measured_bearing_(measured_bearing)
+    {
+    }
+
+    void computeError() override
+    {
+        const auto *vertex = static_cast<const RoverPoseVertex *>(_vertices[0]);
+        const Eigen::Vector3d &pose = vertex->estimate();
+        const double dx = landmark_.x() - pose.x();
+        const double dy = landmark_.y() - pose.y();
+
+        _error[0] = std::hypot(dx, dy) - measured_range_;
+        _error[1] = wrap(std::atan2(dy, dx) - pose.z() - measured_bearing_);
+    }
+
+    void linearizeOplus() override
+    {
+        const auto *vertex = static_cast<const RoverPoseVertex *>(_vertices[0]);
+        const Eigen::Vector3d &pose = vertex->estimate();
+        const double dx = landmark_.x() - pose.x();
+        const double dy = landmark_.y() - pose.y();
+        const double range_sq = dx * dx + dy * dy;
+        const double range = std::sqrt(range_sq);
+
+        _jacobianOplusXi.setZero();
+        if (range < 1e-9) {
+            return;
+        }
+
+        _jacobianOplusXi(0, 0) = -dx / range;
+        _jacobianOplusXi(0, 1) = -dy / range;
+        _jacobianOplusXi(1, 0) = dy / range_sq;
+        _jacobianOplusXi(1, 1) = -dx / range_sq;
+        _jacobianOplusXi(1, 2) = -1.0;
+    }
+
+    bool read(std::istream &) override { return false; }
+    bool write(std::ostream &) const override { return false; }
+
+private:
+    Eigen::Vector2d landmark_;
+    double measured_range_;
+    double measured_bearing_;
 };
 
 struct ValidMarker {
@@ -114,26 +179,6 @@ struct ValidMarker {
     double range;
     double bearing_rad;
 };
-
-namespace {
-
-/* When ECOS_setup fails (AMD, infeasible model, or lib/header mismatch), use the
- * centroid of p_k = a_k + r_k * v_k as a coarse map position (v: landmark→rover). */
-std::optional<std::pair<double, double>>
-fallback_xy_range_bearing_centroid(const std::vector<Measurement> &meas)
-{
-    if (meas.size() < 2)
-        return std::nullopt;
-    double sx = 0.0, sy = 0.0;
-    for (const auto &m : meas) {
-        sx += m.ax + m.range * m.vx;
-        sy += m.ay + m.range * m.vy;
-    }
-    const double inv = 1.0 / static_cast<double>(meas.size());
-    return std::make_pair(sx * inv, sy * inv);
-}
-
-} // namespace
 
 /* ------------------------------------------------------------------ */
 /*  Node                                                              */
@@ -183,8 +228,24 @@ public:
         if (flat_erc.size() == 2) {
             erc_start_pos_ = {flat_erc[0], flat_erc[1]};
         } else {
-           // RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
+           RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
         }
+
+        declare_parameter<double>("range_sigma_m", 0.20);
+        declare_parameter<double>("bearing_sigma_deg", 5.0);
+        range_sigma_m_ = get_parameter("range_sigma_m").as_double();
+        const double bearing_sigma_deg = get_parameter("bearing_sigma_deg").as_double();
+        bearing_sigma_rad_ = bearing_sigma_deg * M_PI / 180.0;
+        if (!std::isfinite(range_sigma_m_) || range_sigma_m_ <= 0.0 ||
+            !std::isfinite(bearing_sigma_rad_) || bearing_sigma_rad_ <= 0.0) {
+            RCLCPP_ERROR(
+                get_logger(),
+                "range_sigma_m and bearing_sigma_deg must both be finite and positive "
+                "(got %.6f m and %.6f deg)",
+                range_sigma_m_, bearing_sigma_deg);
+            throw std::runtime_error("invalid nonlinear localization measurement sigmas");
+        }
+
         /* ---- init averaging ---- */
         init_phase_ = InitPhase::CAMERA;
         init_counter_phase1_ = 0;
@@ -276,7 +337,6 @@ private:
     /* Previously used to throttle yaw; throttling after a fresh (x,y) solve
      * leaves heading inconsistent with position (wrong map→odom yaw). */
 
-    static constexpr double LAMBDA_BEARING = 9999.0; //999999.0
     static constexpr double MAP_XMIN = -60.0;
     static constexpr double MAP_XMAX =  60.0;
     static constexpr double MAP_YMIN = -60.0;
@@ -284,6 +344,8 @@ private:
 
     std::array<double, 2> erc_start_pos_;
     std::vector<std::pair<double, double>> landmark_poses_;
+    double range_sigma_m_{0.20};
+    double bearing_sigma_rad_{5.0 * M_PI / 180.0};
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
@@ -777,255 +839,73 @@ private:
         return tf_msg;
     }
 
-    /* ================================================================ */
-    /*  Build measurements for SOCP solver                              */
-    /* ================================================================ */
-    std::vector<Measurement> build_measurements(
-        const std::vector<ValidMarker> &valid_markers,
-        const ros2_aruco_interfaces::msg::ArucoMarkers &msg) const
+    std::optional<Eigen::Vector3d> solve_nonlinear_range_bearing(
+        const std::vector<ValidMarker> &valid_markers)
     {
-        (void)msg;
-        std::vector<Measurement> meas;
-        meas.reserve(valid_markers.size());
+        if (valid_markers.size() < 2u ||
+            !std::isfinite(curr_map_base_x_) ||
+            !std::isfinite(curr_map_base_y_) ||
+            !std::isfinite(curr_map_base_yaw_)) {
+            return std::nullopt;
+        }
+
+        using BlockSolver = g2o::BlockSolver<
+            g2o::BlockSolverTraits<Eigen::Dynamic, Eigen::Dynamic>>;
+        auto linear_solver =
+            std::make_unique<g2o::LinearSolverDense<BlockSolver::PoseMatrixType>>();
+        auto block_solver = std::make_unique<BlockSolver>(std::move(linear_solver));
+
+        g2o::SparseOptimizer optimizer;
+        optimizer.setVerbose(false);
+        optimizer.setAlgorithm(
+            new g2o::OptimizationAlgorithmLevenberg(std::move(block_solver)));
+
+        auto *pose_vertex = new RoverPoseVertex();
+        pose_vertex->setId(0);
+        pose_vertex->setEstimate(Eigen::Vector3d(
+            curr_map_base_x_, curr_map_base_y_, curr_map_base_yaw_));
+        if (!optimizer.addVertex(pose_vertex)) {
+            delete pose_vertex;
+            return std::nullopt;
+        }
+
+        Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
+        information(0, 0) = 1.0 / (range_sigma_m_ * range_sigma_m_);
+        information(1, 1) = 1.0 / (bearing_sigma_rad_ * bearing_sigma_rad_);
+
         for (const auto &marker : valid_markers) {
-            double lm_x = landmark_poses_[marker.landmark_index].first;
-            double lm_y = landmark_poses_[marker.landmark_index].second;
-            if (marker.range < 1e-3) continue;
-            meas.push_back({lm_x, lm_y, marker.range,
-                            -std::cos(marker.bearing_rad),
-                            -std::sin(marker.bearing_rad)});
-        }
-        return meas;
-    }
-
-    std::optional<std::pair<double, double>> solve_range_least_squares(
-        const std::vector<Measurement> &meas)
-    {
-        if (meas.size() < 3) {
-            return std::nullopt;
-        }
-
-        const auto &ref = meas.front();
-        Eigen::MatrixXd A(static_cast<int>(meas.size() - 1), 2);
-        Eigen::VectorXd b(static_cast<int>(meas.size() - 1));
-
-        for (size_t i = 1; i < meas.size(); ++i) {
-            const auto &m = meas[i];
-            A(static_cast<int>(i - 1), 0) = 2.0 * (m.ax - ref.ax);
-            A(static_cast<int>(i - 1), 1) = 2.0 * (m.ay - ref.ay);
-            b(static_cast<int>(i - 1)) =
-                ref.range * ref.range - m.range * m.range +
-                m.ax * m.ax - ref.ax * ref.ax +
-                m.ay * m.ay - ref.ay * ref.ay;
-        }
-
-        const Eigen::Vector2d xy =
-            A.colPivHouseholderQr().solve(b);
-        if (!xy.allFinite()) {
-            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-            //     "Range least-squares failed: non-finite xy");
-            return std::nullopt;
-        }
-        if (xy.x() < MAP_XMIN || xy.x() > MAP_XMAX ||
-            xy.y() < MAP_YMIN || xy.y() > MAP_YMAX) {
-            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-            //     "Range least-squares rejected: xy=(%.3f, %.3f) outside map bounds",
-            //     xy.x(), xy.y());
-            return std::nullopt;
-        }
-        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
-        //     "Range least-squares fallback xy=(%.3f, %.3f)",
-        //     xy.x(), xy.y());
-        return std::make_pair(xy.x(), xy.y());
-    }
-
-    /* ================================================================ */
-    /*  SOCP solver (ECOS C API)                                        */
-    /*                                                                  */
-    /*  Variables z = [x(2), w(2M), t(M)]  ∈ R^{2+3M}                  */
-    /*  Minimise  Σ t_k - ṽ_k'w_k                                     */
-    /*  subject to  ||x - a_k - w_k|| ≤ t_k     (M SOC-3 cones)       */
-    /*              ||w_k||           ≤ r_k       (M SOC-3 cones)       */
-    /*              x ∈ [xmin,xmax] × [ymin,ymax] (4 linear ineqs)    */
-    /* ================================================================ */
-    std::optional<std::pair<double, double>> solve_ecos(
-        const std::vector<Measurement> &meas,
-        const char *log_ctx = nullptr)
-    {
-#ifndef HAS_ECOS
-        // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-        //     "ECOS not compiled in – n>=3 solver disabled");
-        (void)meas;
-        (void)log_ctx;
-        return std::nullopt;
-#else
-        const char *ctx = (log_ctx && log_ctx[0]) ? log_ctx : "ECOS";
-        (void)ctx;
-        const int M = static_cast<int>(meas.size());
-        if (M < 2) {
-            // RCLCPP_WARN(get_logger(),
-            //     "[%s] skip solve: M=%d (need M>=2)", ctx, M);
-            return std::nullopt;
-        }
-
-        for (int k = 0; k < M; ++k) {
-            const double vnorm = std::hypot(meas[k].vx, meas[k].vy);
-            (void)vnorm;
-            // RCLCPP_INFO(get_logger(),
-            //     "[%s] meas[%d] lm=(%.4f, %.4f) r=%.4f v=(%.5f, %.5f) |v|=%.6f",
-            //     ctx, k, meas[k].ax, meas[k].ay, meas[k].range,
-            //     meas[k].vx, meas[k].vy, vnorm);
-        }
-
-        /* ECOS API (embotech): ECOS_setup(n, m, p, l, ...)
-         *   n = primal variables, m = rows of G (conic inequalities),
-         *   p = equality rows (A), l = linear / positive orthant part.
-         * We previously passed (n, 0, p_grows, ...) which swaps m and p
-         * and makes ECOS_setup return NULL. */
-        const int n_var  = 2 + 3 * M;
-        const int m_g    = 4 + 6 * M;   // rows of G
-        const int p_eq   = 0;           // no equality constraints A x = b
-        const int l_lp   = 4;           // first l_lp rows of h are linear ineqs
-        const int ncones = 2 * M;
-        const int nnz    = 4 + 7 * M;
-
-        std::vector<pfloat> c(n_var, 0.0);
-        std::vector<pfloat> h(m_g, 0.0);
-        std::vector<pfloat> Gpr;   Gpr.reserve(nnz);
-        std::vector<idxint> Gir;   Gir.reserve(nnz);
-        std::vector<idxint> Gjc(static_cast<size_t>(n_var + 1), 0);
-        std::vector<idxint> q(ncones, 3);
-
-        /* ---- objective c ---- */
-        for (int k = 0; k < M; ++k) {
-            double scale = LAMBDA_BEARING / meas[k].range;
-            c[2 + 2 * k]     = -scale * meas[k].vx;
-            c[2 + 2 * k + 1] = -scale * meas[k].vy;
-            c[2 + 2 * M + k] = 1.0;
-        }
-
-        /* ---- RHS h ---- */
-        h[0] = -MAP_XMIN;   h[1] = MAP_XMAX;
-        h[2] = -MAP_YMIN;   h[3] = MAP_YMAX;
-        for (int k = 0; k < M; ++k) {
-            int b = 4 + 6 * k;
-            h[b]     = 0.0;
-            h[b + 1] = -meas[k].ax;
-            h[b + 2] = -meas[k].ay;
-            h[b + 3] = meas[k].range;
-            h[b + 4] = 0.0;
-            h[b + 5] = 0.0;
-        }
-
-        /* ---- G in CCS (column-by-column) ---- */
-
-        /* column 0 : x[0] */
-        Gir.push_back(0); Gpr.push_back(-1.0);
-        Gir.push_back(1); Gpr.push_back( 1.0);
-        for (int k = 0; k < M; ++k) {
-            Gir.push_back(4 + 6 * k + 1);
-            Gpr.push_back(-1.0);
-        }
-        Gjc[1] = static_cast<idxint>(Gpr.size());
-
-        /* column 1 : x[1] */
-        Gir.push_back(2); Gpr.push_back(-1.0);
-        Gir.push_back(3); Gpr.push_back( 1.0);
-        for (int k = 0; k < M; ++k) {
-            Gir.push_back(4 + 6 * k + 2);
-            Gpr.push_back(-1.0);
-        }
-        Gjc[2] = static_cast<idxint>(Gpr.size());
-
-        /* columns 2..2+2M-1 : w_k[0], w_k[1] */
-        for (int k = 0; k < M; ++k) {
-            /* w_k[0] */
-            Gir.push_back(4 + 6 * k + 1); Gpr.push_back( 1.0);
-            Gir.push_back(4 + 6 * k + 4); Gpr.push_back(-1.0);
-            Gjc[2 + 2 * k + 1] = static_cast<idxint>(Gpr.size());
-
-            /* w_k[1] */
-            Gir.push_back(4 + 6 * k + 2); Gpr.push_back( 1.0);
-            Gir.push_back(4 + 6 * k + 5); Gpr.push_back(-1.0);
-            Gjc[2 + 2 * k + 2] = static_cast<idxint>(Gpr.size());
-        }
-
-        /* columns 2+2M .. 2+3M-1 : t_k */
-        for (int k = 0; k < M; ++k) {
-            Gir.push_back(4 + 6 * k); Gpr.push_back(-1.0);
-            Gjc[2 + 2 * M + k + 1] = static_cast<idxint>(Gpr.size());
-        }
-
-        assert(static_cast<int>(Gpr.size()) == nnz);
-
-        idxint sum_q = 0;
-        for (int i = 0; i < ncones; ++i)
-            sum_q += q[i];
-        if (static_cast<idxint>(l_lp) + sum_q != static_cast<idxint>(m_g)) {
-            // RCLCPP_ERROR(get_logger(),
-            //     "[%s] ECOS dimension mismatch: l_lp=%d + sum(q)=%d != m_g=%d "
-            //     "(header/lib cone layout may not match this build)",
-            //     ctx, l_lp, static_cast<int>(sum_q), m_g);
-            auto fb = fallback_xy_range_bearing_centroid(meas);
-            if (fb)
-                // RCLCPP_INFO(get_logger(),
-                //     "[%s] using centroid fallback xy=(%.4f, %.4f)", ctx,
-                //     fb->first, fb->second);
-            return fb;
-        }
-
-        /* ---- ECOS setup ---- */
-        pwork *w = ECOS_setup(
-            static_cast<idxint>(n_var),
-            static_cast<idxint>(m_g),
-            static_cast<idxint>(p_eq),
-            static_cast<idxint>(l_lp),
-            static_cast<idxint>(ncones),
-            q.data(),
-            static_cast<idxint>(0),
-            Gpr.data(), Gjc.data(), Gir.data(),
-            nullptr, nullptr, nullptr,
-            c.data(), h.data(), nullptr);
-
-        if (!w) {
-            // RCLCPP_WARN(get_logger(),
-            //     "[%s] ECOS_setup returned NULL (n_var=%d m_g=%d p_eq=%d M=%d) "
-            //     "— check linked libecos vs headers; using centroid fallback",
-            //     ctx, n_var, m_g, p_eq, M);
-            auto fb = fallback_xy_range_bearing_centroid(meas);
-            if (fb)
-                // RCLCPP_INFO(get_logger(),
-                //     "[%s] centroid fallback xy=(%.4f, %.4f)", ctx,
-                //     fb->first, fb->second);
-            return fb;
-        }
-
-        w->stgs->verbose  = 0;
-        w->stgs->maxit    = 900;
-        w->stgs->feastol  = 1e-6;
-        w->stgs->reltol   = 1e-6;
-
-        idxint flag = ECOS_solve(w);
-
-        std::optional<std::pair<double, double>> result;
-        if (flag == ECOS_OPTIMAL ||
-            flag == (ECOS_OPTIMAL + ECOS_INACC_OFFSET)) {
-            result = {w->x[0], w->x[1]};
-        } else {
-            auto fb = fallback_xy_range_bearing_centroid(meas);
-            if (fb) {
-                result = fb;
+            const auto &landmark = landmark_poses_[marker.landmark_index];
+            auto *edge = new RangeBearingEdge(
+                Eigen::Vector2d(landmark.first, landmark.second),
+                marker.range,
+                marker.bearing_rad);
+            edge->setVertex(0, pose_vertex);
+            edge->setInformation(information);
+            if (!optimizer.addEdge(edge)) {
+                delete edge;
+                return std::nullopt;
             }
         }
 
-        ECOS_cleanup(w, 0);
-        if (!result.has_value()) {
-            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-            //     "ECOS failed for n>=3; using range least-squares fallback");
-            result = solve_range_least_squares(meas);
+        optimizer.initializeOptimization();
+        const int iterations = optimizer.optimize(20);
+        if (iterations <= 0) {
+            return std::nullopt;
+        }
+
+        Eigen::Vector3d result = pose_vertex->estimate();
+        result[2] = wrap(result[2]);
+        if (!result.allFinite() ||
+            result.x() < MAP_XMIN || result.x() > MAP_XMAX ||
+            result.y() < MAP_YMIN || result.y() > MAP_YMAX) {
+            return std::nullopt;
+        }
+
+        optimizer.computeActiveErrors();
+        if (!std::isfinite(optimizer.chi2())) {
+            return std::nullopt;
         }
         return result;
-#endif
     }
 
     /* ================================================================ */
@@ -1438,171 +1318,40 @@ private:
         /*  buffer differ.                                              */
         /* ============================================================ */
         if (init_phase_ != InitPhase::DONE) {
+            x_estimate_ = erc_start_pos_[0];
+            y_estimate_ = erc_start_pos_[1];
+            yaw_estimate_ = deduce_yaw(
+                x_estimate_, y_estimate_, valid_markers, *msg);
+            measured_new_yaw_ = true;
+            time_of_last_yaw_meas_ = t_now;
 
-            if (n == 1) {
-                const auto &mA = valid_markers[0];
-                auto &A = landmark_poses_[mA.landmark_index];
-                double x0 = erc_start_pos_[0], y0 = erc_start_pos_[1];
-                double yawA = wrap(
-                    std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s INIT n=1 DEBUG] id=%d lm=(%.3f, %.3f) "
-                    "bearing=%.2f deg lm_bearing=%.2f deg yawA=%.2f deg",
-                    src_tag, mA.landmark_index, A.first, A.second,
-                    mA.bearing_rad * 180.0 / M_PI,
-                    std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
-                    yawA * 180.0 / M_PI);
-
-                yaw_estimate_ = yawA;
-                x_estimate_ = x0;
-                y_estimate_ = y0;
-                measured_new_yaw_ = true;
-                time_of_last_yaw_meas_ = t_now;
-
-                // RCLCPP_INFO(get_logger(),
-                //     "[%s INIT n=1] yaw = %.2f deg",
-                //     src_tag, yaw_estimate_ * 180.0 / M_PI);
-
-                transform_msg = build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_);
-                is_measurement_valid = true;
-
-            } else if (n == 2) {
-                const auto &mA = valid_markers[0];
-                const auto &mB = valid_markers[1];
-                auto &A = landmark_poses_[mA.landmark_index];
-                auto &B = landmark_poses_[mB.landmark_index];
-                double x0 = erc_start_pos_[0], y0 = erc_start_pos_[1];
-
-                double yawA = wrap(
-                    std::atan2(A.second - y0, A.first - x0) - mA.bearing_rad);
-                double yawB = wrap(
-                    std::atan2(B.second - y0, B.first - x0) - mB.bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s INIT n=2 DEBUG] idA=%d bearingA=%.2f deg "
-                    "lmBearingA=%.2f deg yawA=%.2f deg | "
-                    "idB=%d bearingB=%.2f deg lmBearingB=%.2f deg "
-                    "yawB=%.2f deg",
-                    src_tag,
-                    mA.landmark_index,
-                    mA.bearing_rad * 180.0 / M_PI,
-                    std::atan2(A.second - y0, A.first - x0) * 180.0 / M_PI,
-                    yawA * 180.0 / M_PI,
-                    mB.landmark_index,
-                    mB.bearing_rad * 180.0 / M_PI,
-                    std::atan2(B.second - y0, B.first - x0) * 180.0 / M_PI,
-                    yawB * 180.0 / M_PI);
-                // yaw_estimate_ = wrap(0.5 * (yawA + yawB));
-                //circular mean
-                yaw_estimate_ = circular_mean_yaw({yawA, yawB});
-                x_estimate_ = x0;
-                y_estimate_ = y0;
-                measured_new_yaw_ = true;
-                time_of_last_yaw_meas_ = t_now;
-
-                // RCLCPP_INFO(get_logger(),
-                //     "[%s INIT n=2] yaw = %.2f deg",
-                //     src_tag, yaw_estimate_ * 180.0 / M_PI);
-
-                transform_msg = build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_);
-                is_measurement_valid = true;
-
-            } else if (n >= 3) {
-                auto measurements = build_measurements(valid_markers, *msg);
-                if (static_cast<int>(measurements.size()) != n) {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "[%s INIT n>=%d] build_measurements: valid_markers=%d "
-                    //     "but SOCP M=%zu (markers with range<1e-3 are dropped)",
-                    //     src_tag, n, static_cast<int>(valid_markers.size()),
-                    //     measurements.size());
-                }
-                // RCLCPP_INFO(get_logger(),
-                //     "[%s INIT n>=%d] running solver with %zu measurements",
-                //     src_tag, n, measurements.size());
-                auto xy = solve_ecos(measurements, "[P1 INIT n>=3]");
-
-                if (xy.has_value()) {
-                    double dx = xy->first  - erc_start_pos_[0];
-                    double dy = xy->second - erc_start_pos_[1];
-                    double dist_from_start = std::hypot(dx, dy);
-                    // RCLCPP_INFO(get_logger(),
-                    //     "[%s INIT solver] solution P=(%.3f, %.3f), "
-                    //     "dist_from_start=%.3f m",
-                    //     src_tag, xy->first, xy->second, dist_from_start);
-                    if (dist_from_start < 1.0) {
-                        x_estimate_ = xy->first;
-                        y_estimate_ = xy->second;
-                        solved_new_xy_ = true;
-                        time_of_last_pose_ = t_now;
-
-                        yaw_estimate_ = deduce_yaw(
-                            xy->first, xy->second, valid_markers, *msg);
-                        measured_new_yaw_ = true;
-                        time_of_last_yaw_meas_ = t_now;
-
-                        // RCLCPP_INFO(get_logger(),
-                        //     "[%s INIT n>=%d] P=(%.3f, %.3f), yaw=%.2f deg",
-                        //     src_tag, n, xy->first, xy->second,
-                        //     yaw_estimate_ * 180.0 / M_PI);
-
-                        transform_msg = build_map_odom_tf(
-                            x_estimate_, y_estimate_, yaw_estimate_);
-                        is_measurement_valid = true;
-                    } else {
-                        // RCLCPP_WARN(get_logger(),
-                        //     "[%s INIT] Rejected: solution (%.3f,%.3f) "
-                        //     "too far from start (%.2f m)",
-                        //     src_tag, xy->first, xy->second,
-                        //     dist_from_start);
-                    }
-                } else {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "[%s INIT n>=%d] solver returned no solution "
-                    //     "(measurements=%zu)",
-                    //     src_tag, n, measurements.size());
-                }
-            }
+            transform_msg = build_map_odom_tf(
+                x_estimate_, y_estimate_, yaw_estimate_);
+            is_measurement_valid = true;
 
         /* ============================================================ */
         /*  POST-INIT CONTINUOUS UPDATES                                */
         /* ============================================================ */
         } else {
-            if (n >= 3) {
-                auto measurements =
-                    build_measurements(valid_markers, *msg);
-                if (static_cast<int>(measurements.size()) != n) {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "[UPDATE n>=%d] build_measurements: valid_markers=%d "
-                    //     "but SOCP M=%zu (markers with range<1e-3 are dropped)",
-                    //     n, static_cast<int>(valid_markers.size()),
-                    //     measurements.size());
-                }
-                // RCLCPP_INFO(get_logger(),
-                //     "[UPDATE n>=%d] running solver with %zu measurements",
-                //     n, measurements.size());
-                auto xy = solve_ecos(measurements, "[UPDATE n>=2]");
+            if (n >= 2) {
+                auto pose = solve_nonlinear_range_bearing(valid_markers);
 
-                if (xy.has_value()) {
-                    double dx = xy->first  - curr_map_base_x_;
-                    double dy = xy->second - curr_map_base_y_;
+                if (pose.has_value()) {
+                    double dx = pose->x() - curr_map_base_x_;
+                    double dy = pose->y() - curr_map_base_y_;
                     double jump = std::hypot(dx, dy);
                     // RCLCPP_INFO(get_logger(),
                     //     "[UPDATE solver] solution P=(%.3f, %.3f), "
                     // //     "current=(%.3f, %.3f), jump=%.3f m",
-                    //     xy->first, xy->second,
+                    //     pose->x(), pose->y(),
                     //     curr_map_base_x_, curr_map_base_y_, jump);
 
                     if (jump <= MAX_TRANSLATION_JUMP) {
-                        x_estimate_ = xy->first;
-                        y_estimate_ = xy->second;
+                        x_estimate_ = pose->x();
+                        y_estimate_ = pose->y();
+                        yaw_estimate_ = pose->z();
                         solved_new_xy_ = true;
                         time_of_last_pose_ = t_now;
-
-                        /* Always recompute yaw when (x,y) change: yaw is
-                         * atan2(lm - P) - bearing in base; it must use the same
-                         * P as the solver output, not a stale heading. */
-                        yaw_estimate_ = deduce_yaw(
-                            xy->first, xy->second,
-                            valid_markers, *msg);
                         measured_new_yaw_ = true;
                         time_of_last_yaw_meas_ = t_now;
                         // RCLCPP_INFO(get_logger(),
@@ -1611,14 +1360,12 @@ private:
                     } else {
                         // RCLCPP_WARN(get_logger(),
                         //     "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
-                        //     jump, xy->first, xy->second,
+                        //     jump, pose->x(), pose->y(),
                         //     curr_map_base_x_, curr_map_base_y_);
                     }
                 } else {
                     // RCLCPP_WARN(get_logger(),
-                    //     "[UPDATE n>=%d] solver returned no solution "
-                    //     "(measurements=%zu)",
-                    //     n, measurements.size());
+                    //     "[UPDATE n>=%d] nonlinear solver returned no solution", n);
                 }
             }
 

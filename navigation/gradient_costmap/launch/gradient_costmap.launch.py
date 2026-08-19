@@ -254,7 +254,7 @@ def generate_launch_description():
     ]
 
     map_frame = mode_if("map", "base_link")
-    map_input_topic = mode_if("/cloud_pcd", lc("filtered_cloud_topic"))
+    map_input_topic = mode_if("/cloud_pcd", lc("filtered_cloud_topic")) # filtered_cloud_topic
 
     output_local_topic = mode_if(
         "/occupancy_map_global",

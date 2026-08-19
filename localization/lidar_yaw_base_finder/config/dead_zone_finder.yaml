@@ -1,0 +1,61 @@
+lidar_yaw_base_finder:
+  ros__parameters:
+    # The Ouster driver in this workspace publishes XYZ points on this topic.
+    input_cloud_topic: /ouster/points
+
+    # Debug outputs, displayed with the PointCloud2 and MarkerArray RViz displays.
+    filtered_cloud_topic: dead_zone/filtered_cloud
+    line_inliers_topic: dead_zone/line_inliers
+    line_markers_topic: dead_zone/boundary_lines
+
+    # Select the fourth quadrant and the 0.60 m to 1.50 m annulus. Every
+    # selected point is projected onto z = 0 before publishing and fitting.
+    sector_min_deg: 100.0
+    sector_max_deg: 170.0
+    min_radius_m: 1.20
+    max_radius_m: 2.50
+
+    # Build a binary angular occupancy signal, then convolve it with
+    # [-1, -2, 0, 2, 1]. Strong responses are dead/live density transitions.
+    angular_bin_size_deg: 0.25
+    min_points_per_angular_bin: 2
+    edge_response_threshold: 2.0
+
+    # Merge edge rays across frames only if their angular difference is less
+    # than one degree. Displayed rays use samples from this rolling interval.
+    temporal_line_merge_angle_deg: 3.5
+    temporal_average_window_sec: 2.0
+    # Zero keeps a detected ray indefinitely; set a positive number to expire
+    # a ray after that many seconds without another matching observation.
+    line_track_timeout_sec: 0.0
+
+    # Fit radial rays only around convolution-detected transition angles.
+    # Increase if the edge angle has more jitter; decrease to reject nearby
+    # scene structure. It should be wider than angular_bin_size_deg.
+    line_candidate_half_width_deg: 1.5
+    # Maximum difference between the convolution edge and its RANSAC ray.
+    # Increase only if the convolution edge is consistently offset; decrease
+    # to reject RANSAC fits that lock onto an unrelated radial feature.
+    max_line_angle_error_deg: 2.0
+    # Allowed error, per expected 7 deg / 9 deg / 17 deg spacing, when
+    # selecting the final four rays. Increase for noisier estimates; decrease
+    # to make false pattern matches less likely.
+    pattern_gap_tolerance_deg: 2.0
+    # Maximum XY distance of a point from a RANSAC line, in metres. Increase
+    # for noisier or wider rays; decrease to fit only tightly aligned points.
+    line_distance_threshold_m: 0.025
+    # A fitted ray must pass this close to the LiDAR origin, in metres.
+    # Increase if the sensor origin/model is slightly offset; decrease to
+    # reject ordinary environmental lines that do not originate at the LiDAR.
+    line_origin_max_offset_m: 0.08
+    # Number of random RANSAC hypotheses per candidate edge. Increase if fits
+    # are unstable; decrease to reduce CPU usage after stable tuning.
+    ransac_max_iterations: 300
+    # Minimum points that must support a ray. Increase to reject weak/noisy
+    # edges; decrease only when the annulus contains too few LiDAR points.
+    min_line_inliers: 15
+
+    # Set this to the physically measured bearing, in base_link, of the
+    # first boundary: the beginning of the 7-degree dead zone.
+    # The node reports lidar->base yaw = this value - detected value.
+    known_pattern_start_in_base_deg: 0.0

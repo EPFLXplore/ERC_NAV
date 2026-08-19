@@ -470,24 +470,40 @@ void GradientLayer::updateCosts(
         const int sample_x = file_flip_x_ ? (file_width_ - 1 - map_x) : map_x;
         const int sample_y = file_flip_y_ ? (file_height_ - 1 - map_y) : map_y;
         const int index = sample_y * file_width_ + sample_x;
+        // const unsigned char pixel = file_data_[index];
+
+        // // PGM ROS convention: white (254-255) = free, black (0) = occupied,
+        // // gray (205) = unknown. Convert to costmap values.
+        // if (pixel == 205) {
+        //   master_grid.setCost(i, j, nav2_costmap_2d::NO_INFORMATION);
+        // } else {
+        //   const double occ = (255.0 - pixel) / 255.0;
+        //   if (occ < 0.25) {
+        //     master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
+        //   } else if (occ > 0.65) {
+        //     master_grid.setCost(i, j, nav2_costmap_2d::LETHAL_OBSTACLE);
+        //   } else {
+        //     auto scaled = static_cast<unsigned char>(
+        //       1 + (occ - 0.25) / (0.65 - 0.25) * 251);
+        //     master_grid.setCost(i, j, scaled);
+        //   }
+        // }
         const unsigned char pixel = file_data_[index];
 
-        // PGM ROS convention: white (254-255) = free, black (0) = occupied,
-        // gray (205) = unknown. Convert to costmap values.
-        if (pixel == 205) {
-          master_grid.setCost(i, j, nav2_costmap_2d::NO_INFORMATION);
-        } else {
-          const double occ = (255.0 - pixel) / 255.0;
-          if (occ < 0.25) {
-            master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
-          } else if (occ > 0.65) {
-            master_grid.setCost(i, j, nav2_costmap_2d::LETHAL_OBSTACLE);
-          } else {
-            auto scaled = static_cast<unsigned char>(
-              1 + (occ - 0.25) / (0.65 - 0.25) * 251);
-            master_grid.setCost(i, j, scaled);
-          }
-        }
+        // Saved PGM semantics:
+        //   255 = safest / free
+        //     0 = most dangerous
+        //
+        // Convert directly to Nav2 cost range:
+        //   0   = FREE_SPACE
+        //   252 = maximum non-lethal traversal cost
+        // const double danger = (255.0 - static_cast<double>(pixel)) / 255.0;
+        const double danger = (static_cast<double>(pixel)) / 255.0;
+
+        const unsigned char scaled_cost =
+          static_cast<unsigned char>(std::round(danger * 252.0));
+
+        master_grid.setCost(i, j, scaled_cost);
       }
     }
     return;

@@ -170,7 +170,7 @@ public:
             3, get_parameter("aruco_adaptive_thresh_win_size_max").as_int()));
         parameters_->errorCorrectionRate = std::clamp(
             get_parameter("aruco_error_correction_rate").as_double(), 0.0, 1.0);
-        parameters_->cornerRefinementMethod = cv::aruco::CORNER_REFINE_SUBPIX;
+        parameters_->cornerRefinementMethod = cv::aruco::CORNER_REFINE_NONE;
 
         declare_parameter<std::vector<double>>("landmark_poses", std::vector<double>{});
         auto flat = get_parameter("landmark_poses").as_double_array();

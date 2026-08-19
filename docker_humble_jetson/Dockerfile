@@ -120,17 +120,6 @@ RUN /etc/init.d/udev restart
 #     CYCLONEDDS_URI="file:///home/${USERNAME}/cyclonedds.xml"
 #^ this is done at runtime in the run.sh
 
-# ECOS SOCP solver (C library) for ros2_aruco_cpp pose estimator
-RUN git clone --depth 1 https://github.com/embotech/ecos.git /tmp/ecos && \
-    cd /tmp/ecos && \
-    make && \
-    cp libecos.a /usr/local/lib/ && \
-    cp include/*.h /usr/local/include/ && \
-    cp external/SuiteSparse_config/SuiteSparse_config.h /usr/local/include/ && \
-    cp external/amd/include/amd.h /usr/local/include/ && \
-    cp external/ldl/include/ldl.h /usr/local/include/ && \
-    rm -rf /tmp/ecos
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-gi \
     python3-gi-cairo \
@@ -181,11 +170,6 @@ RUN pip install depthai==2.30 --no-cache-dir
 # RUN pip install pygame --no-cache-dir     #no longer used
 RUN pip install transforms3d --no-cache-dir
 RUN pip install pyserial --no-cache-dir
-#for the convex optimization solver used in the global aruco range+bearing localization
-RUN pip install --no-cache-dir cvxpy ecos
-
-
-
 
 # Clean up
 RUN sudo rm -rf /var/lib/apt/lists/*

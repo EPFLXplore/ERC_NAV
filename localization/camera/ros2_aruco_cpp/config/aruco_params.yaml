@@ -40,4 +40,6 @@ lidar_phi_filter_node:
   ros__parameters: {}
 
 pose_estimation_node_with_lidar:
-  ros__parameters: {}
+  ros__parameters:
+    range_sigma_m: 0.20
+    bearing_sigma_deg: 5.0

@@ -106,95 +106,106 @@ if nmcli -t -f TYPE,DEVICE connection show 2>/dev/null | awk -F: '($1 == "wifi" 
 fi
 ################################# END WIFI ACTIVE WARNING ##########################################
 
-# ################################# JETSON CLOCKS ##########################################
-
-# JETSON_CPU_TARGET_KHZ=1497600
-# JETSON_CPU_MIN_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
-# JETSON_CPU_MAX_FREQ_SYSFS=/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
-
-# if [[ -r "$JETSON_CPU_MIN_FREQ_SYSFS" && -r "$JETSON_CPU_MAX_FREQ_SYSFS" ]]; then
-#   jetson_cpu_min_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MIN_FREQ_SYSFS")
-#   jetson_cpu_max_khz=$(tr -d '[:space:]' < "$JETSON_CPU_MAX_FREQ_SYSFS")
-#   if [[ -n "$jetson_cpu_min_khz" && -n "$jetson_cpu_max_khz" ]] &&
-#     (( jetson_cpu_min_khz >= JETSON_CPU_TARGET_KHZ && jetson_cpu_max_khz >= JETSON_CPU_TARGET_KHZ )); then
-#     echo -e "${BOLD_GREEN}CPU cpufreq already pinned at ${jetson_cpu_max_khz} kHz (min=${jetson_cpu_min_khz} kHz, target ${JETSON_CPU_TARGET_KHZ} kHz per jetson_clocks) — skipping jetson_clocks.${NC}"
-#   else
-#     echo -e "${BOLD_ORANGE}CPU cpufreq min=${jetson_cpu_min_khz:-?} max=${jetson_cpu_max_khz:-?} kHz (target min/max >= ${JETSON_CPU_TARGET_KHZ} kHz) — running jetson_clocks…${NC}"
-#     sudo jetson_clocks
-#   fi
-# else
-#   echo -e "${BOLD_ORANGE}Cannot read ${JETSON_CPU_MIN_FREQ_SYSFS} / ${JETSON_CPU_MAX_FREQ_SYSFS} — running jetson_clocks…${NC}"
-#   sudo jetson_clocks
-# fi
-# ################################# END JETSON CLOCKS ##########################################
 
 
-################################# JETSON MAXN + CLOCKS ##########################################
+################################# JETSON POWER MODE ############################################
 
-if ! command -v nvpmodel >/dev/null 2>&1; then
-  echo -e "${RED}nvpmodel is not installed or not in PATH.${NC}"
-  exit 1
-fi
+# ============================================================
+# Jetson performance configuration
+#
+# - MAXN power mode
+# - CPU dynamically scales between ~1.5 GHz and ~2.0 GHz
+# - GPU / EMC / DLA / etc. remain automatically DVFS-controlled
+# - Fan forced to 100%
+# ============================================================
 
-if ! command -v jetson_clocks >/dev/null 2>&1; then
-  echo -e "${RED}jetson_clocks is not installed or not in PATH.${NC}"
-  exit 1
-fi
+NVP_MODE=0
 
-# Ask for sudo once.
-sudo -v || exit 1
-
-get_nvpmodel_id() {
-  sudo nvpmodel -q 2>/dev/null | awk 'END { print $1 }'
+sudo nvpmodel -m "$NVP_MODE" || {
+    echo -e "${RED}nvpmodel failed.${NC}"
+    exit 1
 }
 
-get_nvpmodel_name() {
-  sudo nvpmodel -q 2>/dev/null |
-    sed -n 's/^NV Power Mode: //p'
-}
+POWER_MODE="$(sudo nvpmodel -q | sed -n 's/^NV Power Mode: //p')"
+echo -e "${BOLD_GREEN}Power mode set to ${POWER_MODE}.${NC}"
 
-nvpmodel_id=$(get_nvpmodel_id)
-nvpmodel_name=$(get_nvpmodel_name)
 
-if [[ "$nvpmodel_id" != "0" ]]; then
-  echo -e "${BOLD_ORANGE}Current power mode: ${nvpmodel_name:-unknown} (${nvpmodel_id:-unknown}).${NC}"
-  echo -e "${BOLD_ORANGE}Switching Jetson to MAXN mode...${NC}"
+# ------------------------------------------------------------
+# CPU frequency limits
+# ------------------------------------------------------------
 
-  nvpmodel_output=$(sudo nvpmodel -m 0 2>&1)
-  nvpmodel_status=$?
+CPU_MIN_TARGET=1500000   # 1.5 GHz, kHz
+CPU_MAX_TARGET=2000000   # 2.0 GHz, kHz
 
-  [[ -n "$nvpmodel_output" ]] && echo "$nvpmodel_output"
+for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
 
-  if (( nvpmodel_status != 0 )); then
-    echo -e "${RED}Failed to switch the Jetson to MAXN mode.${NC}"
-    exit 1
-  fi
+    [ -d "$POLICY" ] || continue
 
-  # Read the mode again instead of assuming that the command succeeded.
-  nvpmodel_id=$(get_nvpmodel_id)
-  nvpmodel_name=$(get_nvpmodel_name)
+    # Jetson only accepts frequencies from scaling_available_frequencies.
+    # Pick:
+    #   min = first available frequency >= 1.5 GHz
+    #   max = last available frequency <= 2.0 GHz
 
-  if [[ "$nvpmodel_id" != "0" ]]; then
-    echo -e "${RED}MAXN was requested, but the active mode is still ${nvpmodel_name:-unknown} (${nvpmodel_id:-unknown}).${NC}"
-    echo -e "${RED}A reboot may be required. Docker will not be started.${NC}"
-    exit 1
-  fi
+    AVAILABLE="$(cat "$POLICY/scaling_available_frequencies")"
 
-  echo -e "${BOLD_GREEN}Jetson successfully switched to MAXN mode.${NC}"
-else
-  echo -e "${BOLD_GREEN}Jetson is already in MAXN mode.${NC}"
+    CPU_MIN="$(
+        echo "$AVAILABLE" |
+        tr ' ' '\n' |
+        awk -v target="$CPU_MIN_TARGET" '$1 >= target {print $1}' |
+        sort -n |
+        head -n1
+    )"
+
+    CPU_MAX="$(
+        echo "$AVAILABLE" |
+        tr ' ' '\n' |
+        awk -v target="$CPU_MAX_TARGET" '$1 <= target {print $1}' |
+        sort -n |
+        tail -n1
+    )"
+
+    if [ -z "$CPU_MIN" ] || [ -z "$CPU_MAX" ]; then
+        echo -e "${RED}Could not determine CPU frequencies for $POLICY.${NC}"
+        exit 1
+    fi
+
+    # Set maximum first so we don't temporarily create min > max.
+    echo "$CPU_MAX" | sudo tee "$POLICY/scaling_max_freq" > /dev/null
+    echo "$CPU_MIN" | sudo tee "$POLICY/scaling_min_freq" > /dev/null
+
+    # Keep frequency scaling automatic.
+    if grep -qw schedutil "$POLICY/scaling_available_governors"; then
+        echo schedutil | sudo tee "$POLICY/scaling_governor" > /dev/null
+    fi
+
+    echo -e "${BOLD_GREEN}$(basename "$POLICY"): CPU ${CPU_MIN}-$CPU_MAX kHz, governor $(cat "$POLICY/scaling_governor").${NC}"
+done
+
+
+# ------------------------------------------------------------
+# Fan: force 100%
+# ------------------------------------------------------------
+
+# nvfancontrol would otherwise overwrite our manual PWM value.
+sudo systemctl stop nvfancontrol.service 2>/dev/null || true
+
+FAN_FOUND=false
+
+for FAN_PWM in /sys/devices/platform/pwm-fan/hwmon/hwmon*/pwm1; do
+    [ -e "$FAN_PWM" ] || continue
+
+    echo 255 | sudo tee "$FAN_PWM" > /dev/null
+    FAN_FOUND=true
+
+    echo -e "${BOLD_GREEN}Fan set to 100%: $FAN_PWM${NC}"
+done
+
+if [ "$FAN_FOUND" = false ]; then
+    echo -e "${RED}WARNING: NVIDIA PWM fan interface not found.${NC}"
 fi
 
-echo -e "${BOLD_ORANGE}Pinning CPU, GPU and EMC clocks...${NC}"
+################################# END JETSON POWER MODE ########################################
 
-if ! sudo /usr/bin/jetson_clocks --fan; then
-  echo -e "${RED}jetson_clocks failed.${NC}"
-  exit 1
-fi
-
-echo -e "${BOLD_GREEN}MAXN and jetson_clocks are active.${NC}"
-
-################################# END JETSON MAXN + CLOCKS ##########################################
 
 
 
