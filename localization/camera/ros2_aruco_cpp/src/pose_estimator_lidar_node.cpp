@@ -289,6 +289,29 @@ public:
             throw std::runtime_error("invalid nonlinear localization measurement sigmas");
         }
 
+        /* Per-edge outlier gate, chi2 on 2 DOF (range + bearing):
+         * 5.991 = 95 %, 9.210 = 99 %, 13.82 = 99.9 %.  Deliberately loose by
+         * default so only genuine mislabels are dropped. */
+        declare_parameter<double>("edge_chi2_reject", 9.210);
+        /* Whole-solution gate on chi2/dof.  A correctly modelled solve sits
+         * near 1.0; the default tolerates sigmas that are optimistic by ~2x.
+         * The accepted value is logged every second, so tighten this once the
+         * real distribution is known. */
+        declare_parameter<double>("max_normalized_chi2", 5.0);
+        edge_chi2_reject_ = get_parameter("edge_chi2_reject").as_double();
+        max_normalized_chi2_ = get_parameter("max_normalized_chi2").as_double();
+        if (!(edge_chi2_reject_ > 0.0) || !(max_normalized_chi2_ > 0.0)) {
+            RCLCPP_ERROR(get_logger(),
+                "edge_chi2_reject and max_normalized_chi2 must be positive "
+                "(got %.6f and %.6f)",
+                edge_chi2_reject_, max_normalized_chi2_);
+            throw std::runtime_error("invalid nonlinear localization chi2 gates");
+        }
+        RCLCPP_INFO(get_logger(),
+            "Nonlinear solver gates: edge_chi2_reject=%.3f (2 DOF), "
+            "max_normalized_chi2=%.3f",
+            edge_chi2_reject_, max_normalized_chi2_);
+
         /* ---- init averaging ---- */
         init_phase_ = InitPhase::CAMERA;
         init_counter_phase1_ = 0;
@@ -385,13 +408,15 @@ private:
     /* ================================================================ */
     static constexpr double MAP_SIZE           = 300.0;
     /** Max age (seconds) of last /cube_markers vs /cube_markers_phi to merge. */
-    static constexpr double CUBE_MERGE_TTL_SEC = 0.65;
+    static constexpr double CUBE_MERGE_TTL_SEC = 0.2;
     // Phase 1: camera-bearings-only init samples.
     static constexpr int    NBR_INIT_CALLBACKS_PHASE1 = 5;
     // Phase 2: cube-refined init samples (after Phase-1 TF is broadcast).
     static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 10;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
     static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
+    /** 3 DOF need at least 2 range-bearing edges (4 residuals) to be solvable. */
+    static constexpr size_t MIN_SOLVER_MARKERS = 2u;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
     /** Phase-2 init: max deviation of a marker's yaw_from_start vs the
      *  phase-1 yaw before the marker is treated as a mislabeled cube. */
@@ -416,6 +441,8 @@ private:
     double init_camera_timeout_sec_{40.0};
     double range_sigma_m_{0.20};
     double bearing_sigma_rad_{5.0 * M_PI / 180.0};
+    double edge_chi2_reject_{9.210};
+    double max_normalized_chi2_{5.0};
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
@@ -925,10 +952,27 @@ private:
         return tf_msg;
     }
 
+    /* ================================================================ */
+    /*  Two-pass robust solve                                           */
+    /*                                                                  */
+    /*  Pass 1 optimises every edge under a Huber kernel: the kernel    */
+    /*  down-weights a mislabeled cube but never removes it, so its     */
+    /*  residual still biases the solution.  Edges whose raw chi2       */
+    /*  exceeds edge_chi2_reject_ are then demoted to level 1 (g2o      */
+    /*  optimises level 0 only) and pass 2 re-solves on the inliers     */
+    /*  with the kernel switched off, which also makes the final chi2   */
+    /*  a properly scaled goodness-of-fit statistic.                    */
+    /*                                                                  */
+    /*  Finally the solution is accepted only if chi2/dof is plausible, */
+    /*  with dof = 2*inliers - 3 (each edge contributes range+bearing,  */
+    /*  the pose costs 3).  A high value after outlier removal means    */
+    /*  the surviving measurements disagree with each other, i.e. bad   */
+    /*  data association or a wrong landmark table — not noise.         */
+    /* ================================================================ */
     std::optional<Eigen::Vector3d> solve_nonlinear_range_bearing(
         const std::vector<ValidMarker> &valid_markers)
     {
-        if (valid_markers.size() < 2u ||
+        if (valid_markers.size() < MIN_SOLVER_MARKERS ||
             !std::isfinite(curr_map_base_x_) ||
             !std::isfinite(curr_map_base_y_) ||
             !std::isfinite(curr_map_base_yaw_)) {
@@ -959,6 +1003,8 @@ private:
         information(0, 0) = 1.0 / (range_sigma_m_ * range_sigma_m_);
         information(1, 1) = 1.0 / (bearing_sigma_rad_ * bearing_sigma_rad_);
 
+        std::vector<RangeBearingEdge *> edges;
+        edges.reserve(valid_markers.size());
         for (const auto &marker : valid_markers) {
             const auto &landmark = landmark_poses_[marker.landmark_index];
             auto *edge = new RangeBearingEdge(
@@ -978,12 +1024,48 @@ private:
                 delete edge;
                 return std::nullopt;
             }
+            edges.push_back(edge);
         }
 
+        /* ---- pass 1: robustified, all edges ---- */
         optimizer.initializeOptimization();
-        const int iterations = optimizer.optimize(30);
-        if (iterations <= 0) {
+        if (optimizer.optimize(30) <= 0) {
             return std::nullopt;
+        }
+
+        /* ---- reject per-edge outliers ---- */
+        optimizer.computeActiveErrors();
+        int n_inliers = 0;
+        for (auto *edge : edges) {
+            const double edge_chi2 = edge->chi2();
+            const bool inlier =
+                std::isfinite(edge_chi2) && edge_chi2 <= edge_chi2_reject_;
+            // Level 1 edges are excluded from initializeOptimization(0) below.
+            edge->setLevel(inlier ? 0 : 1);
+            if (inlier) ++n_inliers;
+        }
+
+        // 3 DOF need 2 range-bearing edges (4 residuals) at the very least.
+        if (n_inliers < static_cast<int>(MIN_SOLVER_MARKERS)) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                "[SOLVER] rejected: only %d/%zu edges survived the chi2 gate "
+                "(need %zu)",
+                n_inliers, edges.size(), MIN_SOLVER_MARKERS);
+            return std::nullopt;
+        }
+
+        /* ---- pass 2: inliers only, kernel off ----
+         * Dropping the kernel leaves an unweighted least-squares problem, so
+         * the resulting chi2 can be compared against its expected value. */
+        if (n_inliers < static_cast<int>(edges.size())) {
+            for (auto *edge : edges) {
+                edge->setRobustKernel(nullptr);
+            }
+            optimizer.initializeOptimization(0);
+            if (optimizer.optimize(30) <= 0) {
+                return std::nullopt;
+            }
+            optimizer.computeActiveErrors();
         }
 
         Eigen::Vector3d result = pose_vertex->estimate();
@@ -994,10 +1076,33 @@ private:
             return std::nullopt;
         }
 
-        optimizer.computeActiveErrors();
-        if (!std::isfinite(optimizer.chi2())) {
+        /* ---- goodness of fit over the surviving edges ---- */
+        double chi2_sum = 0.0;
+        for (const auto *edge : edges) {
+            if (edge->level() == 0) chi2_sum += edge->chi2();
+        }
+        const int dof = 2 * n_inliers - 3;
+        const double normalized_chi2 =
+            (dof > 0) ? chi2_sum / static_cast<double>(dof) : chi2_sum;
+
+        if (!std::isfinite(normalized_chi2) ||
+            normalized_chi2 > max_normalized_chi2_) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                "[SOLVER] rejected: chi2/dof=%.2f > %.2f (chi2=%.2f, dof=%d, "
+                "inliers %d/%zu) — measurements disagree, likely a mislabeled "
+                "cube or a wrong landmark entry",
+                normalized_chi2, max_normalized_chi2_, chi2_sum, dof,
+                n_inliers, edges.size());
             return std::nullopt;
         }
+
+        // Logged every second so max_normalized_chi2 can be calibrated against
+        // what the solver actually produces on the rover.
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "[SOLVER] accepted: chi2/dof=%.2f (chi2=%.2f, dof=%d), "
+            "inliers %d/%zu",
+            normalized_chi2, chi2_sum, dof, n_inliers, edges.size());
+
         return result;
     }
 
