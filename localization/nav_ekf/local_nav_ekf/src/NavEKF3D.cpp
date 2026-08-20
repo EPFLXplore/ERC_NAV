@@ -193,17 +193,17 @@ public:
 
     R_orientation_rpy    = Eigen::Matrix3d::Identity() * 1e-4;    // IMU AHRS RPY variance ≈ 0.57° std
 
-    R_orientation_rpy(0, 0) = 1e-4;    // roll  ≈ 0.57°
-    R_orientation_rpy(1, 1) = 1e-4;    // pitch ≈ 0.57°
-    R_orientation_rpy(2, 2) = 3e-4;    // yaw   ≈ 1°
+    R_orientation_rpy(0, 0) = 5e-4;    // roll 
+    R_orientation_rpy(1, 1) = 5e-4;    // pitch
+    R_orientation_rpy(2, 2) = 5e-4;    // yaw 
     
     R_orientation_rpy_vio.setZero();
     R_orientation_rpy_vio(0, 0) = 10e-3;   // roll  std ≈
     R_orientation_rpy_vio(1, 1) = 10e-3;   // pitch std ≈ 
     R_orientation_rpy_vio(2, 2) = 29e-3;   // yaw   std ≈
 
-    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.015;   // std 0.12 m
-    R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.007;   // two times lower, because its a correction.
+    R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.02;   // std 0.12 m
+    R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.05;   // variance standing still measured experimentally
     R_position_xyz_vio   = Eigen::Matrix3d::Identity() * 0.0225; // std 0.15m (~15cm error on 30m)
     R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.1;  // from wheel odom meas
   }
@@ -734,9 +734,54 @@ private:
 
   void aruco_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     if (!include_aruco_) return;
-    RCLCPP_WARN(get_logger(), "ArUco OODDOOOOOOOOOOOOOOOOOOOOOM ");
-    const double mx = msg->pose.pose.position.x;
-    const double my = msg->pose.pose.position.y;
+    if (msg->header.frame_id != "map") {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Reject ArUco odom: expected map-frame measurement, got frame '%s'",
+          msg->header.frame_id.c_str());
+      return;
+    }
+
+    const auto &p_map_base = msg->pose.pose.position;
+    if (!std::isfinite(p_map_base.x) || !std::isfinite(p_map_base.y) ||
+        !std::isfinite(p_map_base.z)) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Reject ArUco odom: non-finite map-frame position");
+      return;
+    }
+
+    // /aruco_rover_pos measures T_map_base, whereas this EKF state is
+    // T_odom_base.  Convert with the latest transform:
+    //   T_odom_base = inverse(T_map_odom) * T_map_base.
+    geometry_msgs::msg::TransformStamped tf_map_odom;
+    try {
+      tf_map_odom = tf_buffer_->lookupTransform(
+          "map", "odom", tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Reject ArUco odom: map -> odom transform unavailable: %s", ex.what());
+      return;
+    }
+
+    const auto &tr = tf_map_odom.transform.translation;
+    const auto &qr = tf_map_odom.transform.rotation;
+    tf2::Quaternion q_map_odom(qr.x, qr.y, qr.z, qr.w);
+    if (q_map_odom.length2() < 1e-12) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "Reject ArUco odom: invalid map -> odom rotation");
+      return;
+    }
+    q_map_odom.normalize();
+    const tf2::Transform T_map_odom(
+        q_map_odom, tf2::Vector3(tr.x, tr.y, tr.z));
+    const tf2::Vector3 p_odom_base = T_map_odom.inverse() * tf2::Vector3(
+        p_map_base.x, p_map_base.y, p_map_base.z);
+
+    const double mx = p_odom_base.x();
+    const double my = p_odom_base.y();
     buf_aruco_x_.push(mx - ekf_->state(IDX_X));
     buf_aruco_y_.push(my - ekf_->state(IDX_Y));
     if (mahalanobis_gate_xy(mx, my, ekf_->R_position_xy_aruco)) {

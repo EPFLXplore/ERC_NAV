@@ -8,8 +8,10 @@
  * 2. CUBE phase: uses merged LiDAR/camera cube detections from /cube_markers
  *    and /cube_markers_phi to refine the transform.
  *
- * After initialization, the node continuously updates the rover pose from
- * valid marker range/bearing measurements with nonlinear optimization.
+ * After initialization, the node continuously publishes the rover's map-frame
+ * pose from valid marker range/bearing measurements with nonlinear
+ * optimization.  The map->odom transform is fixed at the end of Phase 2;
+ * post-init measurements are fused by the EKF instead of moving that TF.
  *
  * The latest EKF odometry from /fused_nav_ekf_odom is used to build and publish
  * the map->odom transform, while the estimated map-frame rover pose is published
@@ -32,6 +34,7 @@
 #include <g2o/core/base_unary_edge.h>
 #include <g2o/core/base_vertex.h>
 #include <g2o/core/block_solver.h>
+#include <g2o/core/robust_kernel_impl.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
 #include <g2o/core/sparse_optimizer.h>
 #include <g2o/solvers/dense/linear_solver_dense.h>
@@ -879,8 +882,15 @@ private:
                 Eigen::Vector2d(landmark.first, landmark.second),
                 marker.range,
                 marker.bearing_rad);
+
             edge->setVertex(0, pose_vertex);
             edge->setInformation(information);
+
+            // Robust Huber loss
+            auto *huber = new g2o::RobustKernelHuber();
+            huber->setDelta(2.5);
+            edge->setRobustKernel(huber);
+
             if (!optimizer.addEdge(edge)) {
                 delete edge;
                 return std::nullopt;
@@ -1373,24 +1383,15 @@ private:
             }
 
             if (solved_new_xy_) {
-                auto tf = build_map_odom_tf(
-                    x_estimate_, y_estimate_, yaw_estimate_);
-                prev_map_odom_tf_ = tf;
-                transform_msg = tf;
+                // Keep map->odom fixed after Phase 2.  The nonlinear result
+                // is published below on /aruco_rover_pos (in map) so the EKF
+                // can fuse it after converting it into its odom frame.
                 is_measurement_valid = true;
             }
 
-            if (prev_map_odom_tf_.has_value()) {
-                auto tf_out = prev_map_odom_tf_.value();
-                tf_out.header.stamp = stamp_now(this);
-                tf_broadcaster_->sendTransform(tf_out);
-                if (solved_new_xy_) {
-                    // RCLCPP_INFO(get_logger(),
-                    //     "[UPDATE] x=%.3f, y=%.3f, yaw=%.2f deg",
-                    //     x_estimate_, y_estimate_,
-                    //     yaw_estimate_ * 180.0 / M_PI);
-                }
-            }
+            // republish_tf() continues to broadcast the fixed Phase-2
+            // map->odom transform at 20 Hz.  Do not publish a solver-derived
+            // transform here.
         }
 
         /* ============================================================ */
