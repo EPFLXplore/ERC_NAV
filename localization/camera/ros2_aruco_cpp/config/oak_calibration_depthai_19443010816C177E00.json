@@ -1,5 +1,5 @@
 {
-    "frame_id": "OAK-1_v1_3",
+    "frame_id": "OAK-1_v1_2",
     "image_topic": "/NAV/feed_camera_nav_2",
     "camera_model": "pinhole",
     "hardware_model": "OAK-1-W",
