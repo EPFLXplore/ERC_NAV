@@ -19,12 +19,15 @@
  *
  * After initialization, the node continuously publishes the rover's map-frame
  * pose from valid marker range/bearing measurements with nonlinear
- * optimization.  The map->odom transform is fixed at the end of Phase 2;
- * post-init measurements are fused by the EKF instead of moving that TF.
+ * optimization.  It stops owning map->odom at the end of Phase 2: the refined
+ * transform is published once on the latched /map_odom_init topic and the TF
+ * broadcast stops there.  global_nav_kf_2d_node seeds itself from that message
+ * and owns map->odom from then on, correcting it with the post-init
+ * /aruco_rover_pos measurements.
  *
- * The latest EKF odometry from /fused_nav_ekf_odom is used to build and publish
- * the map->odom transform, while the estimated map-frame rover pose is published
- * on /aruco_rover_pos.
+ * The latest EKF odometry from /fused_nav_ekf_odom is used to build the
+ * map->odom transform during initialization, while the estimated map-frame
+ * rover pose is published on /aruco_rover_pos.
  */
 
 
@@ -344,6 +347,15 @@ public:
         odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
             "/aruco_rover_pos", ekf_qos);
 
+        /* Handover seed for global_nav_kf_2d_node: published exactly once at
+         * the end of Phase 2.  Latched so the KF still gets it if it starts
+         * (or restarts) after initialization has completed. */
+        rclcpp::QoS init_qos(1);
+        init_qos.reliable().transient_local();
+        map_odom_init_pub_ =
+            create_publisher<geometry_msgs::msg::TransformStamped>(
+                "/map_odom_init", init_qos);
+
         /* ---- TF ---- */
         tf_buffer_  = std::make_shared<tf2_ros::Buffer>(get_clock());
         tf_listener_ =
@@ -417,6 +429,8 @@ private:
     /* ---- current map->base_link estimate ---- */
     double curr_map_base_x_{0.0}, curr_map_base_y_{0.0},
            curr_map_base_yaw_{0.0};
+    /** True once curr_map_base_* came from a real map->odom TF lookup. */
+    bool   have_curr_map_base_{false};
 
     /* ---- init accumulation ---- */
     InitPhase init_phase_;
@@ -467,6 +481,8 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr    odom_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::TransformStamped>::SharedPtr
+        map_odom_init_pub_;
 
     /* ================================================================ */
     /*  Helper: 4×4 pose matrix from (x, y, yaw)                       */
@@ -572,10 +588,16 @@ private:
     }
 
     /* ================================================================ */
-    /*  Periodic TF re-broadcast (20 Hz)                                */
+    /*  Periodic TF re-broadcast (20 Hz), initialization only           */
+    /*                                                                  */
+    /*  accumulate_phase2 cancels this timer when Phase 2 completes;    */
+    /*  the phase check is a second gate so a queued tick can never     */
+    /*  fight global_nav_kf_2d_node for ownership of map->odom.         */
     /* ================================================================ */
     void republish_tf()
     {
+        if (init_phase_ == InitPhase::DONE) return;
+
         geometry_msgs::msg::TransformStamped tf;
         if (prev_map_odom_tf_.has_value()) {
             tf = prev_map_odom_tf_.value();
@@ -620,11 +642,13 @@ private:
                     yaw_estimate_ = curr_map_base_yaw_;
                 }
             }
+            have_curr_map_base_ = true;
         } catch (const tf2::TransformException &) {
             if (!prev_map_odom_tf_.has_value()) {
                 curr_map_base_x_   = odom_pos_x_;
                 curr_map_base_y_   = odom_pos_y_;
                 curr_map_base_yaw_ = odom_yaw_;
+                have_curr_map_base_ = false;
             }
         }
     }
@@ -1008,18 +1032,16 @@ private:
         const bool do_log = (last_log.nanoseconds() == 0) ||
             (t_now - last_log).seconds() >= 1.0;
 
-        /* Rover pose in map from the broadcast map->odom TF composed with
-         * the latest EKF odom (NaN before the first init TF exists). */
+        /* Rover pose in map, from the live TF chain via update_curr_map_base()
+         * (NaN before any map->odom TF exists).  Must not come from
+         * prev_map_odom_tf_: after the Phase-2 handover that member is frozen
+         * while global_nav_kf_2d_node keeps moving the real transform, which
+         * would silently bias exp/dExp. */
         double rov_x = NaN, rov_y = NaN, rov_yaw_rad = NaN;
-        if (prev_map_odom_tf_.has_value()) {
-            const auto &tr = prev_map_odom_tf_->transform;
-            Eigen::Matrix4d T_map_base =
-                pose_to_mat(tr.translation.x, tr.translation.y,
-                            quat_to_yaw(tr.rotation)) *
-                pose_to_mat(odom_pos_x_, odom_pos_y_, odom_yaw_);
-            rov_x = T_map_base(0, 3);
-            rov_y = T_map_base(1, 3);
-            rov_yaw_rad = std::atan2(T_map_base(1, 0), T_map_base(0, 0));
+        if (have_curr_map_base_) {
+            rov_x = curr_map_base_x_;
+            rov_y = curr_map_base_y_;
+            rov_yaw_rad = curr_map_base_yaw_;
         }
         const double rov_yaw_deg = rov_yaw_rad * 180.0 / M_PI;
 
@@ -1643,12 +1665,20 @@ private:
         }
 
         prev_map_odom_tf_ = refined;
-        tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
         init_phase_ = InitPhase::DONE;
 
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-            "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF. "
-            "Rate-limiting to %.1f Hz",
+        /* Hand map->odom over to global_nav_kf_2d_node: publish the seed, then
+         * stop broadcasting so there is exactly one owner of the transform.
+         * The KF broadcasts from its seed callback, so the gap is one message
+         * round-trip. */
+        refined.header.stamp = stamp_now(this);
+        map_odom_init_pub_->publish(refined);
+        tf_timer_->cancel();
+
+        RCLCPP_INFO(get_logger(),
+            "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF, handed "
+            "over to global_nav_kf_2d_node on /map_odom_init. Rate-limiting to "
+            "%.1f Hz",
             1.0 / CALLBACK_PERIOD_LIMIT);
     }
 };

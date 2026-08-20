@@ -172,7 +172,11 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         executable='nav_ekf_3d_node',
         name='nav_custom_ekf_3d',
         output='screen',
-        parameters=[{'include_lidar': False, 'include_aruco': True, 'include_vio': True}]
+        # include_aruco stays False: /aruco_rover_pos is a map-frame measurement
+        # and now feeds global_nav_kf_2d_node (map->odom).  Fusing it here would
+        # push global corrections into odom->base_link and make the odom frame
+        # discontinuous.  The code path is kept as a fallback only.
+        parameters=[{'include_lidar': False, 'include_aruco': False, 'include_vio': True}]
     )
 
     olive_imu_restamp_node = launch_ros.actions.Node(

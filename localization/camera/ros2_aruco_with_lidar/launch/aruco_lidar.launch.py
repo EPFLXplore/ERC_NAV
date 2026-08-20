@@ -88,6 +88,43 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # ---- Global map->odom KF ----
+        # Owns map->odom after pose_estimator_lidar_node finishes Phase 2 and
+        # hands it the seed on the latched /map_odom_init, then corrects it
+        # from the post-init /aruco_rover_pos solutions.  Start order does not
+        # matter: the seed topic is transient_local.
+        Node(
+            package='global_nav_kf',
+            executable='global_nav_kf_2d_node',
+            name='global_nav_kf_2d',
+            parameters=[{
+                'broadcast_rate_hz': 20.0,
+                # ^ [Hz] map->odom TF rate. Matches the 50 ms republish_tf rate
+                #   it replaces in pose_estimator_lidar_node.
+                'meas_sigma_xy_m': 0.25,
+                # ^ [m] trust in one /aruco_rover_pos solution. High: TF barely
+                #   moves, aruco drift correction is slow. Low: TF chases every
+                #   solver solution, map->odom gets jittery.
+                'meas_sigma_yaw_deg': 5.0,
+                # ^ [deg] same for heading; keep near the solver's
+                #   bearing_sigma_deg in aruco_params.yaml.
+                'process_sigma_xy_m_per_s': 0.02,
+                # ^ [m/s] assumed odom drift rate. High: filter forgets fast,
+                #   accepts big corrections. Low: filter is stiff, a real drift
+                #   takes many measurements to correct.
+                'process_sigma_yaw_deg_per_s': 0.5,
+                # ^ [deg/s] same for yaw drift (mostly gyro bias).
+                'mahalanobis_gate_chi2': 7.815,
+                # ^ chi2 outlier gate on 3 DOF: 7.815 = 95%, 11.34 = 99%.
+                #   High: mislabeled cubes get in. Low: legitimate corrections
+                #   are rejected.
+                'max_consecutive_rejects': 10,
+                # ^ after this many rejections in a row, P is inflated x4 so a
+                #   mis-seeded filter can recover instead of rejecting forever.
+            }],
+            output='screen',
+        ),
+
         # ---- Lidar filter params ----
         # lidar filter (lidar_phi_filter_node: crops the raw cloud around the camera aruco landmarks)
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
