@@ -54,12 +54,14 @@ fi
 
 
 ################################# JETSON POWER MODE ############################################
+
 # ============================================================
 # Jetson performance configuration
 #
 # - MAXN power mode
 # - CPU dynamically scales between ~1.5 GHz and ~2.0 GHz
-# - GPU / EMC / DLA / etc. remain automatically DVFS-controlled
+# - EMC / DLA / etc. remain automatically DVFS-controlled
+# - GPU forced to maximum-performance governor (up to 918 MHz)
 # - Fan forced to 100%
 # ============================================================
 
@@ -113,17 +115,87 @@ for POLICY in /sys/devices/system/cpu/cpufreq/policy*; do
         exit 1
     fi
 
+    if [ "$CPU_MIN" -gt "$CPU_MAX" ]; then
+        echo -e "${RED}Invalid CPU range for $POLICY: min=$CPU_MIN > max=$CPU_MAX.${NC}"
+        exit 1
+    fi
+
     # Set maximum first so we don't temporarily create min > max.
     echo "$CPU_MAX" | sudo tee "$POLICY/scaling_max_freq" > /dev/null
     echo "$CPU_MIN" | sudo tee "$POLICY/scaling_min_freq" > /dev/null
 
-    # Keep frequency scaling automatic.
+    # Keep CPU frequency scaling automatic.
     if grep -qw schedutil "$POLICY/scaling_available_governors"; then
         echo schedutil | sudo tee "$POLICY/scaling_governor" > /dev/null
     fi
 
-    echo -e "${BOLD_GREEN}$(basename "$POLICY"): CPU ${CPU_MIN}-$CPU_MAX kHz, governor $(cat "$POLICY/scaling_governor").${NC}"
+    echo -e "${BOLD_GREEN}$(basename "$POLICY"): CPU $((CPU_MIN / 1000))-$((CPU_MAX / 1000)) MHz, governor $(cat "$POLICY/scaling_governor").${NC}"
 done
+
+
+# ------------------------------------------------------------
+# GPU: maximum-performance governor
+# ------------------------------------------------------------
+
+GPU="/sys/devices/platform/17000000.gpu/devfreq/17000000.gpu"
+
+if [ -d "$GPU" ]; then
+
+    if [ ! -r "$GPU/available_frequencies" ]; then
+        echo -e "${RED}GPU available_frequencies not found.${NC}"
+        exit 1
+    fi
+
+    GPU_MIN="$(
+        tr ' ' '\n' < "$GPU/available_frequencies" |
+        grep -E '^[0-9]+$' |
+        sort -n |
+        head -n1
+    )"
+
+    GPU_MAX="$(
+        tr ' ' '\n' < "$GPU/available_frequencies" |
+        grep -E '^[0-9]+$' |
+        sort -n |
+        tail -n1
+    )"
+
+    if [ -z "$GPU_MIN" ] || [ -z "$GPU_MAX" ]; then
+        echo -e "${RED}Could not determine GPU frequency range.${NC}"
+        exit 1
+    fi
+
+    # Keep the full MAXN GPU frequency range available.
+    # Set maximum first to avoid temporarily creating min > max.
+    echo "$GPU_MAX" | sudo tee "$GPU/max_freq" > /dev/null
+    echo "$GPU_MIN" | sudo tee "$GPU/min_freq" > /dev/null
+
+    # nvhost_podgov was observed remaining at ~306 MHz under high load
+    # on this system. Use the performance governor instead.
+    if grep -qw performance "$GPU/available_governors"; then
+        echo performance | sudo tee "$GPU/governor" > /dev/null
+    else
+        echo -e "${RED}GPU performance governor is not available.${NC}"
+        exit 1
+    fi
+
+    # Verify that the governor change succeeded.
+    GPU_GOVERNOR="$(cat "$GPU/governor")"
+
+    if [ "$GPU_GOVERNOR" != "performance" ]; then
+        echo -e "${RED}Failed to set GPU performance governor.${NC}"
+        exit 1
+    fi
+
+    GPU_CUR="$(cat "$GPU/cur_freq")"
+
+    echo -e "${BOLD_GREEN}GPU governor: ${GPU_GOVERNOR}.${NC}"
+    echo -e "${BOLD_GREEN}GPU allowed range: $((GPU_MIN / 1000000))-$((GPU_MAX / 1000000)) MHz.${NC}"
+    echo -e "${BOLD_GREEN}GPU current frequency: $((GPU_CUR / 1000000)) MHz.${NC}"
+
+else
+    echo -e "${RED}WARNING: NVIDIA GPU devfreq interface not found: $GPU${NC}"
+fi
 
 
 # ------------------------------------------------------------
@@ -147,8 +219,9 @@ done
 if [ "$FAN_FOUND" = false ]; then
     echo -e "${RED}WARNING: NVIDIA PWM fan interface not found.${NC}"
 fi
-################################# END JETSON POWER MODE ########################################
 
+
+################################# END JETSON POWER MODE ########################################
 
 ################################# OUSTER LIDAR (Docker /etc/hosts) ############################
 # Rover convention: LiDAR static 169.254.55.x/24 (same /24 as other onboard hosts; driver uses

@@ -546,6 +546,10 @@ public:
 
     bool connect_motors(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, bool homing) const
     {
+        const size_t nb_expected = sizeof(MOTOR_LAYOUT) / sizeof(MOTOR_LAYOUT[0]);
+        RCLCPP_INFO(logger, "==== NAV motors : connection sequence start (homing=%s, %zu motors expected) ====",
+                    homing ? "true" : "false", nb_expected);
+
         void *gateway = open_gateway();
         rclcpp::Rate reconnect_rate(0.5);
 
@@ -558,23 +562,30 @@ public:
 
         // Try to open the gateway for motor communication for 30 seconds
         int MAX_TRY = 30;
+        int retries = 0;
         while (safemode && !gateway && rclcpp::ok() && MAX_TRY--)
         {
+            retries++;
+            RCLCPP_WARN(logger, "CAN network gateway opening has failed ! retry %d/30 in 2 s", retries);
             reconnect_rate.sleep();
             gateway = open_gateway();
-            if (!gateway)
-            {
-                RCLCPP_WARN_THROTTLE(logger, *clock, 1000, "CAN network gateway opening has failed !");
-            }
         }
 
         // If the gateway is still not open, return false
         if (!gateway)
         {
+            RCLCPP_ERROR(logger, "CAN network gateway could not be opened after %d attempts, aborting configuration",
+                         retries + 1);
             return false;
         }
+        if (retries > 0)
+        {
+            RCLCPP_INFO(logger, "CAN network gateway opened after %d retries", retries);
+        }
 
-        RCLCPP_INFO(get_logger(), "START MOTOR DETECTION");
+        RCLCPP_INFO(logger, "START MOTOR DETECTION");
+        size_t nb_connected = 0;
+        std::string unresponsive_motors;
         for (const auto& layout : MOTOR_LAYOUT)
         {
             const bool drive_motor = is_drive_motor(layout);
@@ -587,10 +598,24 @@ public:
 
             if (motors.back().connected())
             {
-                RCLCPP_INFO_ONCE(get_logger(), "%s connected", layout.name);
+                nb_connected++;
+                RCLCPP_INFO(logger, "  %-18s (node %d, %s) : CONNECTED",
+                            layout.name, layout.can_id, drive_motor ? "drive" : "steering");
+            }
+            else
+            {
+                if (!unresponsive_motors.empty())
+                    unresponsive_motors += ", ";
+                unresponsive_motors += layout.name;
+                RCLCPP_ERROR(logger, "  %-18s (node %d, %s) : NOT CONNECTED",
+                             layout.name, layout.can_id, drive_motor ? "drive" : "steering");
             }
         }
-        RCLCPP_INFO(get_logger(), "END MOTOR DETECTION");
+        RCLCPP_INFO(logger, "END MOTOR DETECTION : %zu/%zu motors answered", nb_connected, nb_expected);
+        if (!unresponsive_motors.empty())
+        {
+            RCLCPP_ERROR(logger, "unresponsive motors : %s", unresponsive_motors.c_str());
+        }
 
         for (auto motor = motors.begin(); motor != motors.end(); motor++)
         {
@@ -603,23 +628,43 @@ public:
             }
             if (motor->connected())
             {
-                motor->set_output_state(true);
+                if (!motor->set_output_state(true))
+                {
+                    RCLCPP_ERROR(logger, "%s (node %d) : FAILED to enable the power stage",
+                                 layout->name, id);
+                }
+                else
+                {
+                    RCLCPP_INFO(logger, "%s (node %d) : power stage enabled", layout->name, id);
+                }
+
                 if (is_steer_motor(*layout))
                 {
-                    std::cout << "[NAV_motors_debugging_node]: motor steer " << id << " : position " << motor->get_position_is() << std::endl;
-                    motor->set_position_ref(0);
+                    RCLCPP_INFO(logger, "%s (node %d) : steering, position %d, sending position ref 0",
+                                layout->name, id, motor->get_position_is());
+                    if (!motor->set_position_ref(0))
+                    {
+                        RCLCPP_ERROR(logger, "%s (node %d) : FAILED to send the initial position reference",
+                                     layout->name, id);
+                    }
                 }
                 else if (is_drive_motor(*layout))
                 {
-                    std::cout << "[NAV_motors_debugging_node]: motor drive " << id << " : position " << motor->get_position_is() << std::endl;
+                    RCLCPP_INFO(logger, "%s (node %d) : drive, position %d",
+                                layout->name, id, motor->get_position_is());
                 }
             }
             else
             {
+                RCLCPP_ERROR(logger,
+                    "%s (node %d) is unresponsive : aborting the connection sequence, the whole node stays unconfigured",
+                    layout->name, id);
                 return false;
             }
         }
 
+        RCLCPP_INFO(logger, "==== NAV motors : %zu/%zu motors connected and enabled ====",
+                    nb_connected, nb_expected);
         return true;
     }
 

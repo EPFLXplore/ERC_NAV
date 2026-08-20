@@ -4,9 +4,18 @@
  *
  * The node first initializes map->odom in two phases:
  * 1. CAMERA phase: uses /aruco_markers camera bearings to estimate the initial
- *    yaw and pose near erc_start_pos.
+ *    yaw and pose near erc_start_pos.  This phase is time-bounded by
+ *    init_camera_timeout_sec (see below).
  * 2. CUBE phase: uses merged LiDAR/camera cube detections from /cube_markers
  *    and /cube_markers_phi to refine the transform.
+ *
+ * Phase-1 fallback (ERC start procedure): the rover is placed by hand on its
+ * start point and aimed, as accurately as possible, at one known landmark
+ * (L15 from S1, L7 from S2).  backup_erc_map_yaw_rad in the S1/S2 params file
+ * is the rover map yaw implied by that manual alignment.  If the cameras never
+ * see enough landmarks within init_camera_timeout_sec, Phase 1 completes from
+ * (erc_start_pos, backup_erc_map_yaw_rad) instead of waiting forever with an
+ * identity map->odom, then continues into Phase 2 as usual.
  *
  * After initialization, the node continuously publishes the rover's map-frame
  * pose from valid marker range/bearing measurements with nonlinear
@@ -234,6 +243,34 @@ public:
            RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
         }
 
+        /* Fallback heading used when Phase 1 sees no landmarks: the rover is
+         * aligned by hand towards L15 (from S1) / L7 (from S2), and this is the
+         * map yaw that alignment implies.  Non-finite => no backup available. */
+        declare_parameter<double>(
+            "backup_erc_map_yaw_rad",
+            std::numeric_limits<double>::quiet_NaN());
+        backup_erc_map_yaw_rad_ =
+            get_parameter("backup_erc_map_yaw_rad").as_double();
+
+        /* <= 0 disables the timeout (Phase 1 then waits for cameras forever). */
+        declare_parameter<double>("init_camera_timeout_sec", 40.0);
+        init_camera_timeout_sec_ =
+            get_parameter("init_camera_timeout_sec").as_double();
+
+        if (std::isfinite(backup_erc_map_yaw_rad_)) {
+            RCLCPP_INFO(get_logger(),
+                "Phase-1 fallback armed: backup_erc_map_yaw_rad=%.5f rad "
+                "(%.2f deg) at erc_start_pos=(%.3f, %.3f), timeout=%.1f s",
+                backup_erc_map_yaw_rad_,
+                backup_erc_map_yaw_rad_ * 180.0 / M_PI,
+                erc_start_pos_[0], erc_start_pos_[1],
+                init_camera_timeout_sec_);
+        } else {
+            RCLCPP_WARN(get_logger(),
+                "backup_erc_map_yaw_rad not set: Phase 1 has no fallback and "
+                "will wait for camera landmarks indefinitely");
+        }
+
         declare_parameter<double>("range_sigma_m", 0.20);
         declare_parameter<double>("bearing_sigma_deg", 5.0);
         range_sigma_m_ = get_parameter("range_sigma_m").as_double();
@@ -318,6 +355,16 @@ public:
             std::chrono::milliseconds(50),
             std::bind(&PoseEstimatorLidarNode::republish_tf, this),
             rt_cbg_);
+
+        /* Phase-1 watchdog.  Runs on solver_cbg_ (MutuallyExclusive) so it is
+         * serialised with the marker callbacks: init_phase_, the phase-1
+         * accumulators and prev_map_odom_tf_ are only ever touched from that
+         * group, and this timer must not race them. */
+        init_start_time_ = now();
+        init_timeout_timer_ = create_wall_timer(
+            std::chrono::milliseconds(200),
+            std::bind(&PoseEstimatorLidarNode::check_init_timeout, this),
+            solver_cbg_);
     }
 
 private:
@@ -328,25 +375,33 @@ private:
     /** Max age (seconds) of last /cube_markers vs /cube_markers_phi to merge. */
     static constexpr double CUBE_MERGE_TTL_SEC = 0.65;
     // Phase 1: camera-bearings-only init samples.
-    static constexpr int    NBR_INIT_CALLBACKS_PHASE1 = 15;
+    static constexpr int    NBR_INIT_CALLBACKS_PHASE1 = 5;
     // Phase 2: cube-refined init samples (after Phase-1 TF is broadcast).
-    static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 15;
+    static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 10;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
     static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
     /** Phase-2 init: max deviation of a marker's yaw_from_start vs the
      *  phase-1 yaw before the marker is treated as a mislabeled cube. */
-    static constexpr double INIT_YAW_GATE_RAD = 25.0 * M_PI / 180.0;
+    static constexpr double INIT_YAW_GATE_RAD = 10.0 * M_PI / 180.0;
+    /** Same gate when phase 1 fell back to the hand-alignment backup yaw: the
+     *  reference is a manual aim, not a measurement, so it must tolerate a
+     *  larger alignment error or every phase-2 cube gets rejected. */
+    static constexpr double INIT_YAW_GATE_BACKUP_RAD = 45.0 * M_PI / 180.0;
+    /** On timeout, this many real phase-1 samples beat the backup yaw. */
+    static constexpr int MIN_PHASE1_SAMPLES_ON_TIMEOUT = 3;
     /* Previously used to throttle yaw; throttling after a fresh (x,y) solve
      * leaves heading inconsistent with position (wrong map→odom yaw). */
 
-    static constexpr double MAP_XMIN = -60.0;
-    static constexpr double MAP_XMAX =  60.0;
-    static constexpr double MAP_YMIN = -60.0;
-    static constexpr double MAP_YMAX =  60.0;
+    static constexpr double MAP_XMIN = -16.0;
+    static constexpr double MAP_XMAX =  16.0;
+    static constexpr double MAP_YMIN = -6.0;
+    static constexpr double MAP_YMAX =  30.0;
 
     std::array<double, 2> erc_start_pos_;
     std::vector<std::pair<double, double>> landmark_poses_;
+    double backup_erc_map_yaw_rad_{std::numeric_limits<double>::quiet_NaN()};
+    double init_camera_timeout_sec_{40.0};
     double range_sigma_m_{0.20};
     double bearing_sigma_rad_{5.0 * M_PI / 180.0};
 
@@ -370,6 +425,9 @@ private:
     /* Phase-1 averaged yaw, reference for the phase-2 yaw gate. */
     double phase1_yaw_ref_{0.0};
     bool   have_phase1_yaw_ref_{false};
+    /* Phase 1 completed from backup_erc_map_yaw_rad instead of camera samples. */
+    bool   phase1_from_backup_{false};
+    rclcpp::Time init_start_time_;
     rclcpp::Time last_callback_time_;
     /** Last accepted handle_marker_message valid marker count (post-init rate-limit bypass). */
     int last_handled_valid_marker_count_{-1};
@@ -384,6 +442,7 @@ private:
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     std::optional<geometry_msgs::msg::TransformStamped> prev_map_odom_tf_;
     rclcpp::TimerBase::SharedPtr tf_timer_;
+    rclcpp::TimerBase::SharedPtr init_timeout_timer_;
 
     /* ---- ROS ---- */
     rclcpp::CallbackGroup::SharedPtr solver_cbg_, rt_cbg_;
@@ -898,7 +957,7 @@ private:
         }
 
         optimizer.initializeOptimization();
-        const int iterations = optimizer.optimize(20);
+        const int iterations = optimizer.optimize(30);
         if (iterations <= 0) {
             return std::nullopt;
         }
@@ -1266,9 +1325,11 @@ private:
                  * sector computed before map->odom was valid); one such
                  * sample tilts the unfiltered init yaw average. */
                 if (init_phase_ == InitPhase::CUBE && have_phase1_yaw_ref_) {
+                    const double yaw_gate = phase1_from_backup_
+                        ? INIT_YAW_GATE_BACKUP_RAD : INIT_YAW_GATE_RAD;
                     const double yaw_dev =
                         std::fabs(wrap(yaw_from_start - phase1_yaw_ref_));
-                    if (yaw_dev > INIT_YAW_GATE_RAD) {
+                    if (yaw_dev > yaw_gate) {
                         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                             "[%s SKIP marker] id=%d yaw_from_start=%.1f deg "
                             "deviates %.1f deg from phase-1 yaw %.1f deg "
@@ -1277,7 +1338,7 @@ private:
                             yaw_from_start * 180.0 / M_PI,
                             yaw_dev * 180.0 / M_PI,
                             phase1_yaw_ref_ * 180.0 / M_PI,
-                            INIT_YAW_GATE_RAD * 180.0 / M_PI);
+                            yaw_gate * 180.0 / M_PI);
                         continue;
                     }
                 }
@@ -1438,17 +1499,103 @@ private:
 
         // Phase 1 complete: broadcast the camera-derived map->odom TF
         // so downstream lidar nodes can label cubes correctly.
-        prev_map_odom_tf_ =
-            calculate_robust_tf_avg(phase1_tfs_, phase1_yaws_);
-        phase1_yaw_ref_ =
-            quat_to_yaw(prev_map_odom_tf_->transform.rotation);
+        finalize_phase1(
+            calculate_robust_tf_avg(phase1_tfs_, phase1_yaws_),
+            /*from_backup=*/false, "camera samples");
+    }
+
+    /* ================================================================ */
+    /*  Commit the Phase-1 map->odom TF and hand over to Phase 2.       */
+    /*  Called either with the robust average of camera samples or,     */
+    /*  on timeout, with the backup-yaw transform.                      */
+    /*  Runs on solver_cbg_ only.                                       */
+    /* ================================================================ */
+    void finalize_phase1(
+        const geometry_msgs::msg::TransformStamped &tf_final,
+        bool from_backup,
+        const char *reason)
+    {
+        prev_map_odom_tf_ = tf_final;
+        phase1_yaw_ref_ = quat_to_yaw(tf_final.transform.rotation);
         have_phase1_yaw_ref_ = true;
+        phase1_from_backup_ = from_backup;
         tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
         init_phase_ = InitPhase::CUBE;
 
-        // RCLCPP_INFO(get_logger(),
-        //     "PHASE 1 DONE (camera bearings): broadcasting initial "
-        //     "map->odom TF. Switching to PHASE 2 (cube refinement).");
+        const double yaw_gate_deg =
+            (from_backup ? INIT_YAW_GATE_BACKUP_RAD : INIT_YAW_GATE_RAD)
+            * 180.0 / M_PI;
+        if (from_backup) {
+            RCLCPP_WARN(get_logger(),
+                "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
+                "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
+                "%.0f deg yaw gate.",
+                reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
+                phase1_yaw_ref_ * 180.0 / M_PI,
+                tf_final.transform.translation.x,
+                tf_final.transform.translation.y, yaw_gate_deg);
+        } else {
+            RCLCPP_INFO(get_logger(),
+                "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
+                "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
+                "%.0f deg yaw gate.",
+                reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
+                phase1_yaw_ref_ * 180.0 / M_PI,
+                tf_final.transform.translation.x,
+                tf_final.transform.translation.y, yaw_gate_deg);
+        }
+    }
+
+    /* ================================================================ */
+    /*  Phase-1 watchdog: bound how long we wait for camera landmarks.  */
+    /*                                                                  */
+    /*  Without this the node sits in CAMERA forever when no tag is      */
+    /*  visible at the start line, broadcasting an identity map->odom.  */
+    /*  Runs on solver_cbg_, serialised with the marker callbacks.      */
+    /* ================================================================ */
+    void check_init_timeout()
+    {
+        if (init_phase_ != InitPhase::CAMERA) return;
+        if (!(init_camera_timeout_sec_ > 0.0)) return;
+        if ((now() - init_start_time_).seconds() < init_camera_timeout_sec_)
+            return;
+
+        /* Real camera samples arrived, just not the full set: they beat the
+         * hand-alignment guess. */
+        if (init_counter_phase1_ >= MIN_PHASE1_SAMPLES_ON_TIMEOUT) {
+            finalize_phase1(
+                calculate_robust_tf_avg(phase1_tfs_, phase1_yaws_),
+                /*from_backup=*/false, "timeout, partial camera samples");
+            return;
+        }
+
+        if (!std::isfinite(backup_erc_map_yaw_rad_)) {
+            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                "PHASE 1 STUCK: no camera landmarks after %.1f s and "
+                "backup_erc_map_yaw_rad is not set — map->odom stays identity",
+                init_camera_timeout_sec_);
+            return;
+        }
+
+        /* (erc_start_pos, backup yaw) only describes the rover while it is
+         * still parked on its start point. */
+        const double odom_dist = std::hypot(odom_pos_x_, odom_pos_y_);
+        if (odom_dist > 0.5 || std::fabs(odom_yaw_) > 15.0 * M_PI / 180.0) {
+            RCLCPP_WARN(get_logger(),
+                "PHASE 1 backup yaw applied although odom shows the rover "
+                "moved (%.2f m, %.1f deg) since start: the assumed start pose "
+                "is likely wrong",
+                odom_dist, odom_yaw_ * 180.0 / M_PI);
+        }
+
+        x_estimate_ = erc_start_pos_[0];
+        y_estimate_ = erc_start_pos_[1];
+        yaw_estimate_ = backup_erc_map_yaw_rad_;
+
+        finalize_phase1(
+            build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_),
+            /*from_backup=*/true, "no camera landmarks, backup yaw");
+        publish_odom(x_estimate_, y_estimate_, yaw_estimate_);
     }
 
     /* ================================================================ */

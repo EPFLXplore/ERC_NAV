@@ -3,8 +3,73 @@
 
 //use the ros logger instead of cout from iostream
 #include "rclcpp/rclcpp.hpp"
+#include "wheels_control/definition.hpp"
+#include <chrono>
+#include <string>
+
 void log_info(const std::string &msg){
     RCLCPP_INFO(rclcpp::get_logger("motors"), "%s", msg.c_str());
+}
+
+void log_warn(const std::string &msg){
+    RCLCPP_WARN(rclcpp::get_logger("motors"), "%s", msg.c_str());
+}
+
+void log_error(const std::string &msg){
+    RCLCPP_ERROR(rclcpp::get_logger("motors"), "%s", msg.c_str());
+}
+
+// human readable "0x... : message" for any EPOS API error code
+std::string vcs_error_string(unsigned int error_code)
+{
+    if (!error_code)
+        return "0x0 : no error";
+
+    char error_msg[100] = {0};
+    if (!VCS_GetErrorInfo(error_code, error_msg, 100))
+        std::snprintf(error_msg, sizeof(error_msg), "unknown EPOS error code");
+
+    char buffer[160];
+    std::snprintf(buffer, sizeof(buffer), "0x%X : %s", error_code, error_msg);
+    return buffer;
+}
+
+// name of a CAN node as declared in definition.hpp, "UNKNOWN_NODE" otherwise
+std::string node_name(unsigned short id)
+{
+    const MotorLayout *layout = motor_layout_from_can_id((int)id);
+    return (layout != nullptr) ? layout->name : "UNKNOWN_NODE";
+}
+
+// "node 4 (FRONT_RIGHT_DRIVE)" prefix shared by every per motor log line
+std::string node_tag(unsigned short id)
+{
+    return "node " + std::to_string((int)id) + " (" + node_name(id) + ")";
+}
+
+static const char *operation_mode_name(signed char mode)
+{
+    switch (mode)
+    {
+    case OMD_PROFILE_POSITION_MODE:
+        return "profile position";
+    case OMD_PROFILE_VELOCITY_MODE:
+        return "profile velocity";
+    case OMD_VELOCITY_MODE:
+        return "velocity";
+    case 0:
+        return "none";
+    default:
+        return "other";
+    }
+}
+
+static const char *motor_type_name(unsigned short type)
+{
+    return (type == MT_DC_MOTOR)                    ? "DC motor"
+           : (type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
+           : (type == MT_EC_BLOCK_COMMUTATED_MOTOR) ? "EC block motor"
+                                                    : "unknown motor type";
 }
 
 // ---------- namespaces ----------
@@ -19,34 +84,21 @@ using namespace std;
 #define MAX_STEER_VEL 7   // [rpm]   // max 10
 #define MAX_STEER_ACCEL 20 // [rpm/s] // max 28
 
-#ifndef ROSCPP_ROS_H
-#define CONNECTION_CHECK                                                   \
-    if (!is_connected)                                                     \
-    {                                                                      \
-        cerr << "[motors.cpp] Node " << id << " is not connected" << endl; \
-        return false;                                                      \
+#define CONNECTION_CHECK                                                          \
+    if (!is_connected)                                                            \
+    {                                                                             \
+        static rclcpp::Clock connection_check_clock(RCL_STEADY_TIME);             \
+        RCLCPP_WARN_THROTTLE(rclcpp::get_logger("motors"), connection_check_clock,\
+                             1000, "%s is not connected", node_tag(id).c_str());  \
+        return false;                                                             \
     }
-#else
-#define CONNECTION_CHECK                                        \
-    if (!is_connected)                                          \
-    {                                                           \
-        ROS_ERROR_STREAM("Node " << id << " is not connected"); \
-        return false;                                           \
-    }
-#endif
 
 // private functions
 void print_VCS_error(unsigned int error_code, const char *func)
 {
-    static char error_msg[100];
     if (error_code)
     {
-        VCS_GetErrorInfo(error_code, error_msg, 100);
-#ifdef ROSCPP_ROS_H
-        ROS_ERROR_STREAM("ERR 0x" << hex << error_code << dec << " : " << error_msg << " in " << func << "()");
-#else
-        cerr << "[motors.cpp] ERR 0x" << hex << error_code << dec << " : " << error_msg << " in " << func << "()" << endl;
-#endif
+        log_error("ERR " + vcs_error_string(error_code) + " in " + func + "()");
     }
 }
 
@@ -73,6 +125,7 @@ bool get_device_name_selection(bool start_of_selection, std::string &device_name
     print_VCS_error(error_code, __FUNCTION__);
 
     if (!success){
+        log_warn("VCS_GetDeviceNameSelection failed (" + vcs_error_string(error_code) + ")");
         return false;
     }
 
@@ -111,6 +164,7 @@ bool get_protocol_stack_name_selection(std::string &device_name,
 
     print_VCS_error(error_code, __FUNCTION__);
     if (!success){
+        log_warn("VCS_GetProtocolStackNameSelection failed (" + vcs_error_string(error_code) + ")");
         return false;
     }
 
@@ -160,7 +214,8 @@ bool get_interface_name_selection(const std::string &device_name,
     // Print error if any
     print_VCS_error(error_code, __FUNCTION__);
     if (!success) {
-    return false;
+        log_warn("VCS_GetInterfaceNameSelection failed (" + vcs_error_string(error_code) + ")");
+        return false;
     }
 
     // Convert the C-style buffer result to std::string
@@ -215,6 +270,7 @@ bool get_port_name_selection(const std::string &device_name,
     // Check for errors
     print_VCS_error(error_code, __FUNCTION__);
     if (!success){
+        log_warn("VCS_GetPortNameSelection failed (" + vcs_error_string(error_code) + ")");
         return false;
     }
 
@@ -243,61 +299,91 @@ void *open_gateway(void)
     std::string device_name = "EPOS4";
     std::string protocol_stack = "MAXON SERIAL V2";
     std::string interface_name = "USB";
+    std::string port_name_wanted = "USB0";
     std::string current_interface;
     const unsigned short max_size = 100;
     bool start_of_selection = true;
 
-    while(get_device_name_selection(start_of_selection, current_device, end_of_selection)){
-        //std::cout << "Found device name: " << current_device << std::endl;
-        log_info("Found device name: "+current_device);
-        if(end_of_selection)
+    log_info("===== EPOS gateway : opening =====");
+    log_info("requested : device='" + device_name + "' protocol='" + protocol_stack +
+             "' interface='" + interface_name + "' port='" + port_name_wanted + "'");
+
+    // ---- 1/4 : device names known by the EPOS command library ----
+    unsigned int nb_devices = 0;
+    bool device_found = false;
+    while (get_device_name_selection(start_of_selection, current_device, end_of_selection))
+    {
+        nb_devices++;
+        log_info("  [1/4] available device    : " + current_device);
+        if (current_device == device_name)
+            device_found = true;
+        if (end_of_selection)
             break;
         start_of_selection = false;
     }
+    if (nb_devices == 0)
+        log_error("  [1/4] no device name returned : the EPOS command library is not answering");
+    else if (!device_found)
+        log_warn("  [1/4] '" + device_name + "' is NOT in the list of available devices");
+
+    // ---- 2/4 : protocol stacks available for that device ----
     start_of_selection = true;
     end_of_selection = 0;
-
-    while(get_protocol_stack_name_selection(device_name,
-        current_protocol_stack,
-        start_of_selection,  // pass the start flag here
-        max_size,
-        end_of_selection,
-        error_code)){
-
-        //std::cout << "Available protocol stack: " << current_protocol_stack << std::endl;
-        log_info("Available protocol stack: "+current_protocol_stack);
-
-        if(end_of_selection)
-            break;
-        start_of_selection = false;  // subsequent calls use false
-    }
-
-    end_of_selection = 0;
-    bool interface_end = false;
-    start_of_selection = true;
-
-    while(get_interface_name_selection(
-        device_name,             // device name
-        current_protocol_stack, // protocol stack name
-        start_of_selection,     // TRUE for the first call
-        current_interface,      // output: the interface name
-        max_size,               // maximum string size
-        interface_end,           // output: set when no more interfaces
-        error_code))            // output: error code
+    unsigned int nb_protocols = 0;
+    bool protocol_found = false;
+    while (get_protocol_stack_name_selection(device_name,
+                                             current_protocol_stack,
+                                             start_of_selection,
+                                             max_size,
+                                             end_of_selection,
+                                             error_code))
     {
-        std::cout << "Available interface name: " << current_interface << std::endl;
-        log_info("Available interface name: "+current_interface);
-
-        if(interface_end)
+        nb_protocols++;
+        log_info("  [2/4] available protocol  : " + current_protocol_stack);
+        if (current_protocol_stack == protocol_stack)
+            protocol_found = true;
+        if (end_of_selection)
             break;
-        start_of_selection = false;  // subsequent calls: get the next interface name
+        start_of_selection = false;
     }
+    if (nb_protocols == 0)
+        log_error("  [2/4] no protocol stack returned for device '" + device_name + "'");
+    else if (!protocol_found)
+        log_warn("  [2/4] '" + protocol_stack + "' is NOT in the list of available protocol stacks");
 
-    end_of_selection = 0;
+    // ---- 3/4 : interfaces available for that protocol stack ----
     start_of_selection = true;
-    std::string port_name;
+    bool interface_end = false;
+    unsigned int nb_interfaces = 0;
+    bool interface_found = false;
+    while (get_interface_name_selection(device_name,
+                                        protocol_stack,
+                                        start_of_selection,
+                                        current_interface,
+                                        max_size,
+                                        interface_end,
+                                        error_code))
+    {
+        nb_interfaces++;
+        log_info("  [3/4] available interface : " + current_interface);
+        if (current_interface == interface_name)
+            interface_found = true;
+        if (interface_end)
+            break;
+        start_of_selection = false;
+    }
+    if (nb_interfaces == 0)
+        log_error("  [3/4] no interface returned for '" + device_name + "' / '" + protocol_stack + "'");
+    else if (!interface_found)
+        log_warn("  [3/4] '" + interface_name + "' is NOT in the list of available interfaces");
 
-    // Loop until all port names have been enumerated.
+    // ---- 4/4 : ports. A missing cable, an unpowered gateway or a missing udev
+    //            rule shows up here as an empty list.
+    start_of_selection = true;
+    end_of_selection = 0;
+    std::string port_name;
+    unsigned int nb_ports = 0;
+    bool port_found = false;
     while (get_port_name_selection(device_name,
                                    protocol_stack,
                                    interface_name,
@@ -307,19 +393,59 @@ void *open_gateway(void)
                                    end_of_selection,
                                    error_code))
     {
-        std::cout << "Available port name: " << port_name << std::endl;
-
-        // If no more port names are available, exit the loop.
+        nb_ports++;
+        log_info("  [4/4] available port      : " + port_name);
+        if (port_name == port_name_wanted)
+            port_found = true;
         if (end_of_selection)
             break;
-
-        // For subsequent calls, set start_of_selection to false.
         start_of_selection = false;
     }
+    if (nb_ports == 0)
+    {
+        log_error("  [4/4] no " + interface_name + " port found : the EPOS4 gateway is not visible from this process");
+        log_error("        check : USB cable plugged, gateway powered, 'lsusb' shows the maxon device,");
+        log_error("        and the udev rules are installed INSIDE and OUTSIDE the docker container");
+    }
+    else if (!port_found)
+    {
+        log_warn("  [4/4] '" + port_name_wanted + "' was not enumerated, trying to open it anyway");
+    }
 
-
-    void *gateway = VCS_OpenDevice((char *)"EPOS4", (char *)"MAXON SERIAL V2", (char *)"USB", (char *)"USB0", &error_code);
+    // ---- open the device ----
+    error_code = 0;
+    const auto open_start = std::chrono::steady_clock::now();
+    void *gateway = VCS_OpenDevice((char *)device_name.c_str(),
+                                   (char *)protocol_stack.c_str(),
+                                   (char *)interface_name.c_str(),
+                                   (char *)port_name_wanted.c_str(),
+                                   &error_code);
+    const double open_ms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - open_start)
+                               .count();
     print_VCS_error(error_code, __FUNCTION__);
+
+    char summary[256];
+    if (gateway == nullptr)
+    {
+        std::snprintf(summary, sizeof(summary),
+                      "VCS_OpenDevice FAILED after %.0f ms on %s/%s (%s)",
+                      open_ms, interface_name.c_str(), port_name_wanted.c_str(),
+                      vcs_error_string(error_code).c_str());
+        log_error(summary);
+        log_error("===== EPOS gateway : NOT opened, no motor can be reached =====");
+        return gateway;
+    }
+
+    if (error_code)
+        log_warn("VCS_OpenDevice returned a valid handle but reported " + vcs_error_string(error_code));
+
+    std::snprintf(summary, sizeof(summary),
+                  "VCS_OpenDevice OK in %.0f ms : handle=%p on %s/%s",
+                  open_ms, gateway, interface_name.c_str(), port_name_wanted.c_str());
+    log_info(summary);
+    log_info("===== EPOS gateway : opened =====");
+
     // VCS_ClearFault(gateway, 0, &error_code);
     // print_VCS_error(error_code);
     return gateway;
@@ -327,10 +453,15 @@ void *open_gateway(void)
 
 void close_gateway(void *gateway)
 {
-
     unsigned int error_code = 0;
+    char buffer[128];
+    std::snprintf(buffer, sizeof(buffer), "closing EPOS gateway (handle=%p)", gateway);
+    log_info(buffer);
+
     VCS_CloseDevice(gateway, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
+    if (!error_code)
+        log_info("EPOS gateway closed");
 }
 
 // CONSTRUCTORS
@@ -342,76 +473,144 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
     pos_ref = 0;
     op_mode = 0;
 
+    const std::string tag = node_tag(id);
+    char buffer[256];
+
+    std::snprintf(buffer, sizeof(buffer),
+                  "%s : probing | expected_type=%s requested_mode=%s homing=%s",
+                  tag.c_str(), motor_type_name(exp_type), operation_mode_name(mode),
+                  homing ? "true" : "false");
+    log_info(buffer);
+
+    const auto probe_start = std::chrono::steady_clock::now();
     VCS_GetMotorType(gateway, id, &motor_type, &error_code);
-    cout << "motors.cpp] motor id : " << id << endl;
+    const double probe_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - probe_start)
+                                .count();
+
     is_connected = (error_code) ? false : true; // SDO TIMEOUT  == 0x5040000
 
     if (is_connected)
     {
+        std::snprintf(buffer, sizeof(buffer),
+                      "%s : ANSWERED in %.0f ms | motor_type=%d (%s)",
+                      tag.c_str(), probe_ms, (int)motor_type, motor_type_name(motor_type));
+        log_info(buffer);
+
         if (exp_type && (motor_type != exp_type))
         {
-#ifdef ROSCPP_ROS_H
-            ROS_WARN_STREAM("NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                                    : "EC block motor"));
-#else
-            cerr << "[motors.cpp] NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                                         : "EC block motor")
-                 << endl;
-#endif
+            std::snprintf(buffer, sizeof(buffer),
+                          "%s : motor type MISMATCH, expected %s but the controller reports %s",
+                          tag.c_str(), motor_type_name(exp_type), motor_type_name(motor_type));
+            log_warn(buffer);
             // throw 0;
+        }
+
+        // state of the controller as found at connection time
+        unsigned int fault_error_code = 0;
+        int in_fault = false;
+        VCS_GetFaultState(gateway, id, &in_fault, &fault_error_code);
+        if (fault_error_code)
+        {
+            log_warn(tag + " : could not read the fault state (" + vcs_error_string(fault_error_code) + ")");
+        }
+        else if (in_fault)
+        {
+            log_warn(tag + " : controller is in FAULT state at connection time");
+            const std::vector<std::string> device_errors = this->get_device_error_messages();
+            for (size_t i = 0; i < device_errors.size(); i++)
+                log_warn(tag + " : device error : " + device_errors[i]);
         }
         else
         {
-#ifdef ROSCPP_ROS_H
-            ROS_DEBUG_STREAM("NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                                     : "EC block motor"));
-#else
-            cout << "[motors.cpp] NAV_Motor " << id << " : " << ((motor_type == MT_DC_MOTOR) ? "DC motor" : (motor_type == MT_EC_SINUS_COMMUTATED_MOTOR) ? "EC sine motor"
-                                                                                                                                                         : "EC block motor")
-                 << endl;
-#endif
+            log_info(tag + " : no fault reported at connection time");
         }
+
         if (homing && (mode == OMD_PROFILE_POSITION_MODE))
         {
-            int pos;
+            int pos = 0;
+            error_code = 0;
             VCS_GetPositionIs(gateway, id, &pos, &error_code);
             VCS_ActivateHomingMode(gateway, id, &error_code);
             VCS_DefinePosition(gateway, id, pos, &error_code);
             VCS_StopHoming(gateway, id, &error_code);
+            if (error_code)
+            {
+                print_VCS_error(error_code, __FUNCTION__);
+                log_error(tag + " : homing FAILED (" + vcs_error_string(error_code) + ")");
+            }
+            else
+            {
+                log_info(tag + " : homed, current position defined as " + std::to_string(pos));
+            }
         }
 
         if (mode)
         {
+            error_code = 0;
             VCS_SetOperationMode(gateway, id, mode, &error_code);
             if (error_code)
             {
                 print_VCS_error(error_code, __FUNCTION__);
+                log_error(tag + " : could not set the operation mode to " + operation_mode_name(mode));
                 op_mode = 0;
             }
             else
+            {
                 op_mode = mode;
+                log_info(tag + " : operation mode set to " + operation_mode_name(mode));
+            }
+
+            error_code = 0;
             if (mode == OMD_PROFILE_POSITION_MODE) // OMD_PROFILE_POSITION_MODE
+            {
                 VCS_SetPositionProfile(gateway, id, MAX_STEER_VEL, MAX_STEER_ACCEL, MAX_STEER_ACCEL, &error_code);
+                std::snprintf(buffer, sizeof(buffer),
+                              "%s : position profile vel=%d rpm accel=decel=%d rpm/s -> %s",
+                              tag.c_str(), MAX_STEER_VEL, MAX_STEER_ACCEL, error_code ? "FAILED" : "ok");
+            }
             else if (mode == OMD_PROFILE_VELOCITY_MODE)
+            {
                 VCS_SetVelocityProfile(gateway, id, MAX_DRIVE_ACCEL, MAX_DRIVE_DECEL, &error_code);
+                std::snprintf(buffer, sizeof(buffer),
+                              "%s : velocity profile accel=%d rpm/s decel=%d rpm/s -> %s",
+                              tag.c_str(), MAX_DRIVE_ACCEL, MAX_DRIVE_DECEL, error_code ? "FAILED" : "ok");
+            }
+            else
+            {
+                std::snprintf(buffer, sizeof(buffer), "%s : no motion profile written for this mode", tag.c_str());
+            }
+
             if (error_code)
             {
+                log_error(buffer);
                 print_VCS_error(error_code, __FUNCTION__);
             }
+            else
+            {
+                log_info(buffer);
+            }
+        }
+        else
+        {
+            log_info(tag + " : no operation mode requested, controller left as is");
         }
     }
     else
     {
-#ifdef ROSCPP_ROS_HSet
-        ROS_WARN_STREAM("NAV_Motor " << id << " : unresponsive");
-#else
-        cerr << "[motors.cpp] NAV_Motor " << id << " : unresponsive" << endl;
-#endif
+        std::snprintf(buffer, sizeof(buffer),
+                      "%s : UNRESPONSIVE after %.0f ms (%s)",
+                      tag.c_str(), probe_ms, vcs_error_string(error_code).c_str());
+        log_error(buffer);
 
-        if (error_code != 0x5040000)
+        if (error_code == 0x5040000)
+        {
+            log_error(tag + " : SDO timeout, the controller did not answer on the CAN bus.");
+            log_error(tag + " : check the node ID switches, the CAN wiring and termination, and the 24V/48V power of that controller");
+        }
+        else
         {
             print_VCS_error(error_code, __FUNCTION__);
-            // throw 0;
         }
         motor_type = 0;
     }
@@ -554,11 +753,7 @@ bool NAV_Motor::is_faulty(bool verbose)
             {
                 VCS_GetDeviceErrorCode(gateway, id, i, &device_error, &error_code);
                 VCS_GetErrorInfo(device_error, error_msg, 100);
-#ifdef ROSCPP_ROS_H
-                ROS_WARN_STREAM("FAULT : Node " << id << " : " << error_msg);
-#else
-                cerr << "[motors.cpp] FAULT : Node " << id << " : " << error_msg << endl;
-#endif
+                log_warn("FAULT : " + node_tag(id) + " : " + error_msg);
             }
         }
     }

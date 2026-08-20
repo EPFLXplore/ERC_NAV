@@ -125,7 +125,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(launch_lidar),
     )
 
-
     # -------------- ERC_CAMERAS NAV Launch file --------
     nav_cameras_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(

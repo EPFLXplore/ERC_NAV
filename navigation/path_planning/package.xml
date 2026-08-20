@@ -12,10 +12,13 @@
 
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
+  <depend>action_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>nav2_behavior_tree</depend>
   <depend>nav2_msgs</depend>
+  <exec_depend>wheels_control</exec_depend>
+  <exec_depend>gradient_costmap</exec_depend>
   <depend>behaviortree_cpp_v3</depend>
   <depend>pluginlib</depend>
 

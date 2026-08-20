@@ -2,23 +2,26 @@
 # only need to be edited in one place.
 /**:
   ros__parameters:
-    erc_start_pos: [0.0, -2.4] # in the map frame
+    erc_start_pos: [ # in the map frame
+      0.0,     0.0,    # S1
+    ]
+    backup_erc_map_yaw_rad: 0.16837 #calculated by aligning rover with vector S1->L15 and thus doing arctan(L15_y - S1_y, L15_x - S1_x)=arctan(1.102 - 0, 6.483 - 0)=arctan(1.102/6.483)=0.16837 rad
     landmark_poses: [ #in the map frame
-      -0.3,  -4.69,         # id 51 ==== 0 
-      3.28,  -0.8,          # id 52 ====1 
-      999999.0,  999999.0,  # id 53 ===== id2 
-      999999.0,  999999.0,  # id 54
-      999999.0,  999999.0,  # id 55
-      999999.0,  999999.0,  # id 56
-      999999.0,  999999.0,  # id 57
-      3.28,      -3.19,     # id 58 === id 7
-      999999.0,  999999.0,  # id 59
-      999999.0,  999999.0,  # id 60
-      999999.0,  999999.0,  # id 61
-      999999.0,  999999.0,  # id 62
-      999999.0,  999999.0,  # id 63
-      ######atention cest pas les meme id que les anchors il ya une correspondance !!!
-      ##### ID 
+      3.183,   8.012,  # L1  
+      7.269,   9.482,  # L2  
+      7.878,   17.583, # L3 
+      9.225,   22.389, # L4
+      3.518,   23.990, # L5
+      0.882,   16.870, # L6
+      -3.944,  21.415, # L7
+      -5.491,  16.334, # L8
+      -7.695,  13.528, # L9
+      -1.610,  12.602, # L10
+      -7.715,  9.721,  # L11
+      -4.311,  4.442,  # L12
+      -5.720,  28.118, # L13
+      -11.438, 5.230,  # L14
+      6.483,   1.102   # L15
     ]
 
 aruco_node:

@@ -3,15 +3,18 @@ lidar_yaw_base_finder:
     # The Ouster driver in this workspace publishes XYZ points on this topic.
     input_cloud_topic: /ouster/points
 
-    # Debug outputs, displayed with the PointCloud2 and MarkerArray RViz displays.
+    # Debug outputs. Add a PointCloud2 display for the first two and a
+    # MarkerArray display for boundary_lines in RViz.
+    # The MarkerArray shows green/orange convolution-response bars outside the
+    # annulus and yellow peak rays where RANSAC fitting is attempted.
     filtered_cloud_topic: dead_zone/filtered_cloud
     line_inliers_topic: dead_zone/line_inliers
     line_markers_topic: dead_zone/boundary_lines
 
     # Select the fourth quadrant and the 0.60 m to 1.50 m annulus. Every
     # selected point is projected onto z = 0 before publishing and fitting.
-    sector_min_deg: 100.0
-    sector_max_deg: 170.0
+    sector_min_deg: -80.0
+    sector_max_deg: -10.0
     min_radius_m: 1.20
     max_radius_m: 2.50
 
@@ -20,14 +23,17 @@ lidar_yaw_base_finder:
     angular_bin_size_deg: 0.25
     min_points_per_angular_bin: 2
     edge_response_threshold: 2.0
+    # Radial length, in metres per unit of convolution response, for the RViz
+    # response bars. This affects only visualization, not edge detection.
+    convolution_response_scale_m: 0.06
 
     # Merge edge rays across frames only if their angular difference is less
     # than one degree. Displayed rays use samples from this rolling interval.
     temporal_line_merge_angle_deg: 3.5
     temporal_average_window_sec: 2.0
-    # Zero keeps a detected ray indefinitely; set a positive number to expire
-    # a ray after that many seconds without another matching observation.
-    line_track_timeout_sec: 0.0
+    # Remove a blue time-averaged ray after this many seconds without another
+    # matching observation, so stale rays do not remain in RViz.
+    line_track_timeout_sec: 2.0
 
     # Fit radial rays only around convolution-detected transition angles.
     # Increase if the edge angle has more jitter; decrease to reject nearby
@@ -37,7 +43,10 @@ lidar_yaw_base_finder:
     # Increase only if the convolution edge is consistently offset; decrease
     # to reject RANSAC fits that lock onto an unrelated radial feature.
     max_line_angle_error_deg: 2.0
-    # Allowed error, per expected 7 deg / 9 deg / 17 deg spacing, when
+    # Expected angular gaps between the four boundary rays: first dead zone,
+    # live span, then second dead zone.
+    pattern_angles_deg: [10.2, 11.3, 23.2]
+    # Allowed error per expected gap when
     # selecting the final four rays. Increase for noisier estimates; decrease
     # to make false pattern matches less likely.
     pattern_gap_tolerance_deg: 2.0

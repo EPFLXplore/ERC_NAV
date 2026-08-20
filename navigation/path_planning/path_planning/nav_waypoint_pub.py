@@ -54,7 +54,7 @@ class WaypointFollower(Node):
         #   "erc_map"  -> waypoint_list is written in ERC coords and converted to map
         #
         # =====================================================================
-        self.declare_parameter("waypoint_input_coordinates", "erc_map") # WATCH OUT FOR MEEE !!!!
+        self.declare_parameter("waypoint_input_coordinates", "map") # WATCH OUT FOR MEEE !!!!
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("robot_frame", "base_link")
         self.declare_parameter("wheel_odom_topic", "/fused_nav_ekf_odom")
@@ -237,13 +237,10 @@ class WaypointFollower(Node):
         waypoint_list = [W1, W2, W3, W4]
 
         waypoint_list = [
-            (-3.0, 3.0, 0.0),
-            (1.4, 5.0, 0.0),
-            (1.4, 11.0, 0.0),
-            (5.4, 6.0, 0.0),
-            (10.4, 11.0, 0.0),
-            (10.4, 2.0, 0.0),
-            (-7.4, 2.6, 0.0),
+            (1.6, 0.0, 0.0),
+            (1.6, -5.7, 0.0),
+            (-1.4, -5.7, 0.0),
+            (0.0, 0.0, 0.0),
         ]
         
 

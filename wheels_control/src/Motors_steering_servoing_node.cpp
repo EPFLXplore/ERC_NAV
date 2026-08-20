@@ -27,7 +27,7 @@ class MotorSteeringServoingNode : public rclcpp::Node
 public:
     MotorSteeringServoingNode() : Node("motor_steering_servoing")
     {
-        declare_parameter<double>("ANGLE_TOLERANCE", 0.5);
+        declare_parameter<double>("ANGLE_TOLERANCE", 0.5); // 0.5 rad = 28°
         angle_tolerance_ = get_parameter("ANGLE_TOLERANCE").as_double();
         const double incr_to_rad = 2.0 * M_PI / std::pow(2.0, STEERING_RESOLUTION_BITS);
         angle_tolerance_incr_ = angle_tolerance_ / incr_to_rad;

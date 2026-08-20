@@ -32,6 +32,13 @@ private:
     std::vector<int> inlier_indices;
   };
 
+  struct ConvolutionSample
+  {
+    double angle_deg;
+    double response;
+    bool is_peak;
+  };
+
   struct TimedAngle
   {
     rclcpp::Time stamp;
@@ -49,7 +56,9 @@ private:
   std::optional<FittedLine> fitRadialLineCandidate(
     const Cloud & cloud,
     double seed_angle_deg) const;
-  std::vector<FittedLine> extractDensityEdgeLines(const Cloud & cloud) const;
+  std::vector<FittedLine> extractDensityEdgeLines(
+    const Cloud & cloud,
+    std::vector<ConvolutionSample> & convolution_samples) const;
   std::optional<std::array<FittedLine, 4>> selectPatternLines(
     std::vector<FittedLine> lines) const;
   std::vector<FittedLine> updateLineTracks(
@@ -58,7 +67,8 @@ private:
   void publishLines(
     const std_msgs::msg::Header & header,
     const std::vector<FittedLine> & detected_lines,
-    const std::vector<FittedLine> & matched_lines) const;
+    const std::vector<FittedLine> & matched_lines,
+    const std::vector<ConvolutionSample> & convolution_samples) const;
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr filtered_cloud_publisher_;
@@ -76,11 +86,13 @@ private:
   double angular_bin_size_deg_;
   int min_points_per_angular_bin_;
   double edge_response_threshold_;
+  double convolution_response_scale_m_;
   double temporal_line_merge_angle_deg_;
   double temporal_average_window_sec_;
   double line_track_timeout_sec_;
   double line_candidate_half_width_deg_;
   double max_line_angle_error_deg_;
+  std::vector<double> pattern_angles_deg_;
   double pattern_gap_tolerance_deg_;
   double line_distance_threshold_m_;
   double line_origin_max_offset_m_;

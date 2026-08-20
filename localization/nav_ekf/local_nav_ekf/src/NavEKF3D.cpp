@@ -24,6 +24,7 @@
 // Author: Arno Laurie
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/executors/single_threaded_executor.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -37,6 +38,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 #include <deque>
+#include <future>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <tf2/LinearMath/Transform.h>
 #include <tf2/exceptions.h>
@@ -526,6 +528,12 @@ public:
     wait_for_service(bias_client_);
     wait_for_service(zero_quat_client_);
     wait_for_service(zero_pose_client_);
+
+    // The regular IMU subscription is created below, after calibration.  Take
+    // one independent AHRS sample here so startup logs preserve the raw
+    // orientation, gyro and acceleration that the IMU will calibrate from.
+    log_imu_before_calibration();
+
     call_trigger(bias_client_,      "setBias");
     call_trigger(zero_quat_client_, "setZeroQuaternion");
     call_trigger(zero_pose_client_, "setZeroPose");
@@ -589,6 +597,48 @@ public:
 
 private:
   // ---------------- Helpers ----------------
+  void log_imu_before_calibration() {
+    auto probe = std::make_shared<rclcpp::Node>(
+        "nav_ekf_imu_precalibration_probe");
+    sensor_msgs::msg::Imu::SharedPtr imu;
+    const auto sensor_qos = rclcpp::QoS{rclcpp::KeepLast{1}}.best_effort();
+    std::promise<void> sample_received;
+    auto sample_future = sample_received.get_future();
+
+    // rclcpp::wait_for_message() in Humble has no QoS overload.  Use a
+    // short-lived executor instead so this one-shot subscriber remains
+    // compatible with the AHRS best-effort publisher.
+    [[maybe_unused]] auto subscription = probe->create_subscription<sensor_msgs::msg::Imu>(
+        "/olive/imu/id001/ahrs", sensor_qos,
+        [&imu, &sample_received](sensor_msgs::msg::Imu::SharedPtr msg) {
+          if (!imu) {
+            imu = std::move(msg);
+            sample_received.set_value();
+          }
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(probe);
+    const auto result = executor.spin_until_future_complete(
+        sample_future, std::chrono::seconds(2));
+    executor.remove_node(probe);
+
+    if (result != rclcpp::FutureReturnCode::SUCCESS || !imu) {
+      RCLCPP_WARN(get_logger(), "No AHRS sample received before IMU calibration");
+      return;
+    }
+
+    const auto &q = imu->orientation;
+    const auto &gyro = imu->angular_velocity;
+    const auto &accel = imu->linear_acceleration;
+    RCLCPP_INFO(
+        get_logger(),
+        "AHRS before calibration | q=[x=%.6f y=%.6f z=%.6f w=%.6f] "
+        "gyro=[%.6f %.6f %.6f] rad/s accel=[%.6f %.6f %.6f] m/s^2",
+        q.x, q.y, q.z, q.w,
+        gyro.x, gyro.y, gyro.z,
+        accel.x, accel.y, accel.z);
+  }
+
   void wait_for_service(rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr &client) {
     if (!client->wait_for_service(std::chrono::seconds(5))) {
       RCLCPP_WARN(get_logger(), "Service not available");

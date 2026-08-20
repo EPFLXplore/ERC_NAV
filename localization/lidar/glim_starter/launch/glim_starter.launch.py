@@ -1,15 +1,23 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
+from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
+    zero_z = LaunchConfiguration('zero_z')
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'zero_z', default_value='true',
+            description='Set false during LiDAR pitch calibration to retain GLIM vertical motion.',
+        ),
         # Launch GLIM ROS node
         Node(
             package='glim_ros',
             executable='glim_rosnode',
             name='glim_rosnode',
             output='screen',
-            parameters=[{'config_path': '/home/xplore/dev_ws/src/localization/lidar/glim_starter/glim_config/config'}]
+            parameters=[{'config_path': '/home/xplore/dev_ws/src/localization/lidar/glim_starter/glim_config/config'}],
         ),
 
         # Static TF: imu_link_glim <- base_link_glim
@@ -62,7 +70,7 @@ def generate_launch_description():
                 # Your case: base_link +X appeared as odom -Y -> apply +pi/2 remap on XY.
                 {'remap_body_x_from_odom_neg_y': True},
                 {'remap_neg_y_to_plus_x_include_yaw': False},
-                {'zero_z': True},
+                {'zero_z': ParameterValue(zero_z, value_type=bool)},
                 {'reflect_x_after': False},
                 {'rotation_sign': False},
                 {'invert_output_x': False},

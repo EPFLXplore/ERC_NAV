@@ -128,7 +128,6 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         condition=IfCondition(launch_lidar),
     )
 
-
     # -------------- ERC_CAMERAS NAV Launch file --------
     nav_cameras_launch = IncludeLaunchDescription(
         launch.launch_description_sources.PythonLaunchDescriptionSource(
@@ -232,7 +231,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
             on_exit=[
                 LogInfo(msg=f"{_C_BOLD_GREEN}/NAV/feed_camera_nav_2 is publishing. Launching dependent stack...{_C_RESET}"),
                 *full_aruco_launch,
-                jetson_stats,
+                # jetson_stats,
                 slip_control_node,
             ],
         )
@@ -260,7 +259,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         wait_for_nav_camera_2,
         launch_after_nav_camera_2,
         # full_aruco_launch,
-        # jetson_stats,
+        jetson_stats,
         # slip_control_node,
     ]
 

@@ -33,6 +33,7 @@ endif()
 ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
+  path_planning/lidar_calibrator.py
   path_planning/nav_waypoint_pub.py
   DESTINATION lib/${PROJECT_NAME}
 )

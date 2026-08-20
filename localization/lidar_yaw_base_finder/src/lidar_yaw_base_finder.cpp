@@ -1,5 +1,16 @@
 #include "lidar_yaw_base_finder/lidar_yaw_base_finder.hpp"
 
+// Processing pipeline:
+// 1. Keep points in the configured azimuth sector and radial annulus, then
+//    project them onto XY so each cone boundary becomes a radial ray.
+// 2. Count points in angular bins and turn those counts into a binary
+//    occupancy signal (live or dead).
+// 3. Convolve the occupancy signal with [-1, -2, 0, 2, 1] to find sharp
+//    dead/live transitions. Non-maximum suppression produces the seed rays.
+// 4. Fit RANSAC lines only in a small angular window around each seed ray.
+// 5. Time-average fitted rays, select the configured gap pattern, and report
+//    the LiDAR-to-base yaw. RViz markers also show the convolution response.
+
 #include <pcl/ModelCoefficients.h>
 #include <pcl/PointIndices.h>
 #include <pcl/segmentation/sac_segmentation.h>
@@ -67,13 +78,17 @@ LidarYawBaseFinder::LidarYawBaseFinder()
   angular_bin_size_deg_ = declare_parameter<double>("angular_bin_size_deg", 0.25);
   min_points_per_angular_bin_ = declare_parameter<int>("min_points_per_angular_bin", 2);
   edge_response_threshold_ = declare_parameter<double>("edge_response_threshold", 2.0);
+  convolution_response_scale_m_ = declare_parameter<double>(
+    "convolution_response_scale_m", 0.06);
   temporal_line_merge_angle_deg_ = declare_parameter<double>(
     "temporal_line_merge_angle_deg", 1.0);
   temporal_average_window_sec_ = declare_parameter<double>("temporal_average_window_sec", 2.0);
-  line_track_timeout_sec_ = declare_parameter<double>("line_track_timeout_sec", 0.0);
+  line_track_timeout_sec_ = declare_parameter<double>("line_track_timeout_sec", 2.0);
   line_candidate_half_width_deg_ = declare_parameter<double>(
     "line_candidate_half_width_deg", 1.5);
   max_line_angle_error_deg_ = declare_parameter<double>("max_line_angle_error_deg", 2.0);
+  pattern_angles_deg_ = declare_parameter<std::vector<double>>(
+    "pattern_angles_deg", std::vector<double>{10.2, 11.3, 23.2});
   pattern_gap_tolerance_deg_ = declare_parameter<double>("pattern_gap_tolerance_deg", 2.0);
   line_distance_threshold_m_ = declare_parameter<double>("line_distance_threshold_m", 0.025);
   line_origin_max_offset_m_ = declare_parameter<double>("line_origin_max_offset_m", 0.08);
@@ -85,9 +100,13 @@ LidarYawBaseFinder::LidarYawBaseFinder()
   if (sector_min_deg_ >= sector_max_deg_ || min_radius_m_ <= 0.0 ||
     min_radius_m_ >= max_radius_m_ || angular_bin_size_deg_ <= 0.0 ||
     min_points_per_angular_bin_ < 1 || edge_response_threshold_ <= 0.0 ||
+    convolution_response_scale_m_ <= 0.0 ||
     temporal_line_merge_angle_deg_ <= 0.0 || temporal_average_window_sec_ <= 0.0 ||
     line_track_timeout_sec_ < 0.0 ||
     line_candidate_half_width_deg_ <= 0.0 || max_line_angle_error_deg_ <= 0.0 ||
+    pattern_angles_deg_.size() != 3U ||
+    std::any_of(pattern_angles_deg_.begin(), pattern_angles_deg_.end(),
+      [](const double angle_deg) {return angle_deg <= 0.0;}) ||
     pattern_gap_tolerance_deg_ <= 0.0 ||
     line_distance_threshold_m_ <= 0.0 ||
     line_origin_max_offset_m_ <= 0.0 || ransac_max_iterations_ < 1 || min_line_inliers_ < 2)
@@ -146,7 +165,9 @@ void LidarYawBaseFinder::pointCloudCallback(
   filtered_message.header = message->header;
   filtered_cloud_publisher_->publish(filtered_message);
 
-  const std::vector<FittedLine> detected_lines = extractDensityEdgeLines(filtered_cloud);
+  std::vector<ConvolutionSample> convolution_samples;
+  const std::vector<FittedLine> detected_lines = extractDensityEdgeLines(
+    filtered_cloud, convolution_samples);
   const std::vector<FittedLine> averaged_lines = updateLineTracks(
     detected_lines, get_clock()->now());
   const auto pattern_lines = selectPatternLines(averaged_lines);
@@ -169,7 +190,7 @@ void LidarYawBaseFinder::pointCloudCallback(
   pcl::toROSMsg(all_inliers, inliers_message);
   inliers_message.header = message->header;
   line_inliers_publisher_->publish(inliers_message);
-  publishLines(message->header, averaged_lines, matched_lines);
+  publishLines(message->header, averaged_lines, matched_lines, convolution_samples);
 
   if (!averaged_lines.empty()) {
     std::ostringstream detected_report;
@@ -193,7 +214,7 @@ void LidarYawBaseFinder::pointCloudCallback(
   if (!pattern_lines) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000,
-      "Detected %zu edge rays; retaining %zu time-averaged rays, but no 7 deg dead -> 9 deg live -> 17 deg dead pattern matched",
+      "Detected %zu edge rays; retaining %zu time-averaged rays, but no configured gap pattern matched",
       detected_lines.size(), averaged_lines.size());
     return;
   }
@@ -292,8 +313,10 @@ std::optional<LidarYawBaseFinder::FittedLine> LidarYawBaseFinder::fitRadialLineC
 }
 
 std::vector<LidarYawBaseFinder::FittedLine> LidarYawBaseFinder::extractDensityEdgeLines(
-  const Cloud & cloud) const
+  const Cloud & cloud,
+  std::vector<ConvolutionSample> & convolution_samples) const
 {
+  convolution_samples.clear();
   const int bin_count = static_cast<int>(std::ceil(
     (sector_max_deg_ - sector_min_deg_) / angular_bin_size_deg_));
   if (bin_count < 5) {
@@ -330,18 +353,21 @@ std::vector<LidarYawBaseFinder::FittedLine> LidarYawBaseFinder::extractDensityEd
 
   std::vector<FittedLine> lines;
   for (int bin = 3; bin < bin_count - 3; ++bin) {
-    const double response = std::abs(edge_response[static_cast<std::size_t>(bin)]);
+    const double signed_response = edge_response[static_cast<std::size_t>(bin)];
+    const double response = std::abs(signed_response);
     const double previous_response = std::abs(edge_response[static_cast<std::size_t>(bin - 1)]);
     const double next_response = std::abs(edge_response[static_cast<std::size_t>(bin + 1)]);
+    const double sample_angle_deg = sector_min_deg_ +
+      (static_cast<double>(bin) + 0.5) * angular_bin_size_deg_;
     // Non-maximum suppression turns each density transition into one edge.
-    if (response < edge_response_threshold_ || response < previous_response ||
-      response <= next_response)
+    const bool is_peak = response >= edge_response_threshold_ &&
+      response >= previous_response && response > next_response;
+    convolution_samples.push_back(ConvolutionSample{sample_angle_deg, signed_response, is_peak});
+    if (!is_peak)
     {
       continue;
     }
-    const double seed_angle_deg = sector_min_deg_ +
-      (static_cast<double>(bin) + 0.5) * angular_bin_size_deg_;
-    const auto line = fitRadialLineCandidate(cloud, seed_angle_deg);
+    const auto line = fitRadialLineCandidate(cloud, sample_angle_deg);
     if (line) {
       lines.push_back(*line);
     }
@@ -434,7 +460,7 @@ LidarYawBaseFinder::selectPatternLines(std::vector<FittedLine> lines) const
   std::optional<std::array<FittedLine, 4>> best_pattern;
   for (std::size_t first_gap = 0; first_gap + 1U < lines.size(); ++first_gap) {
     const double first_dead_gap = lines[first_gap + 1U].angle_deg - lines[first_gap].angle_deg;
-    if (std::abs(first_dead_gap - 7.0) > pattern_gap_tolerance_deg_) {
+    if (std::abs(first_dead_gap - pattern_angles_deg_[0]) > pattern_gap_tolerance_deg_) {
       continue;
     }
     for (std::size_t second_gap = first_gap + 2U;
@@ -442,13 +468,14 @@ LidarYawBaseFinder::selectPatternLines(std::vector<FittedLine> lines) const
     {
       const double live_span = lines[second_gap].angle_deg - lines[first_gap + 1U].angle_deg;
       const double second_dead_gap = lines[second_gap + 1U].angle_deg - lines[second_gap].angle_deg;
-      if (std::abs(live_span - 9.0) > pattern_gap_tolerance_deg_ ||
-        std::abs(second_dead_gap - 17.0) > pattern_gap_tolerance_deg_)
+      if (std::abs(live_span - pattern_angles_deg_[1]) > pattern_gap_tolerance_deg_ ||
+        std::abs(second_dead_gap - pattern_angles_deg_[2]) > pattern_gap_tolerance_deg_)
       {
         continue;
       }
-      const double error = std::abs(first_dead_gap - 7.0) +
-        std::abs(live_span - 9.0) + std::abs(second_dead_gap - 17.0);
+      const double error = std::abs(first_dead_gap - pattern_angles_deg_[0]) +
+        std::abs(live_span - pattern_angles_deg_[1]) +
+        std::abs(second_dead_gap - pattern_angles_deg_[2]);
       if (error < best_error) {
         best_error = error;
         best_pattern = std::array<FittedLine, 4>{
@@ -463,7 +490,8 @@ LidarYawBaseFinder::selectPatternLines(std::vector<FittedLine> lines) const
 void LidarYawBaseFinder::publishLines(
   const std_msgs::msg::Header & header,
   const std::vector<FittedLine> & detected_lines,
-  const std::vector<FittedLine> & matched_lines) const
+  const std::vector<FittedLine> & matched_lines,
+  const std::vector<ConvolutionSample> & convolution_samples) const
 {
   visualization_msgs::msg::MarkerArray markers;
   visualization_msgs::msg::Marker clear_marker;
@@ -473,7 +501,7 @@ void LidarYawBaseFinder::publishLines(
 
   visualization_msgs::msg::Marker line_marker;
   line_marker.header = header;
-  line_marker.ns = "ransac_detected_rays";
+  line_marker.ns = "time_averaged_ransac_rays";
   line_marker.id = 1;
   line_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
   line_marker.action = visualization_msgs::msg::Marker::ADD;
@@ -489,6 +517,65 @@ void LidarYawBaseFinder::publishLines(
   }
   if (!line_marker.points.empty()) {
     markers.markers.push_back(line_marker);
+  }
+
+  // Display the signed convolution response as radial bars outside the point
+  // annulus. Green bars are live-zone starts; orange bars are live-zone ends.
+  visualization_msgs::msg::Marker positive_response_marker = line_marker;
+  positive_response_marker.ns = "convolution_response_positive";
+  positive_response_marker.id = 3;
+  positive_response_marker.scale.x = 0.012;
+  positive_response_marker.color.r = 0.1F;
+  positive_response_marker.color.g = 1.0F;
+  positive_response_marker.color.b = 0.1F;
+  positive_response_marker.points.clear();
+  visualization_msgs::msg::Marker negative_response_marker = positive_response_marker;
+  negative_response_marker.ns = "convolution_response_negative";
+  negative_response_marker.id = 4;
+  negative_response_marker.color.r = 1.0F;
+  negative_response_marker.color.g = 0.5F;
+  negative_response_marker.color.b = 0.0F;
+  for (const auto & sample : convolution_samples) {
+    if (sample.response == 0.0) {
+      continue;
+    }
+    auto & response_marker = sample.response > 0.0 ?
+      positive_response_marker : negative_response_marker;
+    geometry_msgs::msg::Point start = pointAt(max_radius_m_ + 0.05, sample.angle_deg);
+    geometry_msgs::msg::Point end = pointAt(
+      max_radius_m_ + 0.05 + convolution_response_scale_m_ * std::abs(sample.response),
+      sample.angle_deg);
+    start.z = 0.05;
+    end.z = 0.05;
+    response_marker.points.push_back(start);
+    response_marker.points.push_back(end);
+  }
+  if (!positive_response_marker.points.empty()) {
+    markers.markers.push_back(positive_response_marker);
+  }
+  if (!negative_response_marker.points.empty()) {
+    markers.markers.push_back(negative_response_marker);
+  }
+
+  // Yellow rays are convolution peaks: these are the only angles for which
+  // RANSAC is attempted. Blue rays below are the candidates that RANSAC kept.
+  visualization_msgs::msg::Marker seed_marker = line_marker;
+  seed_marker.ns = "convolution_peak_seeds";
+  seed_marker.id = 5;
+  seed_marker.scale.x = 0.012;
+  seed_marker.color.r = 1.0F;
+  seed_marker.color.g = 0.85F;
+  seed_marker.color.b = 0.0F;
+  seed_marker.points.clear();
+  for (const auto & sample : convolution_samples) {
+    if (!sample.is_peak) {
+      continue;
+    }
+    seed_marker.points.push_back(pointAt(min_radius_m_, sample.angle_deg));
+    seed_marker.points.push_back(pointAt(max_radius_m_, sample.angle_deg));
+  }
+  if (!seed_marker.points.empty()) {
+    markers.markers.push_back(seed_marker);
   }
 
   visualization_msgs::msg::Marker matched_marker = line_marker;

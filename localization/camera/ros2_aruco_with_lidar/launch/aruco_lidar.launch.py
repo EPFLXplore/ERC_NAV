@@ -112,7 +112,7 @@ def generate_launch_description():
         # ^ RANSAC plane extractions per tag. High: digs past ground/walls to find the cube faces (more CPU). Low: only dominant planes, cube missed if clutter is fit first
         DeclareLaunchArgument('plane_group_centroid_max_m', default_value='0.80'),
         # ^ [m] max centroid distance to group a 2nd side face / top with the 1st. High: planes from different objects merged into one cube. Low: valid 2nd face rejected -> center estimated from a single face (less accurate)
-        DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.25'),
+        DeclareLaunchArgument('face_dimension_tolerance_m', default_value='0.1'),
         # ^ [m] allowed excess over nominal face dims (also scales the accept score). High: oversized/odd planes accepted as faces. Low: strict size match, partial or noisy faces rejected
         DeclareLaunchArgument('side_perpendicular_dot_max', default_value='0.75'),
         # ^ max |dot| between two side-face normals to pair them (0 = strictly perpendicular). High: near-parallel planes can pair as "two faces". Low: true face pairs dropped when normals are noisy
@@ -130,7 +130,7 @@ def generate_launch_description():
         # ^ max plane long dim vs face diagonal (<=0 disables). High: big planes (walls, ground patches) pass as faces. Low: slightly oversized real faces rejected
         DeclareLaunchArgument('max_center_error_m', default_value='3.0'),
         # ^ [m] max gap between computed cube center and expected map landmark (<=0 = auto). High: tolerates localization drift but accepts wrong objects. Low: strict gate, true detections rejected when localization drifts
-        DeclareLaunchArgument('accept_best_plane_fallback', default_value='true'),
+        DeclareLaunchArgument('accept_best_plane_fallback', default_value='false'),
         # ^ if no plausible face found, take the biggest extracted plane as a side. true: almost always outputs a detection (clutter can become the "cube"). false: silent unless a real face matched
         DeclareLaunchArgument('process_rate_hz', default_value='13.0'),
         # ^ processing throttle. High: fresher detections, more CPU. Low: saves CPU, laggier detections

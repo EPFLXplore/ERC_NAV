@@ -1,0 +1,11 @@
+# Angles in radians, measured by the autonomous LiDAR calibration procedure.
+#
+# With delta_yaw = atan2(y_measured, x_real) and
+# delta_pitch = atan2(z_measured, x_real), the corrector applies
+# R_y(+delta_pitch) * R_z(-delta_yaw) to every raw point.
+#
+# Leave both values at zero until a calibration has completed successfully.
+lidar_pointcloud_corrector:
+  ros__parameters:
+    delta_yaw: 0.0
+    delta_pitch: 0.0
