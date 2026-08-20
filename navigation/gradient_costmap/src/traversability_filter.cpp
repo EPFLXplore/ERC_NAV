@@ -287,6 +287,13 @@ public:
         laserCloudIn->clear();
         laserCloudIn->reserve(laserCloudRaw->size());
         for (const auto &raw : laserCloudRaw->points) {
+            // In organized Ouster clouds, pixels without a valid range are
+            // represented by NaN coordinates.  PCL spatial filters (notably
+            // RadiusOutlierRemoval) assert rather than skip those points, so
+            // make the internal processing cloud explicitly finite here.
+            if (!std::isfinite(raw.x) || !std::isfinite(raw.y) || !std::isfinite(raw.z)) {
+                continue;
+            }
             PointType point;
             point.x = raw.x;
             point.y = raw.y;
@@ -294,6 +301,7 @@ public:
             point.intensity = 0.0f;
             laserCloudIn->push_back(point);
         }
+        laserCloudIn->is_dense = true;
     }
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){

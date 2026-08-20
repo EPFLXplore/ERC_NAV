@@ -1340,11 +1340,12 @@ private:
                     double dx = pose->x() - curr_map_base_x_;
                     double dy = pose->y() - curr_map_base_y_;
                     double jump = std::hypot(dx, dy);
-                    // RCLCPP_INFO(get_logger(),
-                    //     "[UPDATE solver] solution P=(%.3f, %.3f), "
-                    // //     "current=(%.3f, %.3f), jump=%.3f m",
-                    //     pose->x(), pose->y(),
-                    //     curr_map_base_x_, curr_map_base_y_, jump);
+                    RCLCPP_INFO_THROTTLE(
+                        get_logger(), *get_clock(), 1000,
+                        "[UPDATE solver] solution P=(%.3f, %.3f), "
+                        "current=(%.3f, %.3f), jump=%.3f m",
+                        pose->x(), pose->y(),
+                        curr_map_base_x_, curr_map_base_y_, jump);
 
                     if (jump <= MAX_TRANSLATION_JUMP) {
                         x_estimate_ = pose->x();
@@ -1358,14 +1359,16 @@ private:
                         //     "[UPDATE] yaw = %.2f deg",
                         //     yaw_estimate_ * 180.0 / M_PI);
                     } else {
-                        // RCLCPP_WARN(get_logger(),
-                        //     "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
-                        //     jump, pose->x(), pose->y(),
-                        //     curr_map_base_x_, curr_map_base_y_);
+                        RCLCPP_WARN_THROTTLE(
+                            get_logger(), *get_clock(), 1000,
+                            "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
+                            jump, pose->x(), pose->y(),
+                            curr_map_base_x_, curr_map_base_y_);
                     }
                 } else {
-                    // RCLCPP_WARN(get_logger(),
-                    //     "[UPDATE n>=%d] nonlinear solver returned no solution", n);
+                    RCLCPP_WARN_THROTTLE(
+                        get_logger(), *get_clock(), 1000,
+                        "[UPDATE n>=%d] nonlinear solver returned no solution", n);
                 }
             }
 

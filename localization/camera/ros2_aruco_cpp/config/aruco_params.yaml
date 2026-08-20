@@ -2,16 +2,16 @@
 # only need to be edited in one place.
 /**:
   ros__parameters:
-    erc_start_pos: [-7.4, -2.6] # in the map frame
+    erc_start_pos: [0.0, -2.4] # in the map frame
     landmark_poses: [ #in the map frame
-      -3.0,  -0.0,          # id 51 ==== 0 
-      999999.0,  999999.0,  # id 52 ====1 
+      -0.3,  -4.69,         # id 51 ==== 0 
+      3.28,  -0.8,          # id 52 ====1 
       999999.0,  999999.0,  # id 53 ===== id2 
       999999.0,  999999.0,  # id 54
       999999.0,  999999.0,  # id 55
       999999.0,  999999.0,  # id 56
       999999.0,  999999.0,  # id 57
-      -3.7,      -4.0,     # id 58 === id 7
+      3.28,      -3.19,     # id 58 === id 7
       999999.0,  999999.0,  # id 59
       999999.0,  999999.0,  # id 60
       999999.0,  999999.0,  # id 61
@@ -41,5 +41,5 @@ lidar_phi_filter_node:
 
 pose_estimation_node_with_lidar:
   ros__parameters:
-    range_sigma_m: 0.20
-    bearing_sigma_deg: 5.0
+    range_sigma_m: 0.5
+    bearing_sigma_deg: 0.7
