@@ -12,7 +12,7 @@
  *   - `/filtered_pointcloud_visual_low_res`
  *   - `/pointcloud_2_laserscan`
  *
- * This node transforms incoming PointCloud2 LiDAR data into the map frame, filters points by range
+ * This node consumes XYZ fields from incoming PointCloud2 LiDAR data, transforms points into the map frame, filters points by range
  * and by a LiDAR/source-frame robot body exclusion box, then bins them into a robot-centered 2D height
  * grid. Each occupied grid cell stores the observed maximum height below the configured
  * obstacle-height threshold, producing a downsampled point cloud representation of the local terrain.
@@ -48,6 +48,11 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubCloudVisualLowRes;
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr pubLaserScan;
     // Point Cloud
+    // Raw sensor cloud deliberately uses XYZ: traversability does not consume
+    // return intensity, and the Ouster may be configured with point_type: xyz.
+    pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloudRaw;
+    // Internal/output clouds retain PointType (XYZI) so the published filtered
+    // cloud remains compatible with traversability_map and existing consumers.
     pcl::PointCloud<PointType>::Ptr laserCloudIn; // projected full velodyne cloud
     pcl::PointCloud<PointType>::Ptr laserCloudWork; // optional voxel output (reused buffer)
     pcl::PointCloud<PointType>::Ptr laserCloudDenoised; // optional radius outlier output (reused buffer)
@@ -218,6 +223,7 @@ public:
     }
 
     void allocateMemory(){
+        laserCloudRaw.reset(new pcl::PointCloud<pcl::PointXYZ>());
         laserCloudIn.reset(new pcl::PointCloud<PointType>());
         laserCloudWork.reset(new pcl::PointCloud<PointType>());
         laserCloudDenoised.reset(new pcl::PointCloud<PointType>());
@@ -249,6 +255,7 @@ public:
     }
 
     void resetParameters(){
+        laserCloudRaw->clear();
         laserCloudIn->clear();
         laserCloudOut->clear();
         laserCloudObstacles->clear();
@@ -271,6 +278,24 @@ public:
 
     std::chrono::time_point<std::chrono::high_resolution_clock> last_cloud_time_;
 
+    // Do not deserialize as PointXYZI: raw input intensity is not used by this
+    // filter, and a valid Ouster `point_type: xyz` cloud has no such field.
+    // Populate the internal XYZI cloud with a neutral intensity solely for the
+    // output schema expected by downstream nodes.
+    void load_input_cloud_xyz(const sensor_msgs::msg::PointCloud2 &msg) {
+        pcl::fromROSMsg(msg, *laserCloudRaw);
+        laserCloudIn->clear();
+        laserCloudIn->reserve(laserCloudRaw->size());
+        for (const auto &raw : laserCloudRaw->points) {
+            PointType point;
+            point.x = raw.x;
+            point.y = raw.y;
+            point.z = raw.z;
+            point.intensity = 0.0f;
+            laserCloudIn->push_back(point);
+        }
+    }
+
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         auto now = std::chrono::high_resolution_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_cloud_time_).count() < 500) {
@@ -278,7 +303,7 @@ public:
         }
         last_cloud_time_ = now;
 
-        pcl::fromROSMsg(*laserCloudMsg, *laserCloudIn);
+        load_input_cloud_xyz(*laserCloudMsg);
 
         // Look up transforms
         Eigen::Matrix3f rot;
@@ -399,12 +424,13 @@ public:
         }
 
         publishCloud();
+        laserCloudRaw->clear();
         laserCloudIn->clear();
     }
 
     void extractRawCloud(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg){
         // RCLCPP_INFO(this->get_logger(), "Converting ROS message to PCL...");
-        pcl::fromROSMsg(*laserCloudMsg, *laserCloudIn);
+        load_input_cloud_xyz(*laserCloudMsg);
         
         // Initialize matrices
         obstacleMatrix.setTo(-1);  // -1 = invalid

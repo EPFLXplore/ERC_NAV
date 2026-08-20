@@ -787,35 +787,35 @@ private:
 
     tf2::Transform T_zedodom_oakd(q_odom_oakd, p_odom_oakd);
 
-    // ---------------- Lookup static extrinsic base_link -> OAK-d ----------------
-    geometry_msgs::msg::TransformStamped tf_base_oakd_msg;
+    // ---------------- Lookup static extrinsic base_link -> Zed_2i_v1_1 ----------------
+    geometry_msgs::msg::TransformStamped tf_base_zed_msg;
 
     try {
       const bool zero_stamp =
           (msg->header.stamp.sec == 0u && msg->header.stamp.nanosec == 0u);
 
       if (zero_stamp) {
-        tf_base_oakd_msg = tf_buffer_->lookupTransform(
+        tf_base_zed_msg = tf_buffer_->lookupTransform(
             "base_link",
-            "OAK-d",
+            "Zed_2i_v1_1",
             tf2::TimePointZero);
       } else {
         const rclcpp::Time t(msg->header.stamp, get_clock()->get_clock_type());
 
         if (tf_buffer_->canTransform(
                 "base_link",
-                "OAK-d",
+                "Zed_2i_v1_1",
                 t,
                 rclcpp::Duration::from_seconds(0.05))) {
-          tf_base_oakd_msg = tf_buffer_->lookupTransform(
+          tf_base_zed_msg = tf_buffer_->lookupTransform(
               "base_link",
-              "OAK-d",
+              "Zed_2i_v1_1",
               t,
               rclcpp::Duration::from_seconds(0.1));
         } else {
-          tf_base_oakd_msg = tf_buffer_->lookupTransform(
+          tf_base_zed_msg = tf_buffer_->lookupTransform(
               "base_link",
-              "OAK-d",
+              "Zed_2i_v1_1",
               tf2::TimePointZero);
         }
       }
@@ -829,8 +829,8 @@ private:
       return;
     }
 
-    const auto &tr = tf_base_oakd_msg.transform.translation;
-    const auto &qr = tf_base_oakd_msg.transform.rotation;
+    const auto &tr = tf_base_zed_msg.transform.translation;
+    const auto &qr = tf_base_zed_msg.transform.rotation;
 
     tf2::Quaternion q_base_oakd(
         qr.x,

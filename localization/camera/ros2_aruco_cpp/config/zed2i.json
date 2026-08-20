@@ -1,5 +1,5 @@
 {
-    "frame_id": "OAK-d",
+    "frame_id": "Zed_2i_v1_1",
     "image_topic": "/zed/zed_node/rgb/color/rect/image/compressed",
     "compressed_image": true,
     "camera_model": "pinhole",
