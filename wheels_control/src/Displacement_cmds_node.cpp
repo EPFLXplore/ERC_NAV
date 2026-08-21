@@ -44,7 +44,11 @@ using namespace std::chrono_literals;
 
 motors_obj current_motors_cmds = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 motors_obj current_motors_position = {{""}, {0, 0, 0, 0}, {0, 0, 0, 0}};
-float speed_rover = 1.0; // initial value inside the kinematics model
+float speed_rover = 0.5; // initial value inside the kinematics model
+
+// Gamepad twists are normalized in [-1, 1]: full stick maps onto this yaw rate [rad/s].
+// MAX_LIN_VEL / DIST_CENTER_WHEEL is the fastest the rover can spin before a wheel saturates.
+const float MANUAL_MAX_ANG_VEL = MAX_LIN_VEL / DIST_CENTER_WHEEL;
 
 int wheels_angle_for_rotation = 0; //  internal encoder = 2900000/8 = 362 500 unit: increment
 int wheels_angle_for_rotation_with_translation = 0;
@@ -171,8 +175,8 @@ private:
     // Clamp the rover speed received from the CS between 0.6 and 2.4 m/s
     if(speed_rover >= 2.4 ){
       speed_rover = 2.4;
-    }else if(speed_rover <= 0.6){
-      speed_rover = 0.6;
+    }else if(speed_rover <= 0.3){
+      speed_rover = 0.3;
     }
     log_info("--> NEW MAX SPEED from CS: " + std::to_string(speed_rover)+ "m/s <---");
 
@@ -186,9 +190,15 @@ private:
 
     /*Run the kinematics manager to compute the motion*/
     if (current_rover_state == ROVER_MODE::ACKERMANN || current_rover_state == ROVER_MODE::AUTO) {
-      if(current_rover_state == ROVER_MODE::AUTO && v_x < 0){
-        // r_z = -r_z;
-        r_z = r_z;
+      // The kinematic model works in physical units. In AUTO the twist already comes from
+      // nav2 in m/s and rad/s, in manual it is a normalized gamepad twist in [-1, 1] that
+      // still has to be mapped onto the rover velocity envelope.
+      float v_x_cmd = v_x;
+      float r_z_cmd = r_z;
+      if (current_rover_state != ROVER_MODE::AUTO) {
+        v_x_cmd = v_x * speed_rover;
+        double manual_max_ang_vel_cs_req = speed_rover/DIST_CENTER_WHEEL;
+        r_z_cmd = r_z * manual_max_ang_vel_cs_req;
       }
 
       bool prev_crab_mode = crab_mode;
@@ -196,7 +206,7 @@ private:
         crab_mode = true;
       }
 
-      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x, v_y, r_z, speed_rover, crab_mode);
+      current_motors_cmds = normalKinematicModel.run(current_motors_position, v_x_cmd, v_y, r_z_cmd, speed_rover, crab_mode);
       crab_mode = prev_crab_mode;
     } else if(current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL) {
       //log_info("v_x displace" + std::to_string(v_x));

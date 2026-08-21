@@ -104,8 +104,13 @@ inline constexpr const MotorLayout* paired_motor_layout(const MotorLayout& motor
 #define SPEED_ROVER_ROT_MAX 500
 #define SPEED_CMD_MIN 0
 #define SPEED_CMD_MAX 1 // 2¹5
-#define ANGLE_MAX 30 //2900000/8 // = 45
-#define ANGLE_MIN 0
+
+// maxon limits
+// #define MAX_DRIVE_ACCEL 900   // [rpm/S] // default :   900
+// #define MAX_DRIVE_DECEL 3000  // [rpm/s] // default :  3000
+// #define MAX_STEER_VEL 7   // [rpm]   // max 10
+// #define MAX_STEER_ACCEL 20 // [rpm/s] // max 28
+
 
 // Gamepad Definitions
 #define GP_BUTTON_JOYSTICK_LEFT 7         // control crab mode in normal mode
@@ -118,26 +123,31 @@ inline constexpr const MotorLayout* paired_motor_layout(const MotorLayout& motor
 #define JOYSTICK_THRESHOLD 0.005
 
 
-#define RADIUS_MAX  1
-#define RADIUS_MIN 0.5
-
 #define NORMAL_KINEMATIC "normal"
 #define NORMAL_KINEMATIC_SLOW "normal_slow"
 #define LATERAL_KINEMATIC "lateral"
 
-#define CURRENT_LIMIT 0
-
-#define MIN_DESIRED_RADIUS 1
-#define PI_IN_INCR 16384
 
 // NEW rover dimensions as of Wed. 1st July 2026
-#define WIDTH 0.76
-#define LENGTH 0.99
+#define WIDTH 0.75
+#define LENGTH 0.98
+#define WHEEL_RADIUS 0.12 //quand ecrase un peu
+#define MAX_LIN_VEL 2.4   //m/s at the wheel
+#define MAX_STEER_VEL 7.0 //rpm
+#define DIST_CENTER_WHEEL (std::sqrt((WIDTH/2)*(WIDTH/2) + (LENGTH/2)*(LENGTH/2)))
+#define MAX_STEER_RATE (MAX_STEER_VEL * 2.0 * M_PI / 60.0)
 
-// #define ROTATION_TRANSLATION 0
-// #define CRABE 1
-// #define ROTATION_ONLY 2
-// #define TRANSLATION_ONLY 3
+// Unit conversions, shared by the kinematics, the servoing and the odometry so that a
+// command and the measurement that comes back are expressed in the very same units.
+inline constexpr double DRIVE_GEAR_RATIO = 53.0; // motor turns per wheel turn
+
+// steering: encoder increments <-> [rad] of wheel steering
+inline const double INCR_TO_RAD = 2.0 * M_PI / std::pow(2.0, STEERING_RESOLUTION_BITS);
+inline const double RAD_TO_INCR = 1.0 / INCR_TO_RAD;
+
+// drive: motor rpm (before the gearbox, as commanded and as reported) <-> [m/s] at the ground
+inline const double MS_TO_DRIVE_RPM = (60.0 * DRIVE_GEAR_RATIO) / (2.0 * M_PI * WHEEL_RADIUS);
+inline const double DRIVE_RPM_TO_MS = 1.0 / MS_TO_DRIVE_RPM;
 
 struct motors_obj {
     std::string   info;

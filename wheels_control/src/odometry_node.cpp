@@ -20,10 +20,9 @@
 
 using std::placeholders::_1;
 
-const double WHEEL_RADIUS = 0.12; //measured experimentally
-const double rpm_to_ms = (2*M_PI*WHEEL_RADIUS)/(60.0);
-const double gear_ratio = 1.0/53;
-const double incr_to_rad = 2*M_PI/(pow(2,STEERING_RESOLUTION_BITS));//increments = 2^(14)
+// WHEEL_RADIUS, DRIVE_RPM_TO_MS (rpm at the motor -> m/s at the ground, gearbox included)
+// and INCR_TO_RAD all come from definition.hpp, shared with the command chain.
+const double incr_to_rad = INCR_TO_RAD;
 const double deg_to_rad = M_PI/(180.0);
 
 
@@ -129,10 +128,10 @@ private:
         //then convert it to m/s. The non gear-ratio-corrected speed should produce 
         //a max value of 1800 rpm. This should result in 0.471 m/s with the gear ratio taken into account
 
-        wheel_speeds_[0] = msg->velocity[0] * rpm_to_ms * gear_ratio;
-        wheel_speeds_[1] = msg->velocity[1] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
-        wheel_speeds_[2] = msg->velocity[2] * rpm_to_ms * gear_ratio * (-1.0); // wired backwards
-        wheel_speeds_[3] = msg->velocity[3] * rpm_to_ms * gear_ratio;
+        wheel_speeds_[0] = msg->velocity[0] * DRIVE_RPM_TO_MS;
+        wheel_speeds_[1] = msg->velocity[1] * DRIVE_RPM_TO_MS * (-1.0); // wired backwards
+        wheel_speeds_[2] = msg->velocity[2] * DRIVE_RPM_TO_MS * (-1.0); // wired backwards
+        wheel_speeds_[3] = msg->velocity[3] * DRIVE_RPM_TO_MS;
 
         // RCLCPP_INFO(this->get_logger(), "front left m/S: %f", wheel_speeds_[0]);
         // RCLCPP_INFO(this->get_logger(), "front right m/S: %f", wheel_speeds_[1]);

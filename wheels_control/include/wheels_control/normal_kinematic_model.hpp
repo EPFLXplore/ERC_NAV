@@ -19,10 +19,12 @@ private:
     motors_obj current_motors_cmds;
     motors_obj current_motors_position;
 
-    void rotation_translation(wheels_normal_kinematic_cmds motors_kinematic_commands);
+    // last commanded steering angle of each side [rad], used to pick the slip-ring
+    // equivalent (angle +- k*pi) that is closest to where the steering already is
+    double previous_angle_left;
+    double previous_angle_right;
 
-    wheels_normal_kinematic_cmds kinematics_motion_translation_rotation(_Float64 velocity,
-                                                                        _Float64 desired_radius);
+    void rotation_translation(wheels_normal_kinematic_cmds motors_kinematic_commands);
 
     bool check_steering_position_for_translation(motors_obj current_motors_position) const;
 
@@ -34,6 +36,7 @@ public:
 
     void init(motors_obj motors_position, _Float64 wheels_angle);
 
+    // v_x [m/s], v_y [m/s] (unused), r_z [rad/s] ROS convention, speed_rover [m/s] wheel speed cap
     motors_obj run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 r_z, _Float64 speed_rover, bool crab_mode_active);
 };
 

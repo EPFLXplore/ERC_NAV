@@ -13,7 +13,15 @@
 
 */
 #include "EposCmd.h"
+#include "wheels_control/definition.hpp" // MAX_STEER_VEL lives there, single source of truth
 // #include "thermal_modeling.hpp"
+
+#define WINDING_RES 0.573  // [Ohm]                                        // TODO : keep updated // TODO2: make this less stupid
+#define SPEED_CONSTANT 100 // [rpm/V] origin value 236                    // TODO : keep updated // TODO2: make this less stupid
+
+#define MAX_DRIVE_ACCEL 900   // [rpm/S] // default :   900
+#define MAX_DRIVE_DECEL 3000  // [rpm/s] // default :  3000
+#define MAX_STEER_ACCEL 20 // [rpm/s] // max 28
 
 class NAV_Motor
 {

@@ -1,10 +1,29 @@
 /*
-Last updated:       29/03/2024
-Rewritting author:  Cyril Goffin, Tomas Anderegg, Arno Laurie
-Description:        Computes the wheels velocity commands and the steering angle commands 
-                    based on the gamepad inputs.
+Last updated:       21/08/2026
+Rewritting author:  Arno Laurie, Paul Bourgois
+Description:        Computes the wheels velocity commands and the steering angle commands
+                    from a body twist (v_x [m/s], omega_z [rad/s], ROS convention).
+
+Kinematics:
+
+    For a rigid body, the ground velocity of the wheel at body offset (x_i, y_i) is
+
+        v_ix = v_x - omega_z * y_i
+        v_iy =       omega_z * x_i
+
+    steering angle  delta_i = atan2(v_iy, v_ix)
+    wheel speed     s_i     = hypot(v_ix, v_iy)
+
+    This is exact for every radius (including 0) and every direction of travel, so
+    no Ackermann inner/outer case split and no singularity is needed.
+
+    With x_i = +-LENGTH/2 and y_i = +-WIDTH/2 the front and rear wheel of one side
+    only differ by the sign of delta, which the front/rear mirroring in
+    rotation_translation() already accounts for. Only the left pair (index 1) and
+    the right pair (index 2) are therefore computed here.
 */
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <thread>
@@ -12,10 +31,11 @@ Description:        Computes the wheels velocity commands and the steering angle
 #include <memory>
 #include <string>
 #include "wheels_control/utility.hpp"
-#include "custom_msg/msg/motorcmds.hpp" 
+#include "custom_msg/msg/motorcmds.hpp"
 #include "custom_msg/msg/wheelstatus.hpp"
 #include "wheels_control/normal_kinematic_model.hpp"
 #include "wheels_control/definition.hpp"
+#include "wheels_control/motors.hpp"
 
 
 //use the ros logger instead of cout from iostream
@@ -24,10 +44,76 @@ void log_info_acker(const std::string &msg){
     RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "%s", msg.c_str());
 }
 
+namespace
+{
+
+constexpr double EPS = 1e-6;
+
+// A steering axis is never asked to sit further than this from straight ahead: past
+// 90 deg the wheel is simply pointing backwards along the same line, which the sign
+// of the rolling speed expresses just as well. The 10 deg of margin is hysteresis, so
+// that a command sitting right on the boundary does not flip at every cycle.
+constexpr double STEER_FOLD_LIMIT = M_PI / 2.0 + 10.0 * M_PI / 180.0;
+
+struct wheel_state
+{
+    double angle; // [rad], steering angle of the front wheel of that side, ROS convention
+    double speed; // [m/s], signed along the wheel heading
+};
+
+/*
+ * brief :  ground velocity of one wheel for a body twist, expressed as a steering
+ *          angle and a signed rolling speed.
+ * param :  x_off, y_off    wheel position in the body frame [m]
+ * param :  previous_angle  last commanded angle for that steering axis [rad]
+ *
+ * The slip rings make angle and angle +- k*pi equivalent (odd k simply reverses the
+ * rolling direction), so the representative closest to the previous command is used.
+ * The steering axis then never has to sweep more than 90 deg between two commands and
+ * never has to unwind through a mechanical stop.
+ *
+ * Tracking the previous command alone is not enough. As soon as a turn gets tighter than
+ * half the track, the inner wheel walks continuously through 90 deg (92, 101, 127 deg ...)
+ * without any single step being large enough to wrap, and that side then stays on the far
+ * branch for good: back in a straight line it is commanded to 180 deg and driven in
+ * reverse. The chosen representative is therefore also folded back next to straight ahead.
+ */
+wheel_state wheel_from_twist(double v_x, double omega_z, double x_off, double y_off,
+                             double previous_angle)
+{
+    const double v_wx = v_x - omega_z * y_off;
+    const double v_wy = omega_z * x_off;
+
+    double angle = std::atan2(v_wy, v_wx);
+    double speed = std::hypot(v_wx, v_wy);
+
+    double turns = std::round((previous_angle - angle) / M_PI);
+    angle += turns * M_PI;
+
+    while (angle > STEER_FOLD_LIMIT)
+    {
+        angle -= M_PI;
+        turns -= 1.0;
+    }
+    while (angle < -STEER_FOLD_LIMIT)
+    {
+        angle += M_PI;
+        turns += 1.0;
+    }
+
+    if (static_cast<long>(std::llround(std::fabs(turns))) % 2 != 0)
+        speed = -speed; // driving backwards along a wheel heading flipped by pi
+
+    return {angle, speed};
+}
+} // namespace
+
 RoverNormalKinematicModel::RoverNormalKinematicModel() : en_rotation_quoi(false),
                                                          wheels_angle_for_rotation(0),
                                                          current_motors_cmds({"", {0, 0, 0, 0}, {0, 0, 0, 0}}),
                                                          current_motors_position({"", {0, 0, 0, 0}, {0, 0, 0, 0}}),
+                                                         previous_angle_left(0.0),
+                                                         previous_angle_right(0.0),
                                                          motor_cmds(true)
 {
 }
@@ -36,123 +122,62 @@ void RoverNormalKinematicModel::init(motors_obj motors_position, _Float64 wheels
 {
     wheels_angle_for_rotation = wheels_angle;
     current_motors_position = motors_position;
+    previous_angle_left = 0.0;
+    previous_angle_right = 0.0;
 }
 
+/*
+ * v_x      [m/s]   forward body velocity
+ * v_y      [m/s]   unused, an ackermann rover cannot translate sideways (see the lateral model)
+ * omega_z  [rad/s] yaw rate, ROS convention (positive = turning left)
+ * speed_rover [m/s] wheel speed cap requested by the CS
+ */
 motors_obj RoverNormalKinematicModel::run(motors_obj motors_position, _Float64 v_x, _Float64 v_y, _Float64 omega_z, _Float64 speed_rover, bool crab_mode_active)
 {
+    (void)v_y;
     current_motors_position = motors_position;
 
-    _Float64 r_ = 0;
-    _Float64 v_ext = 0.0;
-    _Float64 v_int = 0.0;
+    const double max_wheel_speed = std::min(static_cast<double>(speed_rover),
+                                            static_cast<double>(MAX_LIN_VEL));
 
-    _Float64 alpha_ext = 0.0;
-    _Float64 alpha_int = 0.0;
-
-    _Float64 conversion_speed = 3600; // 1800; // for 0.5m.s                       ????????????
-    _Float64 conversion_angle = (pow(2, STEERING_RESOLUTION_BITS)) / (2 * M_PI);
-
-    _Float64 max_linear_velocity = speed_rover; // in m/s
-    const double max_steering_angle_inner =  50.0 * M_PI / 180.0;
-    const double min_rotation_radius =
-    (LENGTH / 2.0) / std::tan(max_steering_angle_inner) + (WIDTH / 2.0);
-
-    // RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "Min rotation radius: %f", min_rotation_radius);
-    // _Float64 max_angular_velocity = 0.6; // in rad/s
-    //Rmin = (LENGTH / 2)/tan(alpha_max) + W/2
-    // _Float64 min_rotation_radius = 0.8; // in m
-    const double max_angular_velocity = max_linear_velocity / min_rotation_radius;
-    // RCLCPP_INFO(rclcpp::get_logger("acker kinematics"), "Max angular velocity: %f", max_angular_velocity);
-
-
-    
-    v_x = max_linear_velocity * v_x;
-
-
-    omega_z = (-1.0)*max_angular_velocity * omega_z;
-
-    // 3 DIFFERENT CASES: ONLY ROTATION ON ITSELF, ONLY TRANSLATION, TRANSLATION AND ROTATION
-    if (std::abs(omega_z) > 1e-6)
+    // Turning in place is only allowed when the operator asked for it (crab button), otherwise
+    // a steering input alone must not make the rover pivot. In AUTO the caller sets the flag.
+    if (std::abs(v_x) < EPS && !crab_mode_active)
     {
-        r_ = v_x / omega_z;
-
-        if (std::abs(r_) > 1e-5)
-        {
-            // TRANSLATION AND ROTATION (curve motion)
-            current_motors_cmds.info = "translation and rotation";
-
-            _Float64 sign_r = std::abs(r_) / r_;
-            _Float64 velocity_sign = std::abs(v_x) / v_x;
-
-            if (std::abs(r_) < min_rotation_radius) // if the turn is too sharp as defined by the minimum rotation radius
-            {
-                r_ = min_rotation_radius * sign_r;
-                omega_z = v_x / r_;
-            }
-
-            alpha_ext = atan2((LENGTH / 2), (std::abs(r_) + WIDTH / 2));
-            alpha_int = atan2((LENGTH / 2), (std::abs(r_) - WIDTH / 2));
-
-            _Float64 r_ext = std::sqrt((std::abs(r_) + WIDTH / 2) * (std::abs(r_) + WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
-            _Float64 r_int = std::sqrt((std::abs(r_) - WIDTH / 2) * (std::abs(r_) - WIDTH / 2) + (LENGTH / 2) * (LENGTH / 2));
-
-            v_ext = std::abs(omega_z) * r_ext * velocity_sign;
-            v_int = std::abs(omega_z) * r_int * velocity_sign;
-
-            //log_info_acker("Alpha Ext (steering angle for outer wheels): " + std::to_string(alpha_ext*57.2957));
-            //log_info_acker("Alpha Int (steering angle for inner wheels): " + std::to_string(alpha_int*57.2957));
-
-        }
-        else if(std::abs(v_x) < 1e-5 && std::abs(v_y) < 1e-5 && std::abs(omega_z) > 1e-5 && crab_mode_active) 
-        {//this condition may also be true when the wheels are homing themselves, havent checked in depth, too tired
-            // ROTATION ON ITSELF
-            current_motors_cmds.info = "self rotation";
-
-            alpha_ext = wheels_angle_for_rotation / conversion_angle; // constant value for crab mode
-            alpha_ext = alpha_ext;
-            alpha_int = -alpha_ext;
-
-
-            v_ext = (std::abs(omega_z));
-            v_int = -(std::abs(omega_z));
-        }
-        else
-        {
-            alpha_ext = 0.0;
-            alpha_int = 0.0;
-            v_int = 0.0;
-            v_ext = 0.0;
-        }
+        omega_z = 0.0;
     }
-    else
-    {
-        // ONLY TRANSLATION
+
+    if (std::abs(v_x) < EPS && std::abs(omega_z) < EPS)
+        current_motors_cmds.info = "idle";
+    else if (std::abs(omega_z) < EPS)
         current_motors_cmds.info = "translation";
-
-        v_ext = v_x;
-        v_int = v_x;
-        alpha_ext = 0;
-        alpha_int = 0;
-    }
-
-    wheels_normal_kinematic_cmds wheels_current_commands;
-
-    if (omega_z >= 0)
-    {
-        wheels_current_commands.angle_1 = alpha_ext * conversion_angle;
-        wheels_current_commands.angle_2 = alpha_int * conversion_angle;
-    
-        wheels_current_commands.velocity_1 = v_ext * conversion_speed;
-        wheels_current_commands.velocity_2 = v_int * conversion_speed;
-    }
+    else if (std::abs(v_x) < EPS)
+        current_motors_cmds.info = "self rotation";
     else
+        current_motors_cmds.info = "translation and rotation";
+
+    wheel_state left  = wheel_from_twist(v_x, omega_z,  LENGTH / 2.0,  WIDTH / 2.0, previous_angle_left);
+    wheel_state right = wheel_from_twist(v_x, omega_z,  LENGTH / 2.0, -WIDTH / 2.0, previous_angle_right);
+
+    // Scale both sides by the same factor: this keeps the instantaneous centre of rotation
+    // (and therefore the path and the steering angles) untouched, the rover just goes slower.
+    const double fastest_wheel = std::max(std::abs(left.speed), std::abs(right.speed));
+    if (fastest_wheel > max_wheel_speed && fastest_wheel > EPS)
     {
-        wheels_current_commands.angle_2 = -alpha_ext * conversion_angle;
-        wheels_current_commands.angle_1 = -alpha_int * conversion_angle;
-    
-        wheels_current_commands.velocity_2 = v_ext * conversion_speed;
-        wheels_current_commands.velocity_1 = v_int * conversion_speed;
+        const double scale = max_wheel_speed / fastest_wheel;
+        left.speed *= scale;
+        right.speed *= scale;
     }
+
+    previous_angle_left = left.angle;
+    previous_angle_right = right.angle;
+
+    // The hardware convention of rotation_translation() is the negated ROS steering angle.
+    wheels_normal_kinematic_cmds wheels_current_commands;
+    wheels_current_commands.angle_1 = -left.angle * RAD_TO_INCR;
+    wheels_current_commands.angle_2 = -right.angle * RAD_TO_INCR;
+    wheels_current_commands.velocity_1 = left.speed * MS_TO_DRIVE_RPM;
+    wheels_current_commands.velocity_2 = right.speed * MS_TO_DRIVE_RPM;
 
     rotation_translation(wheels_current_commands);
 
