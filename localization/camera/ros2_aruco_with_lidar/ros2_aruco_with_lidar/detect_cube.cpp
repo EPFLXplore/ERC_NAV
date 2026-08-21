@@ -1,6 +1,60 @@
-#include <rclcpp/rclcpp.hpp>
+/*
+ * Conceptual state machine: cube detection in an ArUco-guided LiDAR cloud
+ *
+ * STATE 0 - INITIALIZE
+ *   Load the RANSAC, cube-geometry, gating, rate, and visualization parameters;
+ *   create the TF listener; subscribe to the filtered LiDAR cloud and ArUco
+ *   associations; and create the plane, center, and cube-result publishers.
+ *
+ * STATE 1 - WAIT FOR ASSOCIATIONS
+ *   Cache each incoming set of allowed ArUco IDs, camera poses, and known map
+ *   positions under a mutex. This message defines which landmark cubes may be
+ *   searched for. Return to waiting for a filtered LiDAR cloud.
+ *
+ * STATE 2 - GATE A LIDAR CLOUD
+ *   On a cloud callback, snapshot the current ArUco state. Reject the cloud if
+ *   no association exists or if the configured processing-rate period has not
+ *   elapsed. Otherwise read XYZ and marker_id fields and process each tag.
+ *
+ * STATE 3 - BUILD ONE TAG'S CANDIDATE CLOUD
+ *   Transform the tag's known map position into the cloud frame when possible.
+ *   Depending on the configured mode, use either the known map landmark or
+ *   the camera-measured tag center as the expected range and bearing. Retain
+ *   only points labeled with this ID and inside the radial/angular gates. If
+ *   too few points remain, skip this tag and restart STATE 3 for the next tag.
+ *
+ * STATE 4 - EXTRACT AND CLASSIFY PLANES
+ *   Repeatedly fit a RANSAC plane, remove its inliers, measure its dimensions
+ *   and normal, and classify it as a plausible side or top cube face. Stop at
+ *   the configured plane limit, when fitting fails, or when too few points
+ *   remain. Optionally accept the strongest plane as a fallback. If no usable
+ *   face remains, continue with the next tag.
+ *
+ * STATE 5 - GROUP FACES AND ESTIMATE THE CUBE CENTER
+ *   Rank side and top candidates, select up to two nearby perpendicular side
+ *   faces and a compatible top face, then infer the hidden cube volume. With
+ *   two sides, extend their point bounding box toward the hidden faces; with
+ *   one side, offset its centroid by half a cube width. Reject a center that
+ *   lies too far from the expected landmark position.
+ *
+ * STATE 6 - TRANSFORM AND ACCUMULATE RESULTS
+ *   Add accepted face inliers and visualization markers, transform the center
+ *   into base_link, and append its marker ID, pose, and bearing to the outgoing
+ *   cube message. If the transform is unavailable, keep visualization output
+ *   in the cloud frame but omit that cube from the base_link result message.
+ *   Continue at STATE 3 until every associated tag has been considered.
+ *
+ * STATE 7 - PUBLISH
+ *   Publish plane markers, center markers, and the combined plane-inlier cloud.
+ *   Publish the base_link cube message only when at least one center succeeded,
+ *   then transition back to STATE 1/STATE 2 and wait for new asynchronous input.
+ */
+ #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -18,6 +72,8 @@
 #include <string>
 #include <mutex>
 #include <limits>
+#include <atomic>
+#include <stdexcept>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -75,6 +131,11 @@ public:
         this->declare_parameter<std::string>("map_frame", "map");
         // Angular gate vs ref_angle (camera bearing + offset); wide default while upstream filter is tight.
         this->declare_parameter<double>("angular_tolerance_deg", 45.0);
+        this->declare_parameter<bool>("use_camera_aruco_position", false);
+        this->declare_parameter<double>("camera_cone_half_angle_deg", 5.0);
+        this->declare_parameter<double>("camera_cone_depth_tolerance_m", 1.0);
+        this->declare_parameter<double>("camera_cone_depth_tolerance_ratio", 0.20);
+        this->declare_parameter<double>("association_ambiguity_margin_m", 0.05);
         /* Segment midpoints closer than this (m): treat as duplicate hypotheses on one
          * feature (same place). Opposite face edges are ~t (~0.25 m) apart and never
          * enter here. If |cos θ| is high, refine one line (parallel duplicate); otherwise
@@ -119,6 +180,16 @@ public:
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
         this->get_parameter("map_frame", map_frame_);
         this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
+        bool initial_camera_mode = false;
+        this->get_parameter("use_camera_aruco_position", initial_camera_mode);
+        use_camera_aruco_position_.store(initial_camera_mode);
+        this->get_parameter("camera_cone_half_angle_deg", camera_cone_half_angle_deg_);
+        this->get_parameter(
+            "camera_cone_depth_tolerance_m", camera_cone_depth_tolerance_m_);
+        this->get_parameter(
+            "camera_cone_depth_tolerance_ratio", camera_cone_depth_tolerance_ratio_);
+        this->get_parameter(
+            "association_ambiguity_margin_m", association_ambiguity_margin_m_);
         this->get_parameter("merge_duplicate_2d_line_mid_max_m",
             merge_duplicate_2d_line_mid_max_m_);
         this->get_parameter("merge_duplicate_2d_parallel_min_dir_dot",
@@ -129,6 +200,12 @@ public:
             opposite_2d_mid_sep_min_frac_);
         this->get_parameter("opposite_2d_mid_sep_max_frac",
             opposite_2d_mid_sep_max_frac_);
+        if (!(camera_cone_half_angle_deg_ > 0.0) ||
+            !(camera_cone_half_angle_deg_ < 90.0) ||
+            !(camera_cone_depth_tolerance_m_ > 0.0) ||
+            !(camera_cone_depth_tolerance_ratio_ >= 0.0)) {
+            throw std::runtime_error("invalid camera recovery cone parameters");
+        }
         min_process_period_ns_ =
             process_rate_hz_ > 0.0 ? static_cast<int64_t>(1e9 / process_rate_hz_) : 0;
         last_process_time_ns_ = 0;
@@ -155,17 +232,66 @@ public:
                 on_aruco_markers(msg);
             }
         );
+        auto mode_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+        mode_subscriber_ = create_subscription<std_msgs::msg::Bool>(
+            "/perception/use_camera_aruco_position", mode_qos,
+            [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                set_camera_mode(msg->data, "recovery supervisor");
+                if (get_parameter("use_camera_aruco_position").as_bool() != msg->data) {
+                    const auto result = set_parameter(rclcpp::Parameter(
+                        "use_camera_aruco_position", msg->data));
+                    if (!result.successful) {
+                        RCLCPP_ERROR(get_logger(),
+                            "Failed to mirror recovery mode into parameter: %s",
+                            result.reason.c_str());
+                    }
+                }
+            });
+        parameter_callback_ = add_on_set_parameters_callback(
+            [this](const std::vector<rclcpp::Parameter> &parameters) {
+                rcl_interfaces::msg::SetParametersResult result;
+                result.successful = true;
+                for (const auto &parameter : parameters) {
+                    if (parameter.get_name() == "use_camera_aruco_position") {
+                        set_camera_mode(parameter.as_bool(), "parameter update");
+                    }
+                }
+                return result;
+            });
         //RCLCPP_INFO(this->get_logger(), "initialized detect_cube_node");
 
     }
 
 private:
+    void set_camera_mode(bool enabled, const char *source)
+    {
+        const bool previous = use_camera_aruco_position_.exchange(enabled);
+        if (previous == enabled) return;
+
+        {
+            std::lock_guard<std::mutex> lock(aruco_mutex_);
+            aruco_ids_.clear();
+            aruco_poses_.clear();
+            aruco_landmark_map_x_.clear();
+            aruco_landmark_map_y_.clear();
+            aruco_header_ = std_msgs::msg::Header();
+        }
+        // Allow the filter to publish a cloud and a fresh association made in
+        // the new mode before accepting another detector input.
+        mode_switch_guard_until_ns_.store(
+            now().nanoseconds() + static_cast<int64_t>(0.25 * 1e9));
+        RCLCPP_WARN(get_logger(),
+            "Cube detector mode changed to %s by %s; cached associations cleared",
+            enabled ? "CAMERA_GUIDED" : "MAP_GUIDED", source);
+    }
+
     void on_aruco_markers(const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(aruco_mutex_);
         aruco_ids_ = msg->marker_ids;
         aruco_poses_ = msg->poses;
         aruco_landmark_map_x_ = msg->landmark_map_pos_x;
         aruco_landmark_map_y_ = msg->landmark_map_pos_y;
+        aruco_header_ = msg->header;
 
         // RCLCPP_INFO(this->get_logger(),
         //    "[detect_cube INPUT] received aruco_markers: ids=%zu poses=%zu map_x=%zu map_y=%zu",
@@ -257,6 +383,71 @@ private:
                 return false;
             }
         }
+    }
+
+    bool observed_aruco_in_cloud_frame(
+        const geometry_msgs::msg::Point &position,
+        const std::string &source_frame,
+        const std::string &cloud_frame,
+        const builtin_interfaces::msg::Time &cloud_stamp,
+        double &out_x,
+        double &out_y,
+        double &out_range_xy,
+        double &out_bearing_deg)
+    {
+        if (source_frame.empty() || cloud_frame.empty() ||
+            !std::isfinite(position.x) || !std::isfinite(position.y) ||
+            !std::isfinite(position.z)) {
+            return false;
+        }
+
+        geometry_msgs::msg::PointStamped point_in;
+        point_in.header.frame_id = source_frame;
+        point_in.header.stamp = cloud_stamp;
+        point_in.point = position;
+
+        geometry_msgs::msg::PointStamped point_out;
+        try {
+            const bool zero_stamp =
+                (cloud_stamp.sec == 0u && cloud_stamp.nanosec == 0u);
+            geometry_msgs::msg::TransformStamped transform;
+            if (zero_stamp) {
+                if (!tf_buffer_.canTransform(
+                        cloud_frame, source_frame, tf2::TimePointZero,
+                        tf2::durationFromSec(0.1))) {
+                    return false;
+                }
+                transform = tf_buffer_.lookupTransform(
+                    cloud_frame, source_frame, tf2::TimePointZero);
+            } else {
+                const rclcpp::Time t(cloud_stamp, get_clock()->get_clock_type());
+                if (tf_buffer_.canTransform(
+                        cloud_frame, source_frame, t,
+                        rclcpp::Duration::from_seconds(0.1))) {
+                    transform = tf_buffer_.lookupTransform(
+                        cloud_frame, source_frame, t,
+                        rclcpp::Duration::from_seconds(0.1));
+                } else {
+                    if (!tf_buffer_.canTransform(
+                            cloud_frame, source_frame, tf2::TimePointZero,
+                            tf2::durationFromSec(0.05))) {
+                        return false;
+                    }
+                    transform = tf_buffer_.lookupTransform(
+                        cloud_frame, source_frame, tf2::TimePointZero);
+                }
+            }
+            tf2::doTransform(point_in, point_out, transform);
+        } catch (const tf2::TransformException &) {
+            return false;
+        }
+
+        out_x = point_out.point.x;
+        out_y = point_out.point.y;
+        out_range_xy = std::hypot(out_x, out_y);
+        out_bearing_deg = std::atan2(out_y, out_x) * 180.0 / M_PI;
+        return std::isfinite(out_x) && std::isfinite(out_y) &&
+            std::isfinite(out_range_xy) && std::isfinite(out_bearing_deg);
     }
 
     static bool is_invalid_landmark_xy(double mx, double my)
@@ -595,29 +786,86 @@ private:
 
     void detect_planes(const sensor_msgs::msg::PointCloud2 &cloud_msg)
     {
+        const int64_t now_ns = this->now().nanoseconds();
+        if (now_ns < mode_switch_guard_until_ns_.load()) return;
+        const bool use_camera_mode = use_camera_aruco_position_.load();
+
         std::vector<int64_t> aruco_ids;
         std::vector<geometry_msgs::msg::Pose> aruco_poses;
         std::vector<double> aruco_landmark_map_x;
         std::vector<double> aruco_landmark_map_y;
+        std_msgs::msg::Header aruco_header;
         {
             std::lock_guard<std::mutex> lk(aruco_mutex_);
             aruco_ids = aruco_ids_;
             aruco_poses = aruco_poses_;
             aruco_landmark_map_x = aruco_landmark_map_x_;
             aruco_landmark_map_y = aruco_landmark_map_y_;
+            aruco_header = aruco_header_;
         }
-        if (aruco_ids.empty()) {
+        const size_t association_count = std::min(aruco_ids.size(), aruco_poses.size());
+        if (association_count == 0) {
             return;
         }
 
-        const int64_t now_ns = this->now().nanoseconds();
         if (now_ns - last_process_time_ns_ < min_process_period_ns_) {
             return;
         }
         last_process_time_ns_ = now_ns;
 
+        const auto marker_id_field = std::find_if(
+            cloud_msg.fields.begin(), cloud_msg.fields.end(),
+            [](const sensor_msgs::msg::PointField &field) {
+                return field.name == "marker_id";
+            });
+        if (marker_id_field == cloud_msg.fields.end() ||
+            marker_id_field->datatype != sensor_msgs::msg::PointField::INT32) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 3000,
+                "[detect_cube] filtered cloud has no INT32 marker_id field");
+            return;
+        }
+
         full_cloud_->clear();
-        pcl::fromROSMsg(cloud_msg, *full_cloud_);
+        std::vector<int32_t> point_marker_ids;
+        const size_t point_count =
+            static_cast<size_t>(cloud_msg.width) * static_cast<size_t>(cloud_msg.height);
+        full_cloud_->reserve(point_count);
+        point_marker_ids.reserve(point_count);
+        sensor_msgs::PointCloud2ConstIterator<int32_t> id_it(cloud_msg, "marker_id");
+        for (sensor_msgs::PointCloud2ConstIterator<float> x_it(cloud_msg, "x"),
+                                                            y_it(cloud_msg, "y"),
+                                                            z_it(cloud_msg, "z");
+             x_it != x_it.end(); ++x_it, ++y_it, ++z_it, ++id_it) {
+            full_cloud_->push_back(pcl::PointXYZ(*x_it, *y_it, *z_it));
+            point_marker_ids.push_back(*id_it);
+        }
+
+        auto expected_position_for_index =
+            [&](size_t index, double &out_x, double &out_y,
+                double &out_range, double &out_bearing) {
+                if (index >= association_count) {
+                    return false;
+                }
+                if (use_camera_mode) {
+                    return observed_aruco_in_cloud_frame(
+                        aruco_poses[index].position, aruco_header.frame_id,
+                        cloud_msg.header.frame_id, aruco_header.stamp,
+                        out_x, out_y, out_range, out_bearing);
+                }
+                if (index >= aruco_landmark_map_x.size() ||
+                    index >= aruco_landmark_map_y.size()) {
+                    return false;
+                }
+                const double map_x = aruco_landmark_map_x[index];
+                const double map_y = aruco_landmark_map_y[index];
+                if (is_invalid_landmark_xy(map_x, map_y)) {
+                    return false;
+                }
+                return expected_landmark_in_cloud_frame(
+                    map_x, map_y, cloud_msg.header.frame_id, cloud_msg.header.stamp,
+                    out_x, out_y, out_range, out_bearing);
+            };
 
         visualization_msgs::msg::MarkerArray markers;
         visualization_msgs::msg::MarkerArray centres;
@@ -630,7 +878,7 @@ private:
         size_t run_total_side_planes = 0;
         size_t run_total_top_planes = 0;
 
-        for (size_t aruco_idx = 0; aruco_idx < aruco_ids.size(); ++aruco_idx) {
+        for (size_t aruco_idx = 0; aruco_idx < association_count; ++aruco_idx) {
             const auto &aruco_pose = aruco_poses[aruco_idx];
             const float aruco_x = static_cast<float>(aruco_pose.position.x);
             const float aruco_y = static_cast<float>(aruco_pose.position.y);
@@ -639,18 +887,9 @@ private:
             double expected_y_cloud = 0.0;
             double expected_range_xy = 0.0;
             double expected_bearing_cloud_deg = 0.0;
-            bool have_expected_landmark = false;
-            if (aruco_idx < aruco_landmark_map_x.size() &&
-                aruco_idx < aruco_landmark_map_y.size()) {
-                const double mx = aruco_landmark_map_x[aruco_idx];
-                const double my = aruco_landmark_map_y[aruco_idx];
-                if (!is_invalid_landmark_xy(mx, my)) {
-                    have_expected_landmark = expected_landmark_in_cloud_frame(
-                        mx, my, cloud_msg.header.frame_id, cloud_msg.header.stamp,
-                        expected_x_cloud, expected_y_cloud,
-                        expected_range_xy, expected_bearing_cloud_deg);
-                }
-            }
+            const bool have_expected_landmark = expected_position_for_index(
+                aruco_idx, expected_x_cloud, expected_y_cloud,
+                expected_range_xy, expected_bearing_cloud_deg);
 
             const double range_for_inlier_heuristic =
                 have_expected_landmark
@@ -661,10 +900,11 @@ private:
             const int dynamic_min_inliers =
                 static_cast<int>(0.3 / (range_for_inlier_heuristic * 0.002967) / 3);
             const int min_inliers = std::max(min_inliers_, dynamic_min_inliers);
-            const double radial_tol =
-                have_expected_landmark
-                    ? max_distance_from_aruco_
-                    : max_distance_from_aruco_;
+            const double radial_tol = use_camera_mode
+                ? std::max(
+                    camera_cone_depth_tolerance_m_,
+                    camera_cone_depth_tolerance_ratio_ * expected_range_xy)
+                : max_distance_from_aruco_;
             const double aruco_angle_deg_base = atan2(aruco_y, aruco_x) * 180.0 / M_PI;
             const double ref_angle = have_expected_landmark
                                          ? wrap180(expected_bearing_cloud_deg)
@@ -674,7 +914,11 @@ private:
                 new pcl::PointCloud<pcl::PointXYZ>());
             size_t stage_pass_radial = 0;
             size_t stage_pass_both = 0;
-            for (const auto &pt : full_cloud_->points) {
+            for (size_t point_idx = 0; point_idx < full_cloud_->points.size(); ++point_idx) {
+                if (point_marker_ids[point_idx] != aruco_ids[aruco_idx]) {
+                    continue;
+                }
+                const auto &pt = full_cloud_->points[point_idx];
                 if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
                     continue;
                 }
@@ -689,7 +933,9 @@ private:
                 const double pt_angle_deg =
                     atan2(static_cast<double>(pt.y), static_cast<double>(pt.x)) *
                     180.0 / M_PI;
-                if (angDeltaDeg(pt_angle_deg, ref_angle) < angular_tolerance_deg_) {
+                const double active_angular_tolerance = use_camera_mode
+                    ? camera_cone_half_angle_deg_ : angular_tolerance_deg_;
+                if (angDeltaDeg(pt_angle_deg, ref_angle) < active_angular_tolerance) {
                     ++stage_pass_both;
                     candidate_cloud->push_back(pt);
                 }
@@ -932,17 +1178,76 @@ private:
                 const double center_expected_dist = std::hypot(
                     center.x - expected_x_cloud,
                     center.y - expected_y_cloud);
-                const double max_center_error =
-                    max_center_error_m_ > 0.0
+                bool center_outside_gate = false;
+                double reported_error = center_expected_dist;
+                double reported_limit = max_center_error_m_;
+                if (use_camera_mode) {
+                    const double center_range = std::hypot(center.x, center.y);
+                    const double center_bearing = std::atan2(center.y, center.x);
+                    const double expected_bearing = std::atan2(
+                        expected_y_cloud, expected_x_cloud);
+                    const double bearing_error = std::fabs(wrap180(
+                        (center_bearing - expected_bearing) * 180.0 / M_PI));
+                    const double radial_error = std::fabs(
+                        center_range - expected_range_xy);
+                    const double depth_tolerance = std::max(
+                        camera_cone_depth_tolerance_m_,
+                        camera_cone_depth_tolerance_ratio_ * expected_range_xy);
+                    center_outside_gate =
+                        radial_error > depth_tolerance ||
+                        bearing_error > camera_cone_half_angle_deg_;
+                    reported_error = std::max(
+                        radial_error / depth_tolerance,
+                        bearing_error / camera_cone_half_angle_deg_);
+                    reported_limit = 1.0;
+                } else {
+                    const double max_center_error = max_center_error_m_ > 0.0
                         ? max_center_error_m_
                         : std::max(0.45, max_distance_from_aruco_ + cube_width_m_);
-                if (center_expected_dist > max_center_error) {
+                    center_outside_gate = center_expected_dist > max_center_error;
+                    reported_limit = max_center_error;
+                }
+                if (center_outside_gate) {
                     ++run_tags_preplane_skip;
                     RCLCPP_WARN_THROTTLE(
                         this->get_logger(), *this->get_clock(), 2000,
-                        "[detect_cube PLANES] id=%ld rejected: center %.3f m from expected "
-                        "(limit %.3f)",
-                        aruco_ids[aruco_idx], center_expected_dist, max_center_error);
+                        "[detect_cube PLANES] id=%ld rejected: center gate error %.3f "
+                        "(limit %.3f, mode=%s)",
+                        aruco_ids[aruco_idx], reported_error, reported_limit,
+                        use_camera_mode ? "camera-cone" : "map-radius");
+                    continue;
+                }
+
+                bool ambiguous_id = false;
+                for (size_t other_idx = 0; other_idx < association_count; ++other_idx) {
+                    if (other_idx == aruco_idx ||
+                        aruco_ids[other_idx] == aruco_ids[aruco_idx]) {
+                        continue;
+                    }
+                    double other_x = 0.0;
+                    double other_y = 0.0;
+                    double other_range = 0.0;
+                    double other_bearing = 0.0;
+                    if (!expected_position_for_index(
+                            other_idx, other_x, other_y,
+                            other_range, other_bearing)) {
+                        continue;
+                    }
+                    const double other_dist = std::hypot(
+                        center.x - other_x, center.y - other_y);
+                    if (other_dist <=
+                        center_expected_dist + association_ambiguity_margin_m_) {
+                        ambiguous_id = true;
+                        break;
+                    }
+                }
+                if (ambiguous_id) {
+                    ++run_tags_preplane_skip;
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 2000,
+                        "[detect_cube PLANES] id=%ld rejected: center is not uniquely "
+                        "closest to its associated ArUco",
+                        aruco_ids[aruco_idx]);
                     continue;
                 }
             }
@@ -1082,6 +1387,11 @@ private:
     double marker_lifetime_sec_;
     double max_distance_from_aruco_;
     double angular_tolerance_deg_;
+    std::atomic_bool use_camera_aruco_position_{false};
+    double camera_cone_half_angle_deg_{5.0};
+    double camera_cone_depth_tolerance_m_{1.0};
+    double camera_cone_depth_tolerance_ratio_{0.20};
+    double association_ambiguity_margin_m_;
     double merge_duplicate_2d_line_mid_max_m_;
     double merge_duplicate_2d_parallel_min_dir_dot_;
     double opposite_2d_pair_min_dir_dot_;
@@ -1094,15 +1404,19 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;      
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr aruco_subscriber_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr mode_subscriber_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_callback_;
     std::vector<int64_t> aruco_ids_;
     std::vector<geometry_msgs::msg::Pose> aruco_poses_;
     std::vector<double> aruco_landmark_map_x_;
     std::vector<double> aruco_landmark_map_y_;
+    std_msgs::msg::Header aruco_header_;
     std::mutex aruco_mutex_;
     rclcpp::Publisher<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr cube_markers_pub_;
 
     int64_t min_process_period_ns_;
     int64_t last_process_time_ns_;
+    std::atomic<int64_t> mode_switch_guard_until_ns_{0};
     pcl::PointCloud<pcl::PointXYZ>::Ptr full_cloud_;
 
     tf2_ros::Buffer tf_buffer_;

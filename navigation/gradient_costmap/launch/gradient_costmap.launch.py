@@ -172,7 +172,7 @@ def generate_launch_description():
         ),
         arg(
             "grid_resolution_m",
-            "0.1",
+            "0.05",
             "traversability_map: dense map grid resolution in meters/cell. Lower is finer but more CPU/memory; "
             "higher is coarser and smoother.",
         ),

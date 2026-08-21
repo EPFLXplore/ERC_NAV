@@ -118,7 +118,7 @@ private:
     float roughness_norm_m_ = static_cast<float>(this->declare_parameter<double>("roughness_norm_m", filterMaxRoughness));
     int min_neighbor_points_ = this->declare_parameter<int>("min_neighbor_points", 3);
     int min_neighbor_quadrants_ = this->declare_parameter<int>("min_neighbor_quadrants", 3);
-    float cell_clear_timeout_s_ = static_cast<float>(this->declare_parameter<double>("cell_clear_timeout_s", 1.0)); // cells with no new points for this long revert to unknown; 0 disables
+    float cell_clear_timeout_s_ = static_cast<float>(this->declare_parameter<double>("cell_clear_timeout_s", 0.7)); // cells with no new points for this long revert to unknown; 0 disables
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
     

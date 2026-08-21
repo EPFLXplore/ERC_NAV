@@ -26,6 +26,8 @@ find_package(PCL REQUIRED COMPONENTS
 )
 find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 # Add other C++ dependencies here
@@ -33,9 +35,13 @@ find_package(tf2_geometry_msgs REQUIRED)
 # C++ executables
 add_executable(lidar_phi_filter_node ros2_aruco_with_lidar/lidar_phi_filter_node.cpp)
 add_executable(detect_cube ros2_aruco_with_lidar/detect_cube.cpp)
+add_executable(aruco_lidar_recovery_manager ros2_aruco_with_lidar/aruco_lidar_recovery_manager.cpp)
 
 ament_target_dependencies(lidar_phi_filter_node rclcpp sensor_msgs ros2_aruco_interfaces visualization_msgs pcl_conversions geometry_msgs tf2_ros tf2_geometry_msgs)
 ament_target_dependencies(detect_cube rclcpp sensor_msgs std_msgs ros2_aruco_interfaces pcl_conversions visualization_msgs geometry_msgs tf2_ros tf2_geometry_msgs)
+ament_target_dependencies(aruco_lidar_recovery_manager
+  rclcpp std_msgs nav_msgs geometry_msgs ros2_aruco_interfaces
+  tf2 tf2_ros tf2_geometry_msgs)
 
 target_link_libraries(detect_cube
   ${PCL_SEGMENTATION_LIBRARIES}
@@ -53,6 +59,7 @@ install(TARGETS
 
 install(TARGETS
   detect_cube
+  aruco_lidar_recovery_manager
   DESTINATION lib/${PROJECT_NAME}
 )
 # Install Python modules
@@ -83,4 +90,3 @@ if(BUILD_TESTING)
 endif()
 
 ament_package()
-

@@ -146,7 +146,7 @@ inline const double INCR_TO_RAD = 2.0 * M_PI / std::pow(2.0, STEERING_RESOLUTION
 inline const double RAD_TO_INCR = 1.0 / INCR_TO_RAD;
 
 // drive: motor rpm (before the gearbox, as commanded and as reported) <-> [m/s] at the ground
-inline const double MS_TO_DRIVE_RPM = (60.0 * DRIVE_GEAR_RATIO) / (2.0 * M_PI * WHEEL_RADIUS);
+inline const double MS_TO_DRIVE_RPM = 3900;//experimentally //(60.0 * DRIVE_GEAR_RATIO) / (2.0 * M_PI * WHEEL_RADIUS);
 inline const double DRIVE_RPM_TO_MS = 1.0 / MS_TO_DRIVE_RPM;
 
 struct motors_obj {

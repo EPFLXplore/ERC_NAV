@@ -129,26 +129,54 @@ controller_server:
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
 
-      # 2.8 s predictive horizon. The rover is differential-drive and must
-      # respect the same velocity/acceleration envelope as velocity_smoother.
+      # MPPI path-following tuning sequence (change one group, test on the
+      # rover, and keep the velocity_smoother limits in sync):
+      # 1. Set the speed/acceleration limits to safe, achievable values.
+      # 2. Tune PathFollowCritic for cross-track error, then PathAlignCritic
+      #    for earlier steering into bends. Increase weights gradually (10-20%).
+      # 3. If it still cuts corners, raise CostCritic or inflation first; do
+      #    not use path critics to compensate for an unsafe costmap.
+      # 4. If steering is noisy, reduce wz_std or increase temperature; if it
+      #    reacts too late in turns, increase the horizon or PathAlign weight.
+      # Always record critic statistics while tuning (set
+      # publish_critics_stats: true) and turn visualization back off afterward.
+
+      # Prediction horizon = time_steps * model_dt = 2.8 s. Increase it (or
+      # PathAlignCritic weight) for smoother, earlier turns; decrease it if
+      # the robot commits too early to a stale/noisy path. Keep model_dt equal
+      # to 1/controller_frequency and preserve a practical 2-4 s horizon.
+      # The rover is differential-drive and must respect the same
+      # velocity/acceleration envelope as velocity_smoother.
       # Humble model names are: DiffDrive, Ackermann, or Omni.
       motion_model: "DiffDrive"
-      time_steps: 56
-      model_dt: 0.05
+      time_steps: 100 #5s horizon
+      model_dt: 0.05 #DO NOT CHANGE, must be equal to 1/controller_frequency
+      # More samples improve the chance of finding a smooth trajectory but
+      # cost CPU. Raise batch_size only while controller updates remain timely.
       batch_size: 1000
       iteration_count: 1
+      # Sampling noise: raise vx_std/wz_std when MPPI cannot explore enough
+      # correction; lower them when commands weave or oscillate. Tune wz_std
+      # first for lateral path error on a differential-drive rover.
       vx_std: 0.07
       vy_std: 0.0
       wz_std: 0.15
-      vx_max: 0.21
+      # Kinematic bounds. These must not exceed velocity_smoother limits or
+      # the real rover's capability; too-high bounds commonly cause overshoot.
+      vx_max: 0.40
       vx_min: 0.0
       vy_max: 0.0
-      wz_max: 0.45
+      wz_max: 0.75 #45°
       ax_max: 1.0
       ax_min: -2.0
       az_max: 0.35
+      # Exploration selection: lower temperature selects the best-looking
+      # samples more aggressively (tighter but potentially twitchy tracking);
+      # raise it for smoother, less reactive commands. Change in small steps.
       temperature: 0.3
-      gamma: 0.015
+      # Control-effort penalty. Raise gamma if velocity/turn-rate commands are
+      # abrupt; lower it only if MPPI is too reluctant to correct path error.
+      gamma: 0.0045 #0.015
       reset_period: 1.0  # Required by the Humble MPPI implementation.
       regenerate_noises: false
       visualize: false
@@ -165,6 +193,8 @@ controller_server:
       CostCritic:
         enabled: true
         cost_power: 1
+        # Raise this to give obstacles/inflated costs priority over path
+        # tracking; lower only if safe, valid paths are being rejected.
         cost_weight: 3.81
         critical_cost: 300.0
         consider_footprint: false # always set to false since the costmap already 
@@ -174,27 +204,36 @@ controller_server:
       GoalCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 5.0
+        # Mainly active inside threshold_to_consider. Raise it if the rover
+        # misses or drifts around waypoints; lower it if it rushes the goal.
+        cost_weight: 15.0
         threshold_to_consider: 1.0
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 14.0
+        # Increase for earlier steering into upcoming curves. Too high can
+        # cause corner-cutting or oscillation when the path is noisy.
+        cost_weight: 35.0 #14.0 : too little 50.0 : too much
         max_path_occupancy_ratio: 0.05
-        trajectory_point_step: 2
+        trajectory_point_step: 4
         threshold_to_consider: 0.5
         # SmacPlanner2D plans on a 0.1 m grid; a small offset is appropriate.
-        offset_from_furthest: 3
+        offset_from_furthest: 10 #3
         use_path_orientations: false
       PathFollowCritic:
         enabled: true
         cost_power: 1
+        # Primary cross-track-error weight: increase for tighter adherence to
+        # the global path; decrease if it hunts side-to-side or resists safe
+        # avoidance manoeuvres. Tune this before increasing PathAlignCritic.
         cost_weight: 5.0
         offset_from_furthest: 2
         threshold_to_consider: 1.0
       PreferForwardCritic:
-        enabled: true
+        enabled: false
         cost_power: 1
+        # Raise to discourage reverse-like behaviour/turning away from the
+        # route; lower if the rover needs more freedom in tight manoeuvres.
         cost_weight: 5.0
         threshold_to_consider: 0.5
 

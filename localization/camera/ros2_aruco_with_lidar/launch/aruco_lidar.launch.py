@@ -42,6 +42,18 @@ def generate_launch_description():
     tolerance_radius = LaunchConfiguration('tolerance_radius')
     hauteur_z_min = LaunchConfiguration('hauteur_z_min')
     hauteur_z_max = LaunchConfiguration('hauteur_z_max')
+    use_camera_aruco_position = LaunchConfiguration('use_camera_aruco_position')
+    camera_cone_half_angle_deg = LaunchConfiguration('camera_cone_half_angle_deg')
+    camera_cone_depth_tolerance_m = LaunchConfiguration('camera_cone_depth_tolerance_m')
+    camera_cone_depth_tolerance_ratio = LaunchConfiguration('camera_cone_depth_tolerance_ratio')
+    association_ambiguity_margin_m = LaunchConfiguration('association_ambiguity_margin_m')
+    auto_recovery_enabled = LaunchConfiguration('auto_recovery_enabled')
+    recovery_enter_disagreement_m = LaunchConfiguration('recovery_enter_disagreement_m')
+    recovery_exit_disagreement_m = LaunchConfiguration('recovery_exit_disagreement_m')
+    recovery_enter_hold_sec = LaunchConfiguration('recovery_enter_hold_sec')
+    recovery_exit_hold_sec = LaunchConfiguration('recovery_exit_hold_sec')
+    recovery_min_trigger_tags = LaunchConfiguration('recovery_min_trigger_tags')
+    recovery_min_lidar_tags = LaunchConfiguration('recovery_min_lidar_tags')
 
     distance_threshold_inliers = LaunchConfiguration('distance_threshold_inliers')
     max_iterations = LaunchConfiguration('max_iterations')
@@ -120,7 +132,10 @@ def generate_launch_description():
                 #   are rejected.
                 'max_consecutive_rejects': 10,
                 # ^ after this many rejections in a row, P is inflated x4 so a
-                #   mis-seeded filter can recover instead of rejecting forever.
+                #   mis-seeded filter can recover instead of rejecting forever;
+                #   inflation is permitted only while the recovery supervisor
+                #   has verified and enabled camera-guided recovery.
+                'inflate_only_in_camera_recovery': True,
                 'stationary_speed_mps': 0.05,
                 # ^ [m/s] at/above this the full process noise applies; below
                 #   it Q is scaled down proportionally. Odom drifts with
@@ -149,11 +164,35 @@ def generate_launch_description():
         DeclareLaunchArgument('tolerance_deg', default_value='5.0'),
         # ^ UNUSED: declared/loaded by lidar_phi_filter_node but never used in the filter (legacy phi-sector width)
         DeclareLaunchArgument('tolerance_radius', default_value='1.2'), #1.5 HAS TO BE A TYPE DOUBLE
-        # ^ [m] keep lidar points within this radius of each landmark. High: survives bad landmark/map estimate but feeds more ground/clutter to RANSAC. Low: clean tight crop, but cube gets cut off if the landmark position is off
-        DeclareLaunchArgument('hauteur_z_min', default_value='0.0'),
-        # ^ [m, map frame] z floor. High: cuts more ground but also the cube bottom (fewer plane inliers). Low: keeps ground points -> ground can be fit as a "face"
-        DeclareLaunchArgument('hauteur_z_max', default_value='0.50'),
-        # ^ [m, map frame] z ceiling. High: keeps clutter above the cube (people, structures). Low: risks cutting the cube top (cube is ~0.32 m tall)
+        # ^ [m] map-guided mode only: keep lidar points within this radius of each landmark
+        DeclareLaunchArgument('hauteur_z_min', default_value='0.1'),
+        # ^ [m, map in landmark mode; base_link in camera mode] z floor. High: cuts more ground but also the cube bottom (fewer plane inliers). Low: keeps ground points -> ground can be fit as a "face"
+        DeclareLaunchArgument('hauteur_z_max', default_value='1.50'),
+        # ^ [m, map in landmark mode; base_link in camera mode] z ceiling. High: keeps clutter above the cube (people, structures). Low: risks cutting the cube top (cube is ~0.32 m tall)
+        DeclareLaunchArgument('use_camera_aruco_position', default_value='false'),
+        # ^ false: search around the ID-associated map landmark; true: search around the camera-measured ArUco center without depending on map/odometry accuracy
+        DeclareLaunchArgument('camera_cone_half_angle_deg', default_value='10.0'),
+        # ^ [deg] recovery cone half-angle around the camera bearing; lateral half-width grows as range*tan(angle)
+        DeclareLaunchArgument('camera_cone_depth_tolerance_m', default_value='1.0'),
+        # ^ [m] minimum recovery cone range tolerance on either side of the camera-estimated depth
+        DeclareLaunchArgument('camera_cone_depth_tolerance_ratio', default_value='0.50'),
+        # ^ recovery range tolerance also grows with distance: max(fixed tolerance, ratio*camera range)
+        DeclareLaunchArgument('association_ambiguity_margin_m', default_value='0.05'),
+        # ^ [m] discard points/centers whose nearest ArUco ID is not better than the second-nearest by this margin; prevents ID swaps when search zones overlap
+        DeclareLaunchArgument('auto_recovery_enabled', default_value='true'),
+        # ^ Automatically switch to camera-guided LiDAR search after sustained, multi-tag evidence that map->odom projects landmarks incorrectly
+        DeclareLaunchArgument('recovery_enter_disagreement_m', default_value='0.8'),
+        # ^ [m] camera-vs-map landmark disagreement required to consider one tag evidence of localization loss
+        DeclareLaunchArgument('recovery_exit_disagreement_m', default_value='0.35'),
+        # ^ [m] tighter agreement required before returning to map-guided search (hysteresis)
+        DeclareLaunchArgument('recovery_enter_hold_sec', default_value='0.6'),
+        # ^ [s] continuous qualified failure evidence required before entering camera recovery
+        DeclareLaunchArgument('recovery_exit_hold_sec', default_value='2.0'),
+        # ^ [s] continuous LiDAR/solver success and camera-map agreement required before returning to map guidance
+        DeclareLaunchArgument('recovery_min_trigger_tags', default_value='2'),
+        # ^ independent tags that must show a consistent displacement; a single wrong ID cannot trigger global recovery
+        DeclareLaunchArgument('recovery_min_lidar_tags', default_value='2'),
+        # ^ unique LiDAR cube IDs required together with a solver-approved rover pose before testing map guidance again
         DeclareLaunchArgument('distance_threshold_inliers', default_value='0.05'),
         # ^ [m] RANSAC plane inlier distance. High: rough/curved clutter counts as planes, face dims inflate. Low: crisp planes only, sparse/noisy scans may not reach min_inliers
         DeclareLaunchArgument('max_iterations', default_value='300'),
@@ -200,6 +239,23 @@ def generate_launch_description():
 
         Node(
             package='ros2_aruco_with_lidar',
+            executable='aruco_lidar_recovery_manager',
+            name='aruco_lidar_recovery_manager',
+            output='screen',
+            parameters=[{
+                'auto_recovery_enabled': auto_recovery_enabled,
+                'use_camera_aruco_position': use_camera_aruco_position,
+                'enter_disagreement_m': recovery_enter_disagreement_m,
+                'exit_disagreement_m': recovery_exit_disagreement_m,
+                'enter_hold_sec': recovery_enter_hold_sec,
+                'exit_hold_sec': recovery_exit_hold_sec,
+                'min_trigger_tags': recovery_min_trigger_tags,
+                'min_recovery_lidar_tags': recovery_min_lidar_tags,
+            }],
+        ),
+
+        Node(
+            package='ros2_aruco_with_lidar',
             executable='detect_cube',
             name='detect_cube',
             output='screen',
@@ -228,6 +284,11 @@ def generate_launch_description():
                 'marker_lifetime_sec': marker_lifetime_sec,
                 'max_distance_from_aruco': max_distance_from_aruco,
                 'angular_tolerance_deg': angular_tolerance_deg,
+                'use_camera_aruco_position': use_camera_aruco_position,
+                'camera_cone_half_angle_deg': camera_cone_half_angle_deg,
+                'camera_cone_depth_tolerance_m': camera_cone_depth_tolerance_m,
+                'camera_cone_depth_tolerance_ratio': camera_cone_depth_tolerance_ratio,
+                'association_ambiguity_margin_m': association_ambiguity_margin_m,
                 # Matches lidar_phi_filter_node association publisher.
                 'aruco_topic': '/perception/aruco_markers_for_lidar_association',
             }],
@@ -248,6 +309,11 @@ def generate_launch_description():
                 'tolerance_radius': tolerance_radius,
                 'hauteur_z_min': hauteur_z_min,
                 'hauteur_z_max': hauteur_z_max,
+                'use_camera_aruco_position': use_camera_aruco_position,
+                'camera_cone_half_angle_deg': camera_cone_half_angle_deg,
+                'camera_cone_depth_tolerance_m': camera_cone_depth_tolerance_m,
+                'camera_cone_depth_tolerance_ratio': camera_cone_depth_tolerance_ratio,
+                'association_ambiguity_margin_m': association_ambiguity_margin_m,
             }],
         ),
 

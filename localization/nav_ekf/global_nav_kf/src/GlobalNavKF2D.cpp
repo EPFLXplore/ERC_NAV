@@ -35,6 +35,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Transform.h>
@@ -46,6 +47,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -144,24 +146,26 @@ class GlobalNavKF2DNode : public rclcpp::Node
 public:
     GlobalNavKF2DNode() : Node("global_nav_kf_2d")
     {
-        broadcast_rate_hz_ = declare_parameter<double>("broadcast_rate_hz", 20.0);
+        broadcast_rate_hz_ = declare_parameter<double>("broadcast_rate_hz", 5.0);
         const double meas_sigma_xy_m =
-            declare_parameter<double>("meas_sigma_xy_m", 0.25);
+            declare_parameter<double>("meas_sigma_xy_m", 0.45);
         const double meas_sigma_yaw_deg =
-            declare_parameter<double>("meas_sigma_yaw_deg", 5.0);
+            declare_parameter<double>("meas_sigma_yaw_deg", 3.0);
         const double process_sigma_xy_m_per_s =
             declare_parameter<double>("process_sigma_xy_m_per_s", 0.02);
         const double process_sigma_yaw_deg_per_s =
             declare_parameter<double>("process_sigma_yaw_deg_per_s", 0.5);
-        gate_chi2_ = declare_parameter<double>("mahalanobis_gate_chi2", 7.815);
+        gate_chi2_ = declare_parameter<double>("mahalanobis_gate_chi2", 3.0);
         max_consecutive_rejects_ =
             declare_parameter<int>("max_consecutive_rejects", 10);
+        inflate_only_in_camera_recovery_ =
+            declare_parameter<bool>("inflate_only_in_camera_recovery", true);
 
         /* ---- motion-adaptive process noise ---- */
         stationary_speed_mps_ =
             declare_parameter<double>("stationary_speed_mps", 0.05);
         const double stationary_yaw_rate_dps =
-            declare_parameter<double>("stationary_yaw_rate_dps", 3.0);
+            declare_parameter<double>("stationary_yaw_rate_dps", 2.0);
         stationary_q_scale_ =
             declare_parameter<double>("stationary_q_scale", 0.05);
         twist_timeout_sec_ =
@@ -229,6 +233,18 @@ public:
             "/fused_nav_ekf_odom", sensor_qos,
             std::bind(&GlobalNavKF2DNode::ekf_odom_callback, this,
                       std::placeholders::_1));
+
+        recovery_mode_sub_ = create_subscription<std_msgs::msg::Bool>(
+            "/perception/use_camera_aruco_position", latched_qos,
+            [this](const std_msgs::msg::Bool::SharedPtr msg) {
+                const bool previous = camera_recovery_active_.exchange(msg->data);
+                if (previous != msg->data) {
+                    consecutive_rejects_ = 0;
+                    RCLCPP_WARN(get_logger(),
+                        "Global ArUco recovery gate is now %s",
+                        msg->data ? "ENABLED" : "DISABLED");
+                }
+            });
 
         map_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
             "/global_nav_kf/map_odom", pub_qos);
@@ -449,11 +465,22 @@ private:
             // forever; widening P lets consistent measurements back in.
             if (max_consecutive_rejects_ > 0 &&
                 consecutive_rejects_ >= max_consecutive_rejects_) {
-                kf_->inflate(4.0);
+                const bool inflation_allowed =
+                    !inflate_only_in_camera_recovery_ ||
+                    camera_recovery_active_.load();
                 consecutive_rejects_ = 0;
-                RCLCPP_WARN(get_logger(),
-                    "Inflating map->odom covariance after %d consecutive "
-                    "rejections", max_consecutive_rejects_);
+                if (inflation_allowed) {
+                    kf_->inflate(4.0);
+                    RCLCPP_WARN(get_logger(),
+                        "Inflating map->odom covariance after %d consistent-cycle "
+                        "rejections in verified recovery mode",
+                        max_consecutive_rejects_);
+                } else {
+                    RCLCPP_ERROR(get_logger(),
+                        "Not inflating map->odom covariance after %d rejected ArUco "
+                        "poses because camera recovery is not active",
+                        max_consecutive_rejects_);
+                }
             }
             return;
         }
@@ -539,8 +566,9 @@ private:
 
     /* ---- parameters ---- */
     double broadcast_rate_hz_{20.0};
-    double gate_chi2_{7.815};
+    double gate_chi2_{3.0};
     int    max_consecutive_rejects_{10};
+    bool   inflate_only_in_camera_recovery_{true};
     double stationary_speed_mps_{0.05};
     double stationary_yaw_rate_rps_{3.0 * M_PI / 180.0};
     double stationary_q_scale_{0.05};
@@ -557,8 +585,10 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::TransformStamped>::SharedPtr init_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr aruco_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr recovery_mode_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr map_odom_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
+    std::atomic_bool camera_recovery_active_{false};
 
     /* ---- TF ---- */
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

@@ -207,7 +207,7 @@ public:
     R_position_xy_lidar  = Eigen::Matrix2d::Identity() * 0.02;   // std 0.12 m
     R_position_xy_aruco  = Eigen::Matrix2d::Identity() * 0.05;   // variance standing still measured experimentally
     R_position_xyz_vio   = Eigen::Matrix3d::Identity() * 0.0225; // std 0.15m (~15cm error on 30m)
-    R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.1;  // from wheel odom meas
+    R_velocity_body_xyz  = Eigen::Matrix3d::Identity() * 0.2;  // from wheel odom meas
   }
 
   void initialize(double x0, double y0, double z0,

@@ -237,8 +237,15 @@ class WaypointFollower(Node):
         waypoint_list = [W1, W2, W3, W4]
 
         waypoint_list = [
-            (1.0, -2.5, 0.0),
+            (2.2, 0.0, 0.0),
+            (1.6, -5.7, 0.0),
+            (-1.4, -5.7, 0.0),
+            (0.0, 0.0, 0.0),
         ]
+
+        # waypoint_list = [
+        #     (1.6, -5.7, 0.0),
+        # ]
         
 
         for i, (x_in, y_in, yaw_in) in enumerate(waypoint_list):

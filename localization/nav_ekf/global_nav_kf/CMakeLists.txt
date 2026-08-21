@@ -16,6 +16,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -33,6 +34,7 @@ add_executable(global_nav_kf_2d_node src/GlobalNavKF2D.cpp)
 ament_target_dependencies(global_nav_kf_2d_node
     rclcpp
     nav_msgs
+    std_msgs
     geometry_msgs
     tf2
     tf2_geometry_msgs
