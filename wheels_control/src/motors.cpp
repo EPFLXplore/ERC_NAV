@@ -899,7 +899,10 @@ bool NAV_Motor::set_velocity_ref(long vel, unsigned int *error_code)
         return false;
     }
 
-    if ((op_mode != OMD_VELOCITY_MODE) &&
+    // The drive motors are configured in OMD_PROFILE_VELOCITY_MODE, so that is what
+    // op_mode holds. Comparing against OMD_VELOCITY_MODE made this test always true and
+    // forced a redundant VCS_SetOperationMode write before every single velocity command.
+    if ((op_mode != OMD_PROFILE_VELOCITY_MODE) &&
         !this->set_operational_mode(OMD_PROFILE_VELOCITY_MODE))
     {
         *error_code = 0;
@@ -952,7 +955,7 @@ int NAV_Motor::get_current_is_averaged()
 
     unsigned int error_code = 0;
     int current_averaged;
-    VCS_GetVelocityIsAveraged(gateway, id, &current_averaged, &error_code);
+    VCS_GetCurrentIsAveragedEx(gateway, id, &current_averaged, &error_code);
     print_VCS_error(error_code, __FUNCTION__);
     return current_averaged;
 }

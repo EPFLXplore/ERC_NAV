@@ -2,7 +2,7 @@
 # only need to be edited in one place.
 /**:
   ros__parameters:
-    erc_start_pos: [0.0, -2.4] # in the map frame
+    erc_start_pos: [0.0, -2.5] # in the map frame
     landmark_poses: [ #in the map frame
       -0.3,  -4.69,         # id 51 ==== 0 
       3.28,  -0.8,          # id 52 ====1 

@@ -7,6 +7,8 @@
         <NetworkInterface name="enP8p1s0" priority="100" presence_required="true"/>
         <!-- USB-Ethernet to Olive IMU — without this, DDS never uses 169.254.56.x (ping still works) -->
         <NetworkInterface name="enx0a76f8b03d57" priority="10" presence_required="true" multicast="default"/>
+        <!-- TP-Link wifi dongle wlx3460f90fdc9c : BAD !! -->
+        <!-- <NetworkInterface name="wlx3460f90fdc9c" priority="1" presence_required="false" multicast="false"/> -->
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
       <MaxMessageSize>1400B</MaxMessageSize>
@@ -20,7 +22,7 @@
 
       <!-- Re-advertise ourselves frequently so discovery
            recovers quickly after a network interruption. -->
-      <SPDPInterval>10s</SPDPInterval>
+      <SPDPInterval>3s</SPDPInterval>
       <Peers>
         <Peer Address="169.254.55.231"/>
         <Peer Address="169.254.55.166"/>

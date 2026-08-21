@@ -279,10 +279,12 @@ public:
         std::lock_guard<std::mutex> lock(can_mutex_);
         static unsigned int counter = 0;
         counter++;
-        bool check_faults = (counter >= 20);
-        if(check_faults){
-            counter = 0;
-        }
+        // Fault polling and averaged-current polling are the two expensive CAN blocks of
+        // this callback (8 SDO round-trips each). Keep them on different cycles so no
+        // single callback ever pays both, and poll faults often enough now that the
+        // command path no longer does it.
+        const bool check_faults  = (counter % 10 == 0);
+        const bool check_current = (counter % 40 == 5);
 
         auto message_nav = custom_msg::msg::MotorStatus();
 
@@ -306,9 +308,9 @@ public:
                 //Put the motor current callback at a lower requency because it severly diminishes the publishing rate
                 message_nav.state[status_idx] = true;
                 
-                if(check_faults){
+                if(check_current){
                     //message_nav.current[status_idx] = (double)motor->get_current_is();
-                    message_nav.average_current[status_idx] = (double)motor->get_current_is_averaged(); // goes from 16hz to 12hz
+                    message_nav.average_current[status_idx] = (double)motor->get_current_is_averaged();
                 }
                 if (is_steer_motor(*layout)){
                     message_nav.position[layout->corner] = (double)motor->get_position_is(); //takes max 6ms
@@ -435,41 +437,10 @@ public:
                 continue;
             }
 
-            unsigned int error_code = 0;
-            bool is_fault = motor->fault_state(&error_code);
-
-            if (error_code != 0)
-            {
-                log_motor_fault_throttled(
-                    *motor,
-                    *layout,
-                    "fault-state read failed; skipping command cycle",
-                    error_code);
-                continue;
-            }
-
-            if (is_fault)
-            {
-                current_faulty_motors[idx] = true;
-                fault_retry_counts[idx] = 0;
-                log_motor_fault_throttled(
-                    *motor,
-                    *layout,
-                    "FAULT detected; attempting recovery",
-                    0,
-                    true);
-
-                bool cleared = motor->clear_fault();
-                if (cleared && !motor->is_faulty(false) && motor->set_output_state(true))
-                {
-                    current_faulty_motors[idx] = false;
-                    RCLCPP_WARN(get_logger(), "Motor %d: fault cleared immediately", id);
-                }
-                else
-                {
-                    fault_retry_counts[idx]++;
-                }
-            }
+            // No fault poll here on purpose: probing all 8 controllers on every command
+            // message cost 8 blocking SDO round-trips under can_mutex_ and starved the
+            // status timer. current_faulty_motors[] is refreshed by the periodic check in
+            // motors_param_callback; the command path only reads that cached state.
         }
 
         // Escalate: if too many motors are permanently faulted, shut down
