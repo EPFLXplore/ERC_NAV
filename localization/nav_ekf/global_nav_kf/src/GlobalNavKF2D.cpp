@@ -14,8 +14,8 @@
 //
 // state vector: X = [x, y, yaw]^T of T_map_odom
 //
-// state equation:        x(t+1) = x(t) + w,  w ~ N(0, Q*dt)
-// propagate covariance:  P(t+1) = P(t) + Q*dt
+// state equation:        x(t+1) = x(t) + w,  w ~ N(0, Q*s*dt)
+// propagate covariance:  P(t+1) = P(t) + Q*s*dt
 // measurement equation:  z(t)   = x(t) + v,  v ~ N(0, R)      (H = I)
 // compute Kalman gain:   K = P*H^T*(H*P*H^T + R)^-1 = P*(P + R)^-1
 // update covariance:     P = (I - K)*P*(I - K)^T + K*R*K^T    (Joseph form)
@@ -27,6 +27,11 @@
 //
 // The constant-position model is only valid on that quantity: map->odom is the
 // slowly drifting correction, whereas map->base_link moves with the rover.
+//
+// s is a motion-dependent process noise scale derived from the local EKF's
+// velocity on /fused_nav_ekf_odom: odom drifts with distance travelled, not
+// with wall time, so a parked rover must not be allowed to wander map->odom.
+// See process_noise_scale().
 
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -40,6 +45,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -73,10 +79,12 @@ public:
         P_ = R_;
     }
 
-    /** Constant-position propagation: only the covariance grows. */
-    void predict(double dt)
+    /** Constant-position propagation: only the covariance grows.
+     *  q_scale in (0, 1] shrinks the process noise while the rover is barely
+     *  moving; see GlobalNavKF2DNode::process_noise_scale(). */
+    void predict(double dt, double q_scale)
     {
-        if (dt > 0.0) P_ += Q_ * dt;
+        if (dt > 0.0 && q_scale > 0.0) P_ += Q_ * (q_scale * dt);
     }
 
     /** Innovation z - x, with the yaw component wrapped. */
@@ -124,7 +132,7 @@ public:
 private:
     Vec3 x_;  // state [x, y, yaw] of T_map_odom
     Mat3 P_;  // state covariance
-    Mat3 Q_;  // process noise density (per second)
+    Mat3 Q_;  // process noise density (per second, at full scale)
     Mat3 R_;  // measurement noise covariance
 };
 
@@ -149,6 +157,17 @@ public:
         max_consecutive_rejects_ =
             declare_parameter<int>("max_consecutive_rejects", 10);
 
+        /* ---- motion-adaptive process noise ---- */
+        stationary_speed_mps_ =
+            declare_parameter<double>("stationary_speed_mps", 0.05);
+        const double stationary_yaw_rate_dps =
+            declare_parameter<double>("stationary_yaw_rate_dps", 3.0);
+        stationary_q_scale_ =
+            declare_parameter<double>("stationary_q_scale", 0.05);
+        twist_timeout_sec_ =
+            declare_parameter<double>("twist_timeout_sec", 0.5);
+        stationary_yaw_rate_rps_ = stationary_yaw_rate_dps * M_PI / 180.0;
+
         if (!(broadcast_rate_hz_ > 0.0) ||
             !(meas_sigma_xy_m > 0.0) || !(meas_sigma_yaw_deg > 0.0) ||
             !(process_sigma_xy_m_per_s > 0.0) ||
@@ -156,6 +175,16 @@ public:
             RCLCPP_ERROR(get_logger(),
                 "broadcast_rate_hz and all sigmas must be positive");
             throw std::runtime_error("invalid global_nav_kf parameters");
+        }
+        if (!(stationary_speed_mps_ > 0.0) ||
+            !(stationary_yaw_rate_rps_ > 0.0) ||
+            !(twist_timeout_sec_ > 0.0) ||
+            !(stationary_q_scale_ > 0.0) || stationary_q_scale_ > 1.0) {
+            RCLCPP_ERROR(get_logger(),
+                "stationary_speed_mps, stationary_yaw_rate_dps and "
+                "twist_timeout_sec must be positive, and stationary_q_scale "
+                "must lie in (0, 1] (got %.6f)", stationary_q_scale_);
+            throw std::runtime_error("invalid global_nav_kf motion parameters");
         }
 
         const double meas_sigma_yaw_rad = meas_sigma_yaw_deg * M_PI / 180.0;
@@ -196,10 +225,16 @@ public:
             std::bind(&GlobalNavKF2DNode::aruco_callback, this,
                       std::placeholders::_1));
 
+        ekf_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+            "/fused_nav_ekf_odom", sensor_qos,
+            std::bind(&GlobalNavKF2DNode::ekf_odom_callback, this,
+                      std::placeholders::_1));
+
         map_odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(
             "/global_nav_kf/map_odom", pub_qos);
 
         last_predict_time_ = now();
+        last_twist_time_ = now();
         timer_ = create_wall_timer(
             std::chrono::duration<double>(1.0 / broadcast_rate_hz_),
             std::bind(&GlobalNavKF2DNode::timer_callback, this));
@@ -207,9 +242,11 @@ public:
         RCLCPP_INFO(get_logger(),
             "global_nav_kf_2d started: rate=%.1f Hz, meas sigma=(%.3f m, %.2f deg), "
             "process sigma=(%.4f m/s, %.3f deg/s), chi2 gate=%.3f. "
+            "Process noise scales down to x%.3f below %.3f m/s / %.2f deg/s. "
             "Waiting for /map_odom_init before broadcasting map->odom.",
             broadcast_rate_hz_, meas_sigma_xy_m, meas_sigma_yaw_deg,
-            process_sigma_xy_m_per_s, process_sigma_yaw_deg_per_s, gate_chi2_);
+            process_sigma_xy_m_per_s, process_sigma_yaw_deg_per_s, gate_chi2_,
+            stationary_q_scale_, stationary_speed_mps_, stationary_yaw_rate_dps);
     }
 
 private:
@@ -245,6 +282,72 @@ private:
         // Broadcast straight away: pose_estimator_lidar_node has already
         // stopped, so waiting for the next timer tick would leave a TF gap.
         broadcast();
+    }
+
+    /* ================================================================ */
+    /*  Rover velocity from the local EKF                               */
+    /*                                                                  */
+    /*  Only magnitudes are used, so it does not matter that the twist   */
+    /*  is expressed in the body frame.                                  */
+    /* ================================================================ */
+    void ekf_odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {
+        const auto &v = msg->twist.twist.linear;
+        const double speed = std::hypot(v.x, v.y);
+        const double yaw_rate = msg->twist.twist.angular.z;
+        if (!std::isfinite(speed) || !std::isfinite(yaw_rate)) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "Ignoring EKF twist: non-finite velocity");
+            return;
+        }
+
+        last_speed_mps_ = speed;
+        last_yaw_rate_rps_ = std::fabs(yaw_rate);
+        last_twist_time_ = now();
+        have_twist_ = true;
+    }
+
+    /* ================================================================ */
+    /*  Motion-dependent process noise scale                            */
+    /*                                                                  */
+    /*  map->odom drifts because odom drifts, and odom drift accumulates */
+    /*  with distance travelled rather than with wall time.  So Q is     */
+    /*  scaled by how fast the rover is actually moving, normalised by   */
+    /*  the stationary thresholds:                                       */
+    /*                                                                   */
+    /*      m       = max(speed/v_thresh, |yaw_rate|/w_thresh)           */
+    /*      q_scale = clamp(m, stationary_q_scale, 1.0)                  */
+    /*                                                                   */
+    /*  At or above the thresholds Q is untouched.  Parked, it collapses */
+    /*  to the stationary_q_scale floor, so P stops inflating and the    */
+    /*  filter keeps the transform it has instead of drifting toward     */
+    /*  whatever the next noisy solve says.  The floor is deliberately   */
+    /*  not zero: gyro bias and thermal drift do not stop when the       */
+    /*  wheels do, and a frozen P would eventually reject every          */
+    /*  measurement through the Mahalanobis gate.                        */
+    /*                                                                   */
+    /*  Missing or stale twist falls back to full Q — assuming           */
+    /*  "stationary" on absent data would silently make the filter       */
+    /*  overconfident.                                                   */
+    /* ================================================================ */
+    double process_noise_scale()
+    {
+        if (!have_twist_) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "No /fused_nav_ekf_odom yet: using full process noise");
+            return 1.0;
+        }
+        if ((now() - last_twist_time_).seconds() > twist_timeout_sec_) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "/fused_nav_ekf_odom stale (> %.2f s): using full process noise",
+                twist_timeout_sec_);
+            return 1.0;
+        }
+
+        const double motion = std::max(
+            last_speed_mps_ / stationary_speed_mps_,
+            last_yaw_rate_rps_ / stationary_yaw_rate_rps_);
+        return std::clamp(motion, stationary_q_scale_, 1.0);
     }
 
     /* ================================================================ */
@@ -371,6 +474,16 @@ private:
         }
         predict_to_now();
         broadcast();
+
+        const Vec3 &x = kf_->state();
+        const Mat3 &P = kf_->covariance();
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+            "map->odom=(%.3f, %.3f, %.2f deg) sigma=(%.3f m, %.3f m, %.2f deg) "
+            "speed=%.3f m/s yaw_rate=%.2f deg/s q_scale=%.3f",
+            x(0), x(1), x(2) * 180.0 / M_PI,
+            std::sqrt(P(0, 0)), std::sqrt(P(1, 1)),
+            std::sqrt(P(2, 2)) * 180.0 / M_PI,
+            last_speed_mps_, last_yaw_rate_rps_ * 180.0 / M_PI, last_q_scale_);
     }
 
     void predict_to_now()
@@ -378,7 +491,8 @@ private:
         const rclcpp::Time t_now = now();
         const double dt = (t_now - last_predict_time_).seconds();
         last_predict_time_ = t_now;
-        kf_->predict(dt);
+        last_q_scale_ = process_noise_scale();
+        kf_->predict(dt, last_q_scale_);
     }
 
     void broadcast()
@@ -427,10 +541,22 @@ private:
     double broadcast_rate_hz_{20.0};
     double gate_chi2_{7.815};
     int    max_consecutive_rejects_{10};
+    double stationary_speed_mps_{0.05};
+    double stationary_yaw_rate_rps_{3.0 * M_PI / 180.0};
+    double stationary_q_scale_{0.05};
+    double twist_timeout_sec_{0.5};
+
+    /* ---- latest EKF velocity ---- */
+    bool   have_twist_{false};
+    double last_speed_mps_{0.0};
+    double last_yaw_rate_rps_{0.0};
+    double last_q_scale_{1.0};
+    rclcpp::Time last_twist_time_;
 
     /* ---- ROS ---- */
     rclcpp::Subscription<geometry_msgs::msg::TransformStamped>::SharedPtr init_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr aruco_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ekf_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr map_odom_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 

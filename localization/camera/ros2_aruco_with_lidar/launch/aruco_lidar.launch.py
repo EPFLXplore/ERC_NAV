@@ -121,6 +121,25 @@ def generate_launch_description():
                 'max_consecutive_rejects': 10,
                 # ^ after this many rejections in a row, P is inflated x4 so a
                 #   mis-seeded filter can recover instead of rejecting forever.
+                'stationary_speed_mps': 0.05,
+                # ^ [m/s] at/above this the full process noise applies; below
+                #   it Q is scaled down proportionally. Odom drifts with
+                #   distance travelled, so a parked rover should not be allowed
+                #   to wander map->odom. Set near the EKF's velocity noise
+                #   floor: too high and Q stays throttled while genuinely
+                #   creeping, too low and it never engages.
+                'stationary_yaw_rate_dps': 3.0,
+                # ^ [deg/s] same threshold for turning in place, which slips
+                #   wheels and drifts odom without any linear velocity.
+                'stationary_q_scale': 0.05,
+                # ^ floor on the Q scale when fully stopped. Low: map->odom is
+                #   held nearly frozen while parked (good at waypoints). Too
+                #   low: P stops growing, the Mahalanobis gate tightens, and
+                #   real corrections get rejected on setting off again.
+                'twist_timeout_sec': 0.5,
+                # ^ [s] older than this, /fused_nav_ekf_odom is ignored and
+                #   full Q is used. Never assume "stationary" from missing
+                #   data, that would make the filter silently overconfident.
             }],
             output='screen',
         ),
