@@ -147,6 +147,46 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         output="screen",
     )
 
+    # ------------- Startup Auto Mode -------------
+    # NavCSInterface boots in "Off" and only wires up the CAN motor lifecycle
+    # node (on_configure) on the Off->Ackermann/Omni transition; there is no
+    # direct Off->Auto case. So we first flip to Ackermann (configures motors),
+    # then immediately to Auto (plain mode change, no lifecycle transition
+    # needed since we're no longer in Off). Each `ros2 service call` blocks
+    # until NavCSInterface's response comes back, so the two calls are
+    # naturally sequenced.
+    wait_for_nav_mode_service = ExecuteProcess(
+        cmd=[
+            "bash", "-lc",
+            "until ros2 service list 2>/dev/null | grep -qx '/NAV/ChangeModeSystem'; do "
+            "echo 'Waiting for /NAV/ChangeModeSystem service...'; "
+            "sleep 1; "
+            "done"
+        ],
+        output="screen",
+    )
+
+    set_startup_auto_mode = ExecuteProcess(
+        cmd=[
+            "bash", "-lc",
+            "ros2 service call /NAV/ChangeModeSystem custom_msg/srv/ChangeModeSystem "
+            "'{system: 0, mode: 1}' && "
+            "ros2 service call /NAV/ChangeModeSystem custom_msg/srv/ChangeModeSystem "
+            "'{system: 0, mode: 3}'"
+        ],
+        output="screen",
+    )
+
+    launch_startup_auto_mode = RegisterEventHandler(
+        OnProcessExit(
+            target_action=wait_for_nav_mode_service,
+            on_exit=[
+                LogInfo(msg=f"{_C_BOLD_GREEN}NAV mode service ready — switching startup mode to Auto...{_C_RESET}"),
+                set_startup_auto_mode,
+            ],
+        )
+    )
+
 
     #----------- ArUco Launch Files ---------
 
@@ -262,6 +302,8 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         nav_cameras_launch,
         wait_for_nav_camera_2,
         launch_after_nav_camera_2,
+        wait_for_nav_mode_service,
+        launch_startup_auto_mode,
         # full_aruco_launch,
         jetson_stats,
         # slip_control_node,

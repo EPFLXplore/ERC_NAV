@@ -118,13 +118,12 @@ controller_server:
 
     # Goal checker parameters
     simple_goal_checker:
-      stateful: false
+      stateful: true #
       plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance_buffer: 0.0
       xy_goal_tolerance: 0.15
       # Position-only waypoint completion: do not require a final heading.
       yaw_goal_tolerance: 7.0
-
-
 
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
@@ -624,7 +623,7 @@ waypoint_follower:
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"
       enabled: true
-      waypoint_pause_duration: 20000
+      waypoint_pause_duration: 10000
       #^10 seconds pause (milliseconds)
 
 velocity_smoother:

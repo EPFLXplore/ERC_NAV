@@ -146,7 +146,7 @@ public:
         camera_detection_ttl_ns_ = static_cast<int64_t>(camera_detection_ttl_sec * 1e9);
         input_cloud_topic_ = "/ouster/points";
         output_cloud_topic_ = "/lidar/points_near_camera_aruco_landmarks";
-        aruco_topic_ = "aruco_markers";
+        aruco_topic_ = "/perception/aruco_markers_cross_id_validated";
         selected_count_ = 0;
         min_cloud_period_ns_ = static_cast<int64_t>(1e9 / 5.0); // 5 Hz max 
         last_cloud_time_ns_ = 0;

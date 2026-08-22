@@ -214,7 +214,7 @@ private:
     cv::Ptr<cv::aruco::Dictionary>         dictionary_;
     cv::Ptr<cv::aruco::DetectorParameters> parameters_;
     double marker_size_{};
-    int64_t marker_cache_ttl_ns_{500000000LL};
+    int64_t marker_cache_ttl_ns_{1000000000LL};
     double bearing_jump_warn_deg_{30.0};
     double cache_pose_smooth_alpha_{0.25};
     double aruco_min_tvec_norm_{0.12};

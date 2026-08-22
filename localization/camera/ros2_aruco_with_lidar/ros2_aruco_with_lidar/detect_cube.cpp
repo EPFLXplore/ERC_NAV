@@ -55,6 +55,7 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/color_rgba.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -64,6 +65,9 @@
 #include <pcl/point_cloud.h>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/sample_consensus/ransac.h>
+#include <pcl/sample_consensus/sac_model.h>
+#include <pcl/sample_consensus/sac_model_plane.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/filter.h>
 #include <algorithm>
@@ -74,6 +78,7 @@
 #include <limits>
 #include <atomic>
 #include <stdexcept>
+#include <cstdio>
 #include <ros2_aruco_interfaces/msg/aruco_markers.hpp>
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -98,16 +103,430 @@ inline double wrap180(double deg) {
 inline double angDeltaDeg(double a_deg, double b_deg) {
     return fabs(wrap180(b_deg - a_deg));
 }
-} 
+
+/* A point projected into the plane of a candidate face. The 2D basis is
+ * arbitrary; every measurement below is invariant to how it was chosen. */
+struct UV {
+    double u{0.0};
+    double v{0.0};
+};
+
+/* The oriented bounding rectangle of an in-plane point set. */
+struct PlaneRect {
+    double angle_rad{0.0};   // rectangle orientation within the (u, v) basis
+    double extent_a{0.0};    // size along the rotated 'a' axis
+    double extent_b{0.0};    // size along the rotated 'b' axis
+    double mid_a{0.0};       // rectangle centre, rotated frame, relative to (u, v) origin
+    double mid_b{0.0};
+
+    double short_extent() const { return std::min(extent_a, extent_b); }
+    double long_extent() const { return std::max(extent_a, extent_b); }
+};
+
+/* Reduce an in-plane point set to its "core": the points lying within
+ * `core_radius` of the component-wise median. Returns the fraction of points
+ * that were outside, i.e. how much of the plane's support does NOT sit in one
+ * face-sized patch.
+ *
+ * Both halves matter, for the same reason. A RANSAC plane is infinite, so the
+ * *correct* cube-face hypothesis is not clean either: extended downwards it
+ * slices the ground at the same range, and that intersection line contributes
+ * a long strip of coplanar inliers. Measuring a bounding box over the raw
+ * inliers therefore reports the true face as metres wide. Trimming to the core
+ * fixes the measurement; the outside fraction is what still distinguishes a
+ * face (a dense patch plus a thin contaminating strip) from a ground or wall
+ * plane (support spread far beyond any face-sized patch), which a bounding box
+ * over the core alone can no longer tell apart.
+ *
+ * A disc rather than a box because the 2D basis is arbitrary: a box would make
+ * the result depend on how the basis happened to be chosen. */
+inline double trim_uv_to_core(std::vector<UV> &uv, double core_radius, UV &centre)
+{
+    if (uv.size() < 3 || !(core_radius > 0.0)) {
+        return 0.0;
+    }
+
+    std::vector<double> scratch;
+    scratch.reserve(uv.size());
+    const size_t mid = uv.size() / 2;
+
+    for (const auto &p : uv) {
+        scratch.push_back(p.u);
+    }
+    std::nth_element(scratch.begin(), scratch.begin() + mid, scratch.end());
+    const double median_u = scratch[mid];
+
+    scratch.clear();
+    for (const auto &p : uv) {
+        scratch.push_back(p.v);
+    }
+    std::nth_element(scratch.begin(), scratch.begin() + mid, scratch.end());
+    const double median_v = scratch[mid];
+
+    centre.u = median_u;
+    centre.v = median_v;
+
+    const double total = static_cast<double>(uv.size());
+    const double radius_sq = core_radius * core_radius;
+    uv.erase(
+        std::remove_if(
+            uv.begin(), uv.end(),
+            [median_u, median_v, radius_sq](const UV &p) {
+                const double du = p.u - median_u;
+                const double dv = p.v - median_v;
+                return du * du + dv * dv > radius_sq;
+            }),
+        uv.end());
+
+    return 1.0 - static_cast<double>(uv.size()) / total;
+}
+
+/* Minimum-area bounding rectangle, found by sweeping the rectangle
+ * orientation over [0, pi/2) -- the full symmetry period of an axis-aligned
+ * box. A sweep rather than 2D PCA because the cube top face is square: its
+ * in-plane covariance is isotropic, so PCA's principal direction there is
+ * numerically arbitrary, which is exactly the case that has to be measured
+ * correctly. At a 5 deg step the area error on a square is under 0.5%, far
+ * below LiDAR noise, for ~18 passes over a set of ~100 points. */
+inline PlaneRect min_area_rect(const std::vector<UV> &uv, double angle_step_rad)
+{
+    PlaneRect best;
+    if (uv.empty()) {
+        return best;
+    }
+    if (!(angle_step_rad > 1e-6)) {
+        angle_step_rad = 5.0 * M_PI / 180.0;
+    }
+
+    double best_area = std::numeric_limits<double>::infinity();
+    for (double theta = 0.0; theta < M_PI_2; theta += angle_step_rad) {
+        const double c = std::cos(theta);
+        const double s = std::sin(theta);
+
+        double min_a = std::numeric_limits<double>::infinity();
+        double max_a = -std::numeric_limits<double>::infinity();
+        double min_b = std::numeric_limits<double>::infinity();
+        double max_b = -std::numeric_limits<double>::infinity();
+        for (const auto &p : uv) {
+            const double a = p.u * c + p.v * s;
+            const double b = -p.u * s + p.v * c;
+            min_a = std::min(min_a, a);
+            max_a = std::max(max_a, a);
+            min_b = std::min(min_b, b);
+            max_b = std::max(max_b, b);
+        }
+
+        const double extent_a = max_a - min_a;
+        const double extent_b = max_b - min_b;
+        const double area = extent_a * extent_b;
+        if (area < best_area) {
+            best_area = area;
+            best.angle_rad = theta;
+            best.extent_a = extent_a;
+            best.extent_b = extent_b;
+            best.mid_a = 0.5 * (min_a + max_a);
+            best.mid_b = 0.5 * (min_b + max_b);
+        }
+    }
+
+    return best;
+}
+
+/* RANSAC plane model that only scores hypotheses whose inliers actually look
+ * like a cube face.
+ *
+ * Stock SACSegmentation scores by inlier count alone, so a ground or wall
+ * plane spanning the search cone outbids the face and the size prior only
+ * gets applied afterwards, once the good hypothesis has already lost, been
+ * subtracted from the remaining cloud, and burned one of the max_planes
+ * slots. Folding the bound into the score means RANSAC can only ever win with
+ * a face-shaped candidate.
+ *
+ * Only countWithinDistance() is overridden. getInliers() still comes from the
+ * base selectWithinDistance(), i.e. the *untrimmed* plane inlier set -- which
+ * is what the caller wants, since it subtracts those from the remaining cloud
+ * and the strays should go with them. */
+class BoundedPlaneModel : public pcl::SampleConsensusModelPlane<pcl::PointXYZ>
+{
+public:
+    using Base = pcl::SampleConsensusModelPlane<pcl::PointXYZ>;
+    using PointCloudConstPtr = typename Base::PointCloudConstPtr;
+
+    BoundedPlaneModel(
+        const PointCloudConstPtr &cloud,
+        double max_short_extent_m,
+        double max_long_extent_m,
+        double core_radius_m,
+        double max_outside_fraction,
+        double angle_step_rad,
+        const PointCloudConstPtr &context_cloud,
+        int embedded_min_bin_points,
+        int embedded_min_occupied_bins,
+        bool require_vertical_long_axis,
+        double vertical_long_axis_max_deg,
+        double top_normal_z_min)
+        : Base(cloud),
+          max_short_extent_m_(max_short_extent_m),
+          max_long_extent_m_(max_long_extent_m),
+          core_radius_m_(core_radius_m),
+          max_outside_fraction_(max_outside_fraction),
+          angle_step_rad_(angle_step_rad),
+          context_cloud_(context_cloud),
+          embedded_min_bin_points_(embedded_min_bin_points),
+          embedded_min_occupied_bins_(embedded_min_occupied_bins),
+          require_vertical_long_axis_(require_vertical_long_axis),
+          vertical_long_axis_min_cos_(
+              std::cos(vertical_long_axis_max_deg * M_PI / 180.0)),
+          top_normal_z_min_(top_normal_z_min)
+    {
+    }
+
+    std::size_t countWithinDistance(
+        const Eigen::VectorXf &coefficients,
+        const double threshold) const override
+    {
+        if (coefficients.size() < 4) {
+            return 0;
+        }
+
+        Eigen::Vector3f normal(coefficients[0], coefficients[1], coefficients[2]);
+        const float normal_norm = normal.norm();
+        if (normal_norm < 1e-9f) {
+            return 0;
+        }
+        const float inv_norm = 1.0f / normal_norm;
+        normal *= inv_norm;
+
+        // Arbitrary orthonormal basis of the candidate plane. The measurement
+        // below does not depend on which one we pick.
+        Eigen::Vector3f reference(0.0f, 0.0f, 1.0f);
+        if (std::fabs(normal.z()) > 0.9f) {
+            reference = Eigen::Vector3f(1.0f, 0.0f, 0.0f);
+        }
+        Eigen::Vector3f u_axis = normal.cross(reference);
+        if (u_axis.norm() < 1e-6f) {
+            return 0;
+        }
+        u_axis.normalize();
+        const Eigen::Vector3f v_axis = normal.cross(u_axis).normalized();
+
+        std::vector<UV> uv;
+        uv.reserve(this->indices_->size());
+        for (const auto index : *this->indices_) {
+            const auto &pt = (*this->input_)[index];
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+                continue;
+            }
+
+            const float distance =
+                std::fabs(
+                    coefficients[0] * pt.x +
+                    coefficients[1] * pt.y +
+                    coefficients[2] * pt.z +
+                    coefficients[3]) * inv_norm;
+            if (distance >= threshold) {
+                continue;
+            }
+
+            const Eigen::Vector3f p(pt.x, pt.y, pt.z);
+            uv.push_back({p.dot(u_axis), p.dot(v_axis)});
+        }
+
+        if (uv.empty()) {
+            return 0;
+        }
+
+        UV centre;
+        const double outside_fraction = trim_uv_to_core(uv, core_radius_m_, centre);
+        if (uv.empty()) {
+            return 0;
+        }
+
+        // A cube face's return is concentrated in one face-sized patch. A
+        // ground or wall plane's is not, however face-sized its core happens
+        // to look. This only sees the tightly gated candidate cloud, so it
+        // catches sprawl but not a patch cropped down to face size -- that is
+        // what the context check below is for.
+        if (outside_fraction > max_outside_fraction_) {
+            return 0;
+        }
+
+        const PlaneRect rect = min_area_rect(uv, angle_step_rad_);
+        if (max_short_extent_m_ > 0.0 && rect.short_extent() > max_short_extent_m_) {
+            return 0;
+        }
+        if (max_long_extent_m_ > 0.0 && rect.long_extent() > max_long_extent_m_) {
+            return 0;
+        }
+
+        /* A cube standing on the ground has its side faces upright: the long
+         * edge (cube_height_m) runs with gravity and the short edge
+         * (cube_width_m) across it. Clutter fits have no such preference, so
+         * requiring the long axis to be vertical throws out the tilted slivers
+         * that otherwise measure face-sized.
+         *
+         * Skipped for near-horizontal planes: a top face's long axis is
+         * horizontal by construction, so the test would reject every one.
+         *
+         * Note this is the cloud's z, as everywhere else in this node (see
+         * top_vertical_dot_min), so it inherits any LiDAR mounting tilt. */
+        if (require_vertical_long_axis_ &&
+            std::fabs(normal.z()) < top_normal_z_min_) {
+            const float cos_t = std::cos(static_cast<float>(rect.angle_rad));
+            const float sin_t = std::sin(static_cast<float>(rect.angle_rad));
+            const Eigen::Vector3f long_axis =
+                rect.extent_a >= rect.extent_b
+                    ? (u_axis * cos_t + v_axis * sin_t)
+                    : (u_axis * -sin_t + v_axis * cos_t);
+            if (std::fabs(long_axis.z()) < vertical_long_axis_min_cos_) {
+                return 0;
+            }
+        }
+
+        // Face-sized, but is it a face, or just a face-sized window onto
+        // something bigger? Deliberately last: it is the only test that scans
+        // a second cloud, and by here few hypotheses are left to scan for.
+        if (is_embedded_in_larger_surface(
+                normal, static_cast<float>(coefficients[3]) * inv_norm,
+                u_axis, v_axis, centre, threshold)) {
+            return 0;
+        }
+
+        // Score on the *core* count, so that among two admissible candidates
+        // RANSAC prefers the more compact one rather than rating them equal.
+        return uv.size();
+    }
+
+private:
+    /* A cube face is a bounded object: its edges are real edges. Cut a
+     * face-sized window out of a wall and it measures like a face, because the
+     * candidate cloud has already been gated to a ~0.3 m radial band and a
+     * cone around the landmark -- the rest of the wall was cropped away before
+     * RANSAC ever saw it. So look again in the wider context cloud (the whole
+     * landmark neighbourhood, ungated): does this plane keep finding coplanar
+     * support well beyond the face?
+     *
+     * Counting that support is not enough on its own. A cube standing on the
+     * ground has its own face plane clipping the ground along the base edge,
+     * which contributes a long coplanar strip through the true face. The
+     * difference is directional: a strip leaves support in ~two opposite
+     * directions, whereas a window cut from a larger surface has support all
+     * around it. So bin the outside support by bearing about the face centre
+     * and reject on how many bins are occupied, not on how many points there
+     * are. */
+    bool is_embedded_in_larger_surface(
+        const Eigen::Vector3f &normal,
+        float plane_d,
+        const Eigen::Vector3f &u_axis,
+        const Eigen::Vector3f &v_axis,
+        const UV &centre,
+        const double threshold) const
+    {
+        if (!context_cloud_ || context_cloud_->empty() ||
+            embedded_min_occupied_bins_ <= 0) {
+            return false;
+        }
+
+        constexpr int kBins = 8;
+        if (embedded_min_occupied_bins_ > kBins) {
+            return false;
+        }
+
+        // The face centre, as a point on the plane: {u, v, n} is orthonormal
+        // and every plane point satisfies p.n = -d.
+        const Eigen::Vector3f face_centre =
+            u_axis * static_cast<float>(centre.u) +
+            v_axis * static_cast<float>(centre.v) -
+            normal * plane_d;
+
+        const double core_radius_sq = core_radius_m_ * core_radius_m_;
+        int bin_counts[kBins] = {0};
+        int occupied = 0;
+
+        for (const auto &q : context_cloud_->points) {
+            if (!std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z)) {
+                continue;
+            }
+            const Eigen::Vector3f p(q.x, q.y, q.z);
+            if (std::fabs(normal.dot(p) + plane_d) >= threshold) {
+                continue;
+            }
+
+            const Eigen::Vector3f rel = p - face_centre;
+            const double du = rel.dot(u_axis);
+            const double dv = rel.dot(v_axis);
+            const double radius_sq = du * du + dv * dv;
+            if (radius_sq <= core_radius_sq) {
+                continue;   // part of the face patch itself
+            }
+
+            const double bearing = std::atan2(dv, du) + M_PI;   // [0, 2*pi)
+            int bin = static_cast<int>(bearing * kBins / (2.0 * M_PI));
+            bin = std::max(0, std::min(kBins - 1, bin));
+            if (++bin_counts[bin] == embedded_min_bin_points_ &&
+                ++occupied >= embedded_min_occupied_bins_) {
+                // Verdict already decided; the rest of the scan cannot undo it.
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    double max_short_extent_m_;
+    double max_long_extent_m_;
+    double core_radius_m_;
+    double max_outside_fraction_;
+    double angle_step_rad_;
+    PointCloudConstPtr context_cloud_;
+    int embedded_min_bin_points_;
+    int embedded_min_occupied_bins_;
+    bool require_vertical_long_axis_;
+    double vertical_long_axis_min_cos_;
+    double top_normal_z_min_;
+};
+}
 
 class DetectCubeNode : public rclcpp::Node {
 public:
     DetectCubeNode()
         : rclcpp::Node("detect_cube_node"), tf_buffer_(this->get_clock()) {
         this->declare_parameter<double>("distance_threshold_inliers", 0.04);
-        this->declare_parameter<int>("max_iterations", 150);
+        this->declare_parameter<int>("max_iterations", 1000);
+        /* Bounded RANSAC: score plane hypotheses by how well their trimmed
+         * inlier footprint fits a cube face, instead of by raw inlier count.
+         * Disable to fall back to stock pcl::SACSegmentation. */
+        this->declare_parameter<bool>("ransac_bounded_plane_enable", true);
+        // 0 => derive from cube_width_m / cube_height_m + face_dimension_tolerance_m.
+        this->declare_parameter<double>("ransac_max_plane_short_extent_m", 0.0);
+        this->declare_parameter<double>("ransac_max_plane_long_extent_m", 0.0);
+        /* Core radius, as a multiple of the face's circumscribed radius. The
+         * core is what gets measured; everything outside it is treated as
+         * coplanar clutter (typically the strip where the face plane, extended,
+         * slices the ground). */
+        this->declare_parameter<double>("ransac_core_radius_margin", 1.0);
+        /* Max share of a hypothesis's inliers allowed to fall outside the core
+         * before it is rejected as not-a-face. */
+        this->declare_parameter<double>("ransac_max_outside_fraction", 0.35);
+        // Orientation sweep step for the rectangle fit inside RANSAC scoring.
+        this->declare_parameter<double>("ransac_bbox_angle_step_deg", 5.0);
+        /* Reject a face-sized candidate that is really a window onto a larger
+         * coplanar surface, by looking for coplanar support all around it in
+         * the ungated landmark neighbourhood. */
+        this->declare_parameter<bool>("ransac_embedded_veto_enable", true);
+        // Coplanar points needed in a 45 deg bearing sector to count it occupied.
+        this->declare_parameter<int>("ransac_embedded_min_bin_points", 3);
+        // Occupied sectors (of 8) at which the candidate is called embedded.
+        this->declare_parameter<int>("ransac_embedded_min_occupied_bins", 5);
+        // Stride the context cloud down to this many points; 0 = no cap.
+        this->declare_parameter<int>("ransac_context_max_points", 600);
+        /* Require a side-face candidate's long edge to run with gravity, as a
+         * cube standing on the ground does. Near-horizontal planes (top-face
+         * candidates) are exempt -- their long axis is horizontal. */
+        this->declare_parameter<bool>("ransac_require_vertical_long_axis", true);
+        this->declare_parameter<double>("ransac_vertical_long_axis_max_deg", 20.0);
         this->declare_parameter<double>("t", 0.25);
-        this->declare_parameter<int>("min_inliers", 10);
+        this->declare_parameter<int>("min_inliers", 40);
         this->declare_parameter<int>("max_lines", 4);
         this->declare_parameter<double>("cube_width_m", 0.25);
         this->declare_parameter<double>("cube_height_m", 0.32);
@@ -125,6 +544,9 @@ public:
         this->declare_parameter<bool>("accept_best_plane_fallback", false);
         this->declare_parameter<double>("process_rate_hz", 8.0);
         this->declare_parameter<double>("marker_lifetime_sec", 1.0);
+        // Debug: publish every plane RANSAC returns (accepted or not) on
+        // /visualization/ransac_candidate_planes, with dimensions and scores.
+        this->declare_parameter<bool>("publish_candidate_plane_markers", true);
         // Half-width (m) of radial band: |r_point − r_expected| < tol, where r_expected is from map landmark → LiDAR frame.
         this->declare_parameter<double>("max_distance_from_aruco", 0.3);
         // Map frame for landmark_map_pos_* (same as lidar_phi_filter_node / multiview_aruco).
@@ -174,9 +596,54 @@ public:
         this->get_parameter("face_score_tolerance_multiplier", face_score_tolerance_multiplier_);
         this->get_parameter("max_face_diagonal_multiplier", max_face_diagonal_multiplier_);
         this->get_parameter("max_center_error_m", max_center_error_m_);
+
+        this->get_parameter(
+            "ransac_bounded_plane_enable", ransac_bounded_plane_enable_);
+        this->get_parameter(
+            "ransac_max_plane_short_extent_m", ransac_max_plane_short_extent_m_);
+        this->get_parameter(
+            "ransac_max_plane_long_extent_m", ransac_max_plane_long_extent_m_);
+        this->get_parameter(
+            "ransac_core_radius_margin", ransac_core_radius_margin_);
+        this->get_parameter(
+            "ransac_max_outside_fraction", ransac_max_outside_fraction_);
+        this->get_parameter(
+            "ransac_bbox_angle_step_deg", ransac_bbox_angle_step_deg_);
+        this->get_parameter(
+            "ransac_embedded_veto_enable", ransac_embedded_veto_enable_);
+        this->get_parameter(
+            "ransac_embedded_min_bin_points", ransac_embedded_min_bin_points_);
+        this->get_parameter(
+            "ransac_embedded_min_occupied_bins", ransac_embedded_min_occupied_bins_);
+        this->get_parameter(
+            "ransac_context_max_points", ransac_context_max_points_);
+        this->get_parameter(
+            "ransac_require_vertical_long_axis", ransac_require_vertical_long_axis_);
+        this->get_parameter(
+            "ransac_vertical_long_axis_max_deg", ransac_vertical_long_axis_max_deg_);
+        /* Resolve the extent bounds once: 0 means "derive from the cube
+         * geometry", so the bounds track cube_width_m / cube_height_m without
+         * having to be restated in the launch file. */
+        if (ransac_max_plane_short_extent_m_ <= 0.0) {
+            ransac_max_plane_short_extent_m_ =
+                cube_width_m_ + face_dimension_tolerance_m_;
+        }
+        if (ransac_max_plane_long_extent_m_ <= 0.0) {
+            ransac_max_plane_long_extent_m_ =
+                std::max(cube_width_m_, cube_height_m_) + face_dimension_tolerance_m_;
+        }
+        /* Radius of the circle circumscribing the largest admissible face:
+         * big enough that a whole face fits inside the core, small enough that
+         * a ground/wall strip running through the face plane is cut off. */
+        ransac_core_radius_m_ =
+            ransac_core_radius_margin_ * 0.5 * std::hypot(
+                ransac_max_plane_short_extent_m_, ransac_max_plane_long_extent_m_);
+
         this->get_parameter("accept_best_plane_fallback", accept_best_plane_fallback_);
         this->get_parameter("process_rate_hz", process_rate_hz_);
         this->get_parameter("marker_lifetime_sec", marker_lifetime_sec_);
+        this->get_parameter(
+            "publish_candidate_plane_markers", publish_candidate_plane_markers_);
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
         this->get_parameter("map_frame", map_frame_);
         this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
@@ -224,6 +691,8 @@ public:
         lines_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, qos);
         markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/visualization/detected_cube_planes", qos);
         centre_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/visualization/cube_centers", qos);
+        candidate_planes_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/visualization/ransac_candidate_planes", qos);
         cube_markers_pub_ = create_publisher<ros2_aruco_interfaces::msg::ArucoMarkers>("/perception/lidar_cube_markers", qos);
 
         aruco_subscriber_ = create_subscription<ros2_aruco_interfaces::msg::ArucoMarkers>(
@@ -476,6 +945,8 @@ private:
         double top_score{std::numeric_limits<double>::infinity()};
         bool is_side{false};
         bool is_top{false};
+        // Why the plane was not kept as a cube face ("" when accepted).
+        std::string reject_reason;
         size_t inlier_count{0};
         pcl::PointIndices::Ptr indices;
         pcl::PointCloud<pcl::PointXYZ>::Ptr inliers;
@@ -597,8 +1068,90 @@ private:
         return false;
     }
 
+    /* RANSAC with the cube-face size prior folded into the hypothesis score,
+     * via BoundedPlaneModel. pcl::RandomSampleConsensus has no equivalent of
+     * SACSegmentation's setOptimizeCoefficients(true), so the refit is done
+     * here by hand -- and re-scored afterwards, because a least-squares refit
+     * over the inliers can perfectly well tilt an admissible plane into an
+     * oversized one. */
+    bool fit_bounded_plane(
+        const pcl::PointCloud<pcl::PointXYZ>::Ptr &remaining,
+        const pcl::PointCloud<pcl::PointXYZ>::Ptr &context_cloud,
+        int min_inliers,
+        pcl::PointIndices &inliers,
+        pcl::ModelCoefficients &coefficients)
+    {
+        auto model = pcl::SampleConsensusModel<pcl::PointXYZ>::Ptr(
+            new BoundedPlaneModel(
+                remaining,
+                ransac_max_plane_short_extent_m_,
+                ransac_max_plane_long_extent_m_,
+                ransac_core_radius_m_,
+                ransac_max_outside_fraction_,
+                ransac_bbox_angle_step_deg_ * M_PI / 180.0,
+                ransac_embedded_veto_enable_
+                    ? context_cloud
+                    : pcl::PointCloud<pcl::PointXYZ>::ConstPtr(),
+                ransac_embedded_min_bin_points_,
+                ransac_embedded_min_occupied_bins_,
+                ransac_require_vertical_long_axis_,
+                ransac_vertical_long_axis_max_deg_,
+                top_vertical_dot_min_));
+
+        pcl::RandomSampleConsensus<pcl::PointXYZ> ransac(model);
+        ransac.setDistanceThreshold(distance_threshold_inliers);
+        ransac.setMaxIterations(max_iterations_);
+
+        if (!ransac.computeModel()) {
+            /* Every hypothesis scored zero: no minimal sample produced a
+             * face-sized plane. Expected on clutter, but if this is frequent
+             * on frames that should contain a cube, the extent bounds or
+             * ransac_extent_trim_margin are too tight. */
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "[detect_cube PLANES] bounded RANSAC found no face-sized plane "
+                "in %zu points (short<=%.3f long<=%.3f core_r=%.3f outside<=%.2f)",
+                remaining->size(),
+                ransac_max_plane_short_extent_m_,
+                ransac_max_plane_long_extent_m_,
+                ransac_core_radius_m_,
+                ransac_max_outside_fraction_);
+            return false;
+        }
+
+        pcl::Indices ransac_inliers;
+        ransac.getInliers(ransac_inliers);
+
+        Eigen::VectorXf coeff;
+        ransac.getModelCoefficients(coeff);
+        if (ransac_inliers.size() < static_cast<size_t>(min_inliers) ||
+            coeff.size() < 4) {
+            return false;
+        }
+
+        Eigen::VectorXf optimized_coeff;
+        model->optimizeModelCoefficients(ransac_inliers, coeff, optimized_coeff);
+
+        pcl::Indices optimized_inliers;
+        model->selectWithinDistance(
+            optimized_coeff, distance_threshold_inliers, optimized_inliers);
+
+        // Keep the refit only if it stayed inside the size bounds.
+        const std::size_t optimized_score =
+            model->countWithinDistance(optimized_coeff, distance_threshold_inliers);
+        if (optimized_score >= static_cast<size_t>(min_inliers)) {
+            coeff = optimized_coeff;
+            ransac_inliers = std::move(optimized_inliers);
+        }
+
+        inliers.indices = std::move(ransac_inliers);
+        coefficients.values.assign(coeff.data(), coeff.data() + coeff.size());
+        return true;
+    }
+
     bool extract_plane(
         pcl::PointCloud<pcl::PointXYZ>::Ptr remaining,
+        const pcl::PointCloud<pcl::PointXYZ>::Ptr &context_cloud,
         int min_inliers,
         PlaneDetection &plane)
     {
@@ -606,17 +1159,25 @@ private:
             return false;
         }
 
-        pcl::SACSegmentation<pcl::PointXYZ> seg;
-        seg.setOptimizeCoefficients(true);
-        seg.setModelType(pcl::SACMODEL_PLANE);
-        seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setDistanceThreshold(distance_threshold_inliers);
-        seg.setMaxIterations(max_iterations_);
-        seg.setInputCloud(remaining);
-
         pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
         pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients());
-        seg.segment(*inliers, *coefficients);
+
+        if (ransac_bounded_plane_enable_) {
+            if (!fit_bounded_plane(
+                    remaining, context_cloud, min_inliers, *inliers, *coefficients)) {
+                return false;
+            }
+        } else {
+            pcl::SACSegmentation<pcl::PointXYZ> seg;
+            seg.setOptimizeCoefficients(true);
+            seg.setModelType(pcl::SACMODEL_PLANE);
+            seg.setMethodType(pcl::SAC_RANSAC);
+            seg.setDistanceThreshold(distance_threshold_inliers);
+            seg.setMaxIterations(max_iterations_);
+            seg.setInputCloud(remaining);
+            seg.segment(*inliers, *coefficients);
+        }
+
         if (inliers->indices.size() < static_cast<size_t>(min_inliers) ||
             coefficients->values.size() < 4) {
             return false;
@@ -667,28 +1228,58 @@ private:
         }
         Vec3 v_axis = normalize_vec(cross_vec(normal, u_axis));
 
-        double min_u = std::numeric_limits<double>::infinity();
-        double max_u = -std::numeric_limits<double>::infinity();
-        double min_v = std::numeric_limits<double>::infinity();
-        double max_v = -std::numeric_limits<double>::infinity();
+        /* (u_axis, v_axis) above is an *arbitrary* in-plane frame: for a
+         * vertical side face it happens to come out gravity-aligned, but for
+         * a top face the normal is near-vertical, so it gets pinned to the
+         * LiDAR x/y axes instead of the cube's yaw. Measuring a bounding box
+         * directly in it therefore reports a 0.25 x 0.25 top face yawed 45 deg
+         * as 0.354 x 0.354. Use it only to project to 2D, then let
+         * min_area_rect() recover the true edge-aligned extents. */
+        std::vector<UV> uv;
+        uv.reserve(plane.inliers->size());
         for (const auto &pt : plane.inliers->points) {
-            const Vec3 p{pt.x, pt.y, pt.z};
-            const Vec3 rel = sub_vec(p, centroid);
-            const double u = dot_vec(rel, u_axis);
-            const double v = dot_vec(rel, v_axis);
-            min_u = std::min(min_u, u);
-            max_u = std::max(max_u, u);
-            min_v = std::min(min_v, v);
-            max_v = std::max(max_v, v);
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+                continue;
+            }
+            const Vec3 rel = sub_vec({pt.x, pt.y, pt.z}, centroid);
+            uv.push_back({dot_vec(rel, u_axis), dot_vec(rel, v_axis)});
         }
+        if (uv.empty()) {
+            return false;
+        }
+        UV core_centre;
+        trim_uv_to_core(uv, ransac_core_radius_m_, core_centre);
+        if (uv.empty()) {
+            return false;
+        }
+
+        /* Finer sweep than the one inside RANSAC scoring: this runs once per
+         * accepted plane rather than once per hypothesis, and its output feeds
+         * the side/top size gating below. */
+        constexpr double kMeasureAngleStepRad = 1.0 * M_PI / 180.0;
+        const PlaneRect rect = min_area_rect(uv, kMeasureAngleStepRad);
+
+        /* Re-express the in-plane frame along the rectangle's own edges and
+         * recentre on the rectangle, so the debug markers drawn from
+         * (centroid, u_axis, v_axis, extent_u, extent_v) match the dimensions
+         * reported here. */
+        const double cos_t = std::cos(rect.angle_rad);
+        const double sin_t = std::sin(rect.angle_rad);
+        const Vec3 a_axis = add_vec(
+            scale_vec(u_axis, cos_t), scale_vec(v_axis, sin_t));
+        const Vec3 b_axis = add_vec(
+            scale_vec(u_axis, -sin_t), scale_vec(v_axis, cos_t));
+        centroid = add_vec(
+            centroid,
+            add_vec(scale_vec(a_axis, rect.mid_a), scale_vec(b_axis, rect.mid_b)));
 
         plane.normal = normal;
         plane.centroid = centroid;
-        plane.u_axis = u_axis;
-        plane.v_axis = v_axis;
+        plane.u_axis = a_axis;
+        plane.v_axis = b_axis;
         plane.d = d;
-        plane.extent_u = std::max(0.0, max_u - min_u);
-        plane.extent_v = std::max(0.0, max_v - min_v);
+        plane.extent_u = std::max(0.0, rect.extent_a);
+        plane.extent_v = std::max(0.0, rect.extent_b);
         plane.dim_short = std::min(plane.extent_u, plane.extent_v);
         plane.dim_long = std::max(plane.extent_u, plane.extent_v);
 
@@ -726,6 +1317,20 @@ private:
             top_score <= face_score_tolerance_multiplier_ * face_dimension_tolerance_m_ &&
             (std::fabs(plane.normal.z) >= top_vertical_dot_min_ ||
              top_score + 0.03 < side_score);
+
+        plane.reject_reason.clear();
+        if (!plane.is_side && !plane.is_top) {
+            if (!plausible_face_extent) {
+                plane.reject_reason = "extent";
+            } else if (!plausible_side_size && !plausible_top_size) {
+                plane.reject_reason = "dims";
+            } else if (plausible_top_size &&
+                       std::fabs(plane.normal.z) < top_vertical_dot_min_) {
+                plane.reject_reason = "score/tilt";
+            } else {
+                plane.reject_reason = "score";
+            }
+        }
 
         return true;
     }
@@ -782,6 +1387,124 @@ private:
         normal_marker.points.push_back(to_point_msg(add_vec(
             plane.centroid, scale_vec(plane.normal, 0.18))));
         markers.markers.push_back(normal_marker);
+    }
+
+    // Debug visualization of every plane RANSAC returned for one tag, before
+    // and independently of the side/top selection logic. Accepted planes are
+    // drawn in green (side) or blue (top), rejected ones in red, each labelled
+    // with its inlier count, measured dimensions and face scores.
+    void append_candidate_plane_markers(
+        const PlaneDetection &plane,
+        int64_t aruco_id,
+        int plane_idx,
+        const std_msgs::msg::Header &header,
+        visualization_msgs::msg::MarkerArray &markers)
+    {
+        const int marker_id = static_cast<int>(
+            (static_cast<int64_t>(aruco_id) * 100 + plane_idx) & 0x7fffffff);
+
+        std_msgs::msg::ColorRGBA color;
+        color.a = 1.0f;
+        if (plane.is_top) {
+            color.r = 0.1f;
+            color.g = 0.4f;
+            color.b = 1.0f;
+        } else if (plane.is_side) {
+            color.r = 0.0f;
+            color.g = 0.9f;
+            color.b = 0.2f;
+        } else {
+            color.r = 1.0f;
+            color.g = 0.15f;
+            color.b = 0.1f;
+        }
+
+        const Vec3 du = scale_vec(plane.u_axis, plane.extent_u * 0.5);
+        const Vec3 dv = scale_vec(plane.v_axis, plane.extent_v * 0.5);
+        const Vec3 c = plane.centroid;
+        const Vec3 corners[4] = {
+            add_vec(add_vec(c, du), dv),
+            add_vec(sub_vec(c, du), dv),
+            sub_vec(sub_vec(c, du), dv),
+            sub_vec(add_vec(c, du), dv)
+        };
+
+        visualization_msgs::msg::Marker outline;
+        outline.header = header;
+        outline.ns = "ransac_candidate_outlines";
+        outline.id = marker_id;
+        outline.type = visualization_msgs::msg::Marker::LINE_LIST;
+        outline.action = visualization_msgs::msg::Marker::ADD;
+        outline.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_sec_);
+        outline.scale.x = 0.01;
+        outline.color = color;
+        for (int i = 0; i < 4; ++i) {
+            outline.points.push_back(to_point_msg(corners[i]));
+            outline.points.push_back(to_point_msg(corners[(i + 1) % 4]));
+        }
+        markers.markers.push_back(outline);
+
+        visualization_msgs::msg::Marker normal_marker;
+        normal_marker.header = header;
+        normal_marker.ns = "ransac_candidate_normals";
+        normal_marker.id = marker_id;
+        normal_marker.type = visualization_msgs::msg::Marker::ARROW;
+        normal_marker.action = visualization_msgs::msg::Marker::ADD;
+        normal_marker.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_sec_);
+        normal_marker.scale.x = 0.01;
+        normal_marker.scale.y = 0.02;
+        normal_marker.scale.z = 0.03;
+        normal_marker.color = color;
+        normal_marker.points.push_back(to_point_msg(plane.centroid));
+        normal_marker.points.push_back(to_point_msg(add_vec(
+            plane.centroid, scale_vec(plane.normal, 0.12))));
+        markers.markers.push_back(normal_marker);
+
+        if (plane.inliers && !plane.inliers->empty()) {
+            visualization_msgs::msg::Marker points;
+            points.header = header;
+            points.ns = "ransac_candidate_inliers";
+            points.id = marker_id;
+            points.type = visualization_msgs::msg::Marker::POINTS;
+            points.action = visualization_msgs::msg::Marker::ADD;
+            points.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_sec_);
+            points.scale.x = 0.02;
+            points.scale.y = 0.02;
+            points.color = color;
+            points.color.a = 0.85f;
+            points.pose.orientation.w = 1.0;
+            points.points.reserve(plane.inliers->size());
+            for (const auto &pt : plane.inliers->points) {
+                if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
+                    continue;
+                }
+                points.points.push_back(to_point_msg({pt.x, pt.y, pt.z}));
+            }
+            markers.markers.push_back(points);
+        }
+
+        visualization_msgs::msg::Marker label;
+        label.header = header;
+        label.ns = "ransac_candidate_labels";
+        label.id = marker_id;
+        label.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        label.action = visualization_msgs::msg::Marker::ADD;
+        label.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_sec_);
+        label.scale.z = 0.05;
+        label.color = color;
+        label.pose.orientation.w = 1.0;
+        label.pose.position = to_point_msg(add_vec(
+            plane.centroid, {0.0, 0.0, 0.5 * plane.extent_v + 0.06}));
+        char text[256];
+        std::snprintf(
+            text, sizeof(text),
+            "id=%ld p%d %s\nn=%zu short=%.3f long=%.3f\nside=%.3f top=%.3f nz=%.2f",
+            static_cast<long>(aruco_id), plane_idx,
+            plane.is_top ? "TOP" : (plane.is_side ? "SIDE" : plane.reject_reason.c_str()),
+            plane.inlier_count, plane.dim_short, plane.dim_long,
+            plane.side_score, plane.top_score, plane.normal.z);
+        label.text = text;
+        markers.markers.push_back(label);
     }
 
     void detect_planes(const sensor_msgs::msg::PointCloud2 &cloud_msg)
@@ -869,6 +1592,13 @@ private:
 
         visualization_msgs::msg::MarkerArray markers;
         visualization_msgs::msg::MarkerArray centres;
+        visualization_msgs::msg::MarkerArray candidate_markers;
+        if (publish_candidate_plane_markers_) {
+            visualization_msgs::msg::Marker clear_all;
+            clear_all.header = cloud_msg.header;
+            clear_all.action = visualization_msgs::msg::Marker::DELETEALL;
+            candidate_markers.markers.push_back(clear_all);
+        }
         ros2_aruco_interfaces::msg::ArucoMarkers cube_msg;
         pcl::PointCloud<pcl::PointXYZ>::Ptr run_plane_inliers(
             new pcl::PointCloud<pcl::PointXYZ>());
@@ -912,6 +1642,13 @@ private:
 
             pcl::PointCloud<pcl::PointXYZ>::Ptr candidate_cloud(
                 new pcl::PointCloud<pcl::PointXYZ>());
+            /* The same neighbourhood without the radial/angular gates. The
+             * gates crop a wall down to roughly face size, which is exactly
+             * what makes a face-sized patch of one indistinguishable from a
+             * cube face; the veto in BoundedPlaneModel needs to see what was
+             * cropped away. */
+            pcl::PointCloud<pcl::PointXYZ>::Ptr context_cloud(
+                new pcl::PointCloud<pcl::PointXYZ>());
             size_t stage_pass_radial = 0;
             size_t stage_pass_both = 0;
             for (size_t point_idx = 0; point_idx < full_cloud_->points.size(); ++point_idx) {
@@ -922,6 +1659,7 @@ private:
                 if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) {
                     continue;
                 }
+                context_cloud->push_back(pt);
                 const double r_point = std::hypot(
                     static_cast<double>(pt.x), static_cast<double>(pt.y));
                 if (have_expected_landmark &&
@@ -939,6 +1677,25 @@ private:
                     ++stage_pass_both;
                     candidate_cloud->push_back(pt);
                 }
+            }
+
+            /* The veto asks a coarse question -- is there coplanar support in
+             * most bearing sectors -- so it needs coverage, not density. Cap
+             * the scan cost by striding: it runs inside the RANSAC loop, where
+             * the full neighbourhood would dominate the frame budget. */
+            if (ransac_context_max_points_ > 0 &&
+                context_cloud->size() > static_cast<size_t>(ransac_context_max_points_)) {
+                const size_t stride =
+                    (context_cloud->size() +
+                     static_cast<size_t>(ransac_context_max_points_) - 1) /
+                    static_cast<size_t>(ransac_context_max_points_);
+                pcl::PointCloud<pcl::PointXYZ>::Ptr thinned(
+                    new pcl::PointCloud<pcl::PointXYZ>());
+                thinned->reserve(context_cloud->size() / stride + 1);
+                for (size_t i = 0; i < context_cloud->size(); i += stride) {
+                    thinned->push_back(context_cloud->points[i]);
+                }
+                context_cloud.swap(thinned);
             }
 
             if (candidate_cloud->size() < static_cast<size_t>(min_inliers)) {
@@ -962,10 +1719,16 @@ private:
 
             for (int plane_idx = 0; plane_idx < max_planes_; ++plane_idx) {
                 PlaneDetection plane;
-                if (!extract_plane(remaining, min_inliers, plane)) {
+                if (!extract_plane(remaining, context_cloud, min_inliers, plane)) {
                     break;
                 }
                 extracted_planes.push_back(plane);
+
+                if (publish_candidate_plane_markers_) {
+                    append_candidate_plane_markers(
+                        plane, aruco_ids[aruco_idx], plane_idx,
+                        cloud_msg.header, candidate_markers);
+                }
 
                 if (plane.is_side || plane.is_top) {
                     *all_plane_inliers += *plane.inliers;
@@ -1329,6 +2092,9 @@ private:
 
         markers_pub_->publish(markers);
         centre_pub_->publish(centres);
+        if (publish_candidate_plane_markers_) {
+            candidate_planes_pub_->publish(candidate_markers);
+        }
 
         sensor_msgs::msg::PointCloud2 cloud_with_planes;
         pcl::toROSMsg(*run_plane_inliers, cloud_with_planes);
@@ -1366,6 +2132,20 @@ private:
     std::string aruco_topic_;
     double distance_threshold_inliers;
     int max_iterations_;
+    bool ransac_bounded_plane_enable_{true};
+    double ransac_max_plane_short_extent_m_{0.0};
+    double ransac_max_plane_long_extent_m_{0.0};
+    double ransac_core_radius_margin_{1.0};
+    double ransac_max_outside_fraction_{0.35};
+    // Resolved from ransac_core_radius_margin_ x the face circumscribed radius.
+    double ransac_core_radius_m_{0.0};
+    double ransac_bbox_angle_step_deg_{5.0};
+    bool ransac_embedded_veto_enable_{true};
+    int ransac_embedded_min_bin_points_{3};
+    int ransac_embedded_min_occupied_bins_{5};
+    int ransac_context_max_points_{600};
+    bool ransac_require_vertical_long_axis_{true};
+    double ransac_vertical_long_axis_max_deg_{20.0};
     int min_inliers_;
     int max_lines_;
     double t;
@@ -1385,6 +2165,7 @@ private:
     bool accept_best_plane_fallback_;
     double process_rate_hz_;
     double marker_lifetime_sec_;
+    bool publish_candidate_plane_markers_{true};
     double max_distance_from_aruco_;
     double angular_tolerance_deg_;
     std::atomic_bool use_camera_aruco_position_{false};
@@ -1403,6 +2184,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lines_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;      
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr centre_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr candidate_planes_pub_;
     rclcpp::Subscription<ros2_aruco_interfaces::msg::ArucoMarkers>::SharedPtr aruco_subscriber_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr mode_subscriber_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_callback_;

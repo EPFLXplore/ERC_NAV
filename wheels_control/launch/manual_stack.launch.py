@@ -133,12 +133,12 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         launch_arguments={}.items(),
     )
 
-    # nav_cameras_launch_opti = IncludeLaunchDescription(
-    #     launch.launch_description_sources.PythonLaunchDescriptionSource(
-    #         os.path.join(FindPackageShare("camera").find("camera"), "launch", "camera_node_nav.launch.py")
-    #     ),
-    #     launch_arguments={}.items(),
-    # )
+    nav_cameras_launch_opti = IncludeLaunchDescription(
+        launch.launch_description_sources.PythonLaunchDescriptionSource(
+            os.path.join(FindPackageShare("camera").find("camera"), "launch", "camera_node_opt.launch.py")
+        ),
+        launch_arguments={}.items(),
+    )
 
 
 
@@ -238,7 +238,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         motor_cmds_arg,
         homing_arg,
         pub_urdf_arg,
-        launch_lidar_arg,
+        # launch_lidar_arg,
         cs_interface,
         gamepad_interface_node,
         cmd_vel_manager_node,
@@ -250,6 +250,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         custom_local_ekf_node,
         ouster_launch,
         # nav_cameras_launch,
+        nav_cameras_launch_opti,
         # delayed_aruco_launch,
         jetson_stats,
         slip_control_node,

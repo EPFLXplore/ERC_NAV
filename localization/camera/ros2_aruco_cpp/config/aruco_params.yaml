@@ -34,6 +34,7 @@ aruco_node:
       "oak_calibration_depthai_19443010A19E157E00.json",
       "oak_calibration_depthai_19443010816C177E00.json",
       "zed2i.json",
+      "high_fov_top.json",
     ]
 
 lidar_phi_filter_node:

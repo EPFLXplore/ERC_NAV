@@ -1,6 +1,6 @@
 {
   "frame_id": "high_fov_top",
-  "image_topic": "/ROVER/req_camera_cs_top",
+  "image_topic": "/ROVER/feed_camera_cs_top",
   "camera_model": "fisheye",
   "hardware_model": "Aliexpress 130HFOV",
   "intrinsic_matrix": [

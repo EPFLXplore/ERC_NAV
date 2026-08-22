@@ -38,11 +38,16 @@
       <SocketReceiveBufferSize min="8MiB"/>
       <SocketSendBufferSize min="1MiB"/>
 
-      <!-- Allow reliable writers to retain more unacknowledged
-           data during temporary network problems. -->
+      <!-- Small WHC: reliable writers block or drop rather than accumulate a
+           backlog of stale control data. Adaptive backpressure throttles the
+           writer instead of letting the queue grow. -->
       <Watermarks>
-        <WhcHigh>8MiB</WhcHigh>
+        <WhcHigh>512kB</WhcHigh>
+        <WhcLow>16kB</WhcLow>
+        <WhcAdaptive>true</WhcAdaptive>
       </Watermarks>
+
+      <HeartbeatInterval min="20ms" max="250ms"/>
 
     </Internal>
   </Domain>

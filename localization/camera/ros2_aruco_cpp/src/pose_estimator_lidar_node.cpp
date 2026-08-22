@@ -17,6 +17,13 @@
  * (erc_start_pos, backup_erc_map_yaw_rad) instead of waiting forever with an
  * identity map->odom, then continues into Phase 2 as usual.
  *
+ * Phase-2 fallback: the cube pipeline can stay silent (LiDAR down, no cube in
+ * view, every detection killed by the phase-2 yaw gate).  Phase 2 is therefore
+ * bounded by init_cube_timeout_sec: on expiry it completes from the partial
+ * cube samples it has, or -- if there are too few -- from the Phase-1
+ * transform unchanged, and hands map->odom over either way.  Initialization
+ * never blocks on the LiDAR; only its accuracy degrades.
+ *
  * After initialization, the node continuously publishes the rover's map-frame
  * pose from valid marker range/bearing measurements with nonlinear
  * optimization.  It stops owning map->odom at the end of Phase 2: the refined
@@ -100,6 +107,16 @@ static geometry_msgs::msg::Quaternion yaw_to_quat(double yaw)
     q.z = std::sin(hz);
     q.w = std::cos(hz);
     return q;
+}
+
+/* Solver accuracy tiers, measured on the rover: 2 markers up to 1 m of error,
+ * 3 up to 15 cm, 4+ up to 5 cm.  Scales the published sigma about the
+ * 3-marker base. */
+static inline double marker_count_sigma_scale(int n_markers)
+{
+    if (n_markers <= 2) return 2.5;
+    if (n_markers == 3) return 1.0;
+    return 0.33;
 }
 
 static double quat_to_yaw(const geometry_msgs::msg::Quaternion &q)
@@ -260,6 +277,30 @@ public:
         init_camera_timeout_sec_ =
             get_parameter("init_camera_timeout_sec").as_double();
 
+        /* <= 0 disables the timeout (Phase 2 then waits for cubes forever).
+         * On expiry Phase 2 completes from whatever it has -- a partial set of
+         * cube samples, or the Phase-1 transform unchanged -- so a silent
+         * LiDAR/cube pipeline degrades the init instead of stalling it. */
+        declare_parameter<double>("init_cube_timeout_sec", 30.0);
+        init_cube_timeout_sec_ =
+            get_parameter("init_cube_timeout_sec").as_double();
+
+        declare_parameter<double>("phase2_yaw_gate_deg", 10.0);
+        declare_parameter<double>("phase2_backup_yaw_gate_deg", 45.0);
+        const double phase2_yaw_gate_deg =
+            get_parameter("phase2_yaw_gate_deg").as_double();
+        const double phase2_backup_yaw_gate_deg =
+            get_parameter("phase2_backup_yaw_gate_deg").as_double();
+        if (!(phase2_yaw_gate_deg > 0.0) || phase2_yaw_gate_deg > 180.0 ||
+            !(phase2_backup_yaw_gate_deg > 0.0) ||
+            phase2_backup_yaw_gate_deg > 180.0) {
+            throw std::runtime_error(
+                "phase2 yaw gates must be in the interval (0, 180] degrees");
+        }
+        phase2_yaw_gate_rad_ = phase2_yaw_gate_deg * M_PI / 180.0;
+        phase2_backup_yaw_gate_rad_ =
+            phase2_backup_yaw_gate_deg * M_PI / 180.0;
+
         if (std::isfinite(backup_erc_map_yaw_rad_)) {
             RCLCPP_INFO(get_logger(),
                 "Phase-1 fallback armed: backup_erc_map_yaw_rad=%.5f rad "
@@ -287,6 +328,26 @@ public:
                 "(got %.6f m and %.6f deg)",
                 range_sigma_m_, bearing_sigma_deg);
             throw std::runtime_error("invalid nonlinear localization measurement sigmas");
+        }
+
+        /* Sigma published on /aruco_rover_pos for a 3-marker solution; the
+         * 2-marker and 4+-marker tiers are scaled from it (see
+         * marker_count_sigma_scale). */
+        declare_parameter<double>("solution_sigma_xy_m", 0.25);
+        declare_parameter<double>("solution_sigma_yaw_deg", 5.0);
+        solution_sigma_xy_m_ = get_parameter("solution_sigma_xy_m").as_double();
+        const double solution_sigma_yaw_deg =
+            get_parameter("solution_sigma_yaw_deg").as_double();
+        solution_sigma_yaw_rad_ = solution_sigma_yaw_deg * M_PI / 180.0;
+        if (!std::isfinite(solution_sigma_xy_m_) || solution_sigma_xy_m_ <= 0.0 ||
+            !std::isfinite(solution_sigma_yaw_rad_) ||
+            solution_sigma_yaw_rad_ <= 0.0) {
+            RCLCPP_ERROR(
+                get_logger(),
+                "solution_sigma_xy_m and solution_sigma_yaw_deg must both be "
+                "finite and positive (got %.6f m and %.6f deg)",
+                solution_sigma_xy_m_, solution_sigma_yaw_deg);
+            throw std::runtime_error("invalid published solution sigmas");
         }
 
         /* Per-edge outlier gate, chi2 on 2 DOF (range + bearing):
@@ -408,25 +469,20 @@ private:
     /* ================================================================ */
     static constexpr double MAP_SIZE           = 300.0;
     /** Max age (seconds) of last /cube_markers vs /cube_markers_phi to merge. */
-    static constexpr double CUBE_MERGE_TTL_SEC = 0.2;
+    static constexpr double CUBE_MERGE_TTL_SEC = 1.0;
     // Phase 1: camera-bearings-only init samples.
     static constexpr int    NBR_INIT_CALLBACKS_PHASE1 = 5;
     // Phase 2: cube-refined init samples (after Phase-1 TF is broadcast).
     static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 10;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
-    static constexpr double MAX_TRANSLATION_JUMP  = 0.8;
+    static constexpr double MAX_TRANSLATION_JUMP  = 2.5;
     /** 3 DOF need at least 2 range-bearing edges (4 residuals) to be solvable. */
     static constexpr size_t MIN_SOLVER_MARKERS = 2u;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;
-    /** Phase-2 init: max deviation of a marker's yaw_from_start vs the
-     *  phase-1 yaw before the marker is treated as a mislabeled cube. */
-    static constexpr double INIT_YAW_GATE_RAD = 10.0 * M_PI / 180.0;
-    /** Same gate when phase 1 fell back to the hand-alignment backup yaw: the
-     *  reference is a manual aim, not a measurement, so it must tolerate a
-     *  larger alignment error or every phase-2 cube gets rejected. */
-    static constexpr double INIT_YAW_GATE_BACKUP_RAD = 45.0 * M_PI / 180.0;
     /** On timeout, this many real phase-1 samples beat the backup yaw. */
     static constexpr int MIN_PHASE1_SAMPLES_ON_TIMEOUT = 3;
+    /** On timeout, this many cube samples beat keeping the phase-1 TF. */
+    static constexpr int MIN_PHASE2_SAMPLES_ON_TIMEOUT = 3;
     /* Previously used to throttle yaw; throttling after a fresh (x,y) solve
      * leaves heading inconsistent with position (wrong map→odom yaw). */
 
@@ -439,10 +495,16 @@ private:
     std::vector<std::pair<double, double>> landmark_poses_;
     double backup_erc_map_yaw_rad_{std::numeric_limits<double>::quiet_NaN()};
     double init_camera_timeout_sec_{40.0};
+    double init_cube_timeout_sec_{30.0};
+    double phase2_yaw_gate_rad_{10.0 * M_PI / 180.0};
+    double phase2_backup_yaw_gate_rad_{45.0 * M_PI / 180.0};
     double range_sigma_m_{0.20};
     double bearing_sigma_rad_{5.0 * M_PI / 180.0};
     double edge_chi2_reject_{9.210};
     double max_normalized_chi2_{5.0};
+    double solution_sigma_xy_m_{0.1}; // Published 2-sigma for a 3-marker solution; scaled for 2 or 4+ markers.
+
+    double solution_sigma_yaw_rad_{5.0 * M_PI / 180.0};
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
@@ -469,6 +531,10 @@ private:
     /* Phase 1 completed from backup_erc_map_yaw_rad instead of camera samples. */
     bool   phase1_from_backup_{false};
     rclcpp::Time init_start_time_;
+    /** Set when Phase 1 completes; start of the Phase-2 timeout window. */
+    rclcpp::Time phase2_start_time_;
+    /** Cube markers dropped by the phase-2 yaw gate (diagnostic only). */
+    int phase2_gated_markers_{0};
     rclcpp::Time last_callback_time_;
     /** Last accepted handle_marker_message valid marker count (post-init rate-limit bypass). */
     int last_handled_valid_marker_count_{-1};
@@ -592,7 +658,10 @@ private:
     /* ================================================================ */
     /*  Publish /aruco_rover_pos odometry                               */
     /* ================================================================ */
-    void publish_odom(double x, double y, double yaw)
+    /* n_markers = markers actually constraining the solution (solver inliers).
+     * It sets the published sigma: fewer markers, weaker geometry, less trust
+     * downstream in global_nav_kf_2d. */
+    void publish_odom(double x, double y, double yaw, int n_markers)
     {
         nav_msgs::msg::Odometry msg;
         msg.header.stamp = stamp_now(this);
@@ -601,6 +670,15 @@ private:
         msg.pose.pose.position.x = x;
         msg.pose.pose.position.y = y;
         msg.pose.pose.orientation = yaw_to_quat(yaw);
+
+        const double scale = marker_count_sigma_scale(n_markers);
+        const double sigma_xy  = scale * solution_sigma_xy_m_;
+        const double sigma_yaw = scale * solution_sigma_yaw_rad_;
+        // 6x6 row-major over [x y z roll pitch yaw]: fill the x/y/yaw diagonal.
+        msg.pose.covariance[0]  = sigma_xy * sigma_xy;
+        msg.pose.covariance[7]  = sigma_xy * sigma_xy;
+        msg.pose.covariance[35] = sigma_yaw * sigma_yaw;
+
         odom_pub_->publish(msg);
     }
 
@@ -970,7 +1048,8 @@ private:
     /*  data association or a wrong landmark table — not noise.         */
     /* ================================================================ */
     std::optional<Eigen::Vector3d> solve_nonlinear_range_bearing(
-        const std::vector<ValidMarker> &valid_markers)
+        const std::vector<ValidMarker> &valid_markers,
+        int *n_inliers_out = nullptr)
     {
         if (valid_markers.size() < MIN_SOLVER_MARKERS ||
             !std::isfinite(curr_map_base_x_) ||
@@ -1103,6 +1182,7 @@ private:
             "inliers %d/%zu",
             normalized_chi2, chi2_sum, dof, n_inliers, edges.size());
 
+        if (n_inliers_out) *n_inliers_out = n_inliers;
         return result;
     }
 
@@ -1453,10 +1533,11 @@ private:
                  * sample tilts the unfiltered init yaw average. */
                 if (init_phase_ == InitPhase::CUBE && have_phase1_yaw_ref_) {
                     const double yaw_gate = phase1_from_backup_
-                        ? INIT_YAW_GATE_BACKUP_RAD : INIT_YAW_GATE_RAD;
+                        ? phase2_backup_yaw_gate_rad_ : phase2_yaw_gate_rad_;
                     const double yaw_dev =
                         std::fabs(wrap(yaw_from_start - phase1_yaw_ref_));
                     if (yaw_dev > yaw_gate) {
+                        ++phase2_gated_markers_;
                         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
                             "[%s SKIP marker] id=%d yaw_from_start=%.1f deg "
                             "deviates %.1f deg from phase-1 yaw %.1f deg "
@@ -1496,6 +1577,9 @@ private:
         last_handled_valid_marker_count_ = n;
 
         bool is_measurement_valid = false;
+        // Markers behind the published pose; the solver overwrites it with the
+        // inlier count, which is what the published sigma is derived from.
+        int n_solution_markers = n;
         std::optional<geometry_msgs::msg::TransformStamped> transform_msg;
 
         // RCLCPP_INFO(get_logger(),
@@ -1532,7 +1616,8 @@ private:
         /* ============================================================ */
         } else {
             if (n >= 2) {
-                auto pose = solve_nonlinear_range_bearing(valid_markers);
+                int n_inliers = 0;
+                auto pose = solve_nonlinear_range_bearing(valid_markers, &n_inliers);
 
                 if (pose.has_value()) {
                     double dx = pose->x() - curr_map_base_x_;
@@ -1549,6 +1634,7 @@ private:
                         x_estimate_ = pose->x();
                         y_estimate_ = pose->y();
                         yaw_estimate_ = pose->z();
+                        n_solution_markers = n_inliers;
                         solved_new_xy_ = true;
                         time_of_last_pose_ = t_now;
                         measured_new_yaw_ = true;
@@ -1595,7 +1681,8 @@ private:
 
         /* ---- publish odom ---- */
         if (is_measurement_valid)
-            publish_odom(x_estimate_, y_estimate_, yaw_estimate_);
+            publish_odom(x_estimate_, y_estimate_, yaw_estimate_,
+                         n_solution_markers);
 
         /* ---- reset per-callback flags ---- */
         solved_new_xy_ = false;
@@ -1648,9 +1735,13 @@ private:
         phase1_from_backup_ = from_backup;
         tf_broadcaster_->sendTransform(prev_map_odom_tf_.value());
         init_phase_ = InitPhase::CUBE;
+        /* Arm the Phase-2 timeout: check_init_timeout() falls back to this
+         * very transform if no usable cube ever arrives. */
+        phase2_start_time_ = now();
+        phase2_gated_markers_ = 0;
 
         const double yaw_gate_deg =
-            (from_backup ? INIT_YAW_GATE_BACKUP_RAD : INIT_YAW_GATE_RAD)
+            (from_backup ? phase2_backup_yaw_gate_rad_ : phase2_yaw_gate_rad_)
             * 180.0 / M_PI;
         if (from_backup) {
             RCLCPP_WARN(get_logger(),
@@ -1671,6 +1762,18 @@ private:
                 tf_final.transform.translation.x,
                 tf_final.transform.translation.y, yaw_gate_deg);
         }
+
+        if (init_cube_timeout_sec_ > 0.0) {
+            RCLCPP_INFO(get_logger(),
+                "PHASE 2 armed: %d cube samples needed, falling back to this "
+                "transform after %.1f s without them",
+                NBR_INIT_CALLBACKS_PHASE2, init_cube_timeout_sec_);
+        } else {
+            RCLCPP_WARN(get_logger(),
+                "PHASE 2 has no timeout (init_cube_timeout_sec <= 0): the node "
+                "will own map->odom until %d cube samples arrive",
+                NBR_INIT_CALLBACKS_PHASE2);
+        }
     }
 
     /* ================================================================ */
@@ -1682,6 +1785,10 @@ private:
     /* ================================================================ */
     void check_init_timeout()
     {
+        if (init_phase_ == InitPhase::CUBE) {
+            check_cube_timeout();
+            return;
+        }
         if (init_phase_ != InitPhase::CAMERA) return;
         if (!(init_camera_timeout_sec_ > 0.0)) return;
         if ((now() - init_start_time_).seconds() < init_camera_timeout_sec_)
@@ -1722,7 +1829,63 @@ private:
         finalize_phase1(
             build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_),
             /*from_backup=*/true, "no camera landmarks, backup yaw");
-        publish_odom(x_estimate_, y_estimate_, yaw_estimate_);
+        // No marker constrained this pose at all: publish it at the widest tier.
+        publish_odom(x_estimate_, y_estimate_, yaw_estimate_, /*n_markers=*/0);
+    }
+
+    /* ================================================================ */
+    /*  Phase-2 watchdog.  The cube pipeline can stay silent forever    */
+    /*  (LiDAR down, no cube in view, every marker killed by the yaw    */
+    /*  gate).  Without this the node would own map->odom indefinitely  */
+    /*  and global_nav_kf_2d_node would never be seeded, so init        */
+    /*  completes from whatever Phase 2 has and hands over regardless.  */
+    /*  Runs on solver_cbg_ only.                                       */
+    /* ================================================================ */
+    void check_cube_timeout()
+    {
+        if (!(init_cube_timeout_sec_ > 0.0)) return;
+        if ((now() - phase2_start_time_).seconds() < init_cube_timeout_sec_)
+            return;
+
+        /* Some cubes got through: a partial robust average is still a LiDAR
+         * refinement, so it beats the camera-only Phase-1 transform. */
+        if (init_counter_phase2_ >= MIN_PHASE2_SAMPLES_ON_TIMEOUT) {
+            RCLCPP_WARN(get_logger(),
+                "PHASE 2 TIMEOUT after %.1f s with %d/%d cube samples: "
+                "finalizing from the partial set",
+                init_cube_timeout_sec_, init_counter_phase2_,
+                NBR_INIT_CALLBACKS_PHASE2);
+            finalize_phase2(
+                calculate_robust_tf_avg(phase2_tfs_, phase2_yaws_),
+                "timeout, partial cube samples");
+            return;
+        }
+
+        /* prev_map_odom_tf_ is always set in Phase 2 (finalize_phase1 sets it
+         * before switching phase); guard anyway rather than throw. */
+        if (!prev_map_odom_tf_.has_value()) {
+            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+                "PHASE 2 TIMEOUT with no Phase-1 transform to fall back on: "
+                "map->odom stays identity");
+            return;
+        }
+
+        /* No usable cube at all: hand the Phase-1 transform over unchanged.
+         * Degraded (camera-only yaw, position pinned to erc_start_pos) but the
+         * rover is localized and the KF starts correcting it from the
+         * post-init /aruco_rover_pos measurements. */
+        RCLCPP_WARN(get_logger(),
+            "PHASE 2 TIMEOUT after %.1f s with only %d/%d cube samples "
+            "(%d cube markers rejected by the yaw gate): no LiDAR refinement, "
+            "handing the Phase-1 %s transform over as-is",
+            init_cube_timeout_sec_, init_counter_phase2_,
+            NBR_INIT_CALLBACKS_PHASE2, phase2_gated_markers_,
+            phase1_from_backup_ ? "backup-yaw" : "camera");
+
+        finalize_phase2(
+            prev_map_odom_tf_.value(),
+            phase1_from_backup_ ? "timeout, no cubes, phase-1 backup yaw"
+                                : "timeout, no cubes, phase-1 camera TF");
     }
 
     /* ================================================================ */
@@ -1747,9 +1910,21 @@ private:
         if (init_counter_phase2_ < NBR_INIT_CALLBACKS_PHASE2) return;
 
         // Phase 2 complete: refine TF and enter post-init mode.
-        auto refined =
-            calculate_robust_tf_avg(phase2_tfs_, phase2_yaws_);
+        finalize_phase2(
+            calculate_robust_tf_avg(phase2_tfs_, phase2_yaws_),
+            "cube refinement");
+    }
 
+    /* ================================================================ */
+    /*  Commit the final map->odom TF and hand it over to the KF.       */
+    /*  Called with the robust average of the cube samples, or, on the  */
+    /*  Phase-2 timeout, with a partial average or the Phase-1 TF.      */
+    /*  Runs on solver_cbg_ only.                                       */
+    /* ================================================================ */
+    void finalize_phase2(
+        geometry_msgs::msg::TransformStamped refined,
+        const char *reason)
+    {
         if (prev_map_odom_tf_.has_value()) {
             const auto &p1 = prev_map_odom_tf_.value().transform;
             const auto &p2 = refined.transform;
@@ -1771,6 +1946,7 @@ private:
 
         prev_map_odom_tf_ = refined;
         init_phase_ = InitPhase::DONE;
+        init_timeout_timer_->cancel();
 
         /* Hand map->odom over to global_nav_kf_2d_node: publish the seed, then
          * stop broadcasting so there is exactly one owner of the transform.
@@ -1781,9 +1957,10 @@ private:
         tf_timer_->cancel();
 
         RCLCPP_INFO(get_logger(),
-            "PHASE 2 DONE (cube refinement): INITIALIZED map->odom TF, handed "
-            "over to global_nav_kf_2d_node on /map_odom_init. Rate-limiting to "
-            "%.1f Hz",
+            "PHASE 2 DONE (%s, %d/%d cube samples): INITIALIZED map->odom TF, "
+            "handed over to global_nav_kf_2d_node on /map_odom_init. "
+            "Rate-limiting to %.1f Hz",
+            reason, init_counter_phase2_, NBR_INIT_CALLBACKS_PHASE2,
             1.0 / CALLBACK_PERIOD_LIMIT);
     }
 };

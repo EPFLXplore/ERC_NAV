@@ -1005,10 +1005,10 @@ private:
     const double var_roll  = msg->pose.covariance[21];
     const double var_pitch = msg->pose.covariance[28];
     const double var_yaw   = msg->pose.covariance[35];
-
-    if (std::isfinite(var_roll)  && var_roll  > 1e-12) R_vio_rpy(0, 0) = var_roll;
-    if (std::isfinite(var_pitch) && var_pitch > 1e-12) R_vio_rpy(1, 1) = var_pitch;
-    if (std::isfinite(var_yaw)   && var_yaw   > 1e-12) R_vio_rpy(2, 2) = var_yaw;
+    
+    if (std::isfinite(var_roll)  && var_roll  > 1e-12) R_vio_rpy(0, 0) = 70.0;
+    if (std::isfinite(var_pitch) && var_pitch > 1e-12) R_vio_rpy(1, 1) = 70.0;
+    if (std::isfinite(var_yaw)   && var_yaw   > 1e-12) R_vio_rpy(2, 2) = 70.0;
 
     buf_vio_roll_.push(normalize_angle(vio_roll  - ekf_->state(IDX_ROLL)));
     buf_vio_pitch_.push(normalize_angle(vio_pitch - ekf_->state(IDX_PITCH)));

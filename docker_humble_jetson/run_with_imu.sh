@@ -288,23 +288,23 @@ fi
 OUSTER_HOSTNAME="os-122609000655.local"
 OUSTER_IPV4="169.254.55.180"
 
-# tune kernel receive buffer size
-echo -e "${BOLD_BLUE}Tuning kernel UDP socket buffers for Ouster LiDAR and CycloneDDS.${NC}"
-echo -e "${BOLD_BLUE}Warning: net.core.rmem_max is raised to 2 GiB (host-wide cap for socket receive buffers; uses kernel RAM when apps request large buffers).${NC}"
-sudo sysctl -w net.core.rmem_max=2147483647         # 2 GiB
-# CycloneDDS requests >= 1 MiB. Give it plenty of headroom.
-sudo sysctl -w net.core.wmem_max=33554432
-# Reasonable defaults for sockets that do not explicitly request a size.
-sudo sysctl -w net.core.rmem_default=8388608
-sudo sysctl -w net.core.wmem_default=8388608
-# sudo sysctl -w net.core.rmem_default=2147483647     # 2 GiB
-# normal jetson default is 212992
+# # tune kernel receive buffer size
+# echo -e "${BOLD_BLUE}Tuning kernel UDP socket buffers for Ouster LiDAR and CycloneDDS.${NC}"
+# echo -e "${BOLD_BLUE}Warning: net.core.rmem_max is raised to 2 GiB (host-wide cap for socket receive buffers; uses kernel RAM when apps request large buffers).${NC}"
+# sudo sysctl -w net.core.rmem_max=2147483647         # 2 GiB
+# # CycloneDDS requests >= 1 MiB. Give it plenty of headroom.
+# sudo sysctl -w net.core.wmem_max=33554432
+# # Reasonable defaults for sockets that do not explicitly request a size.
+# sudo sysctl -w net.core.rmem_default=8388608
+# sudo sysctl -w net.core.wmem_default=8388608
+# # sudo sysctl -w net.core.rmem_default=2147483647     # 2 GiB
+# # normal jetson default is 212992
 
-# tune IP fragmentation settings
-echo -e "${BOLD_BLUE}Warning: net.ipv4.ipfrag_time=3 shortens IPv4 fragment reassembly timeout (host-wide; can drop late fragments on lossy paths).${NC}"
-sudo sysctl -w net.ipv4.ipfrag_time=3                 # 3s
-echo -e "${BOLD_BLUE}Warning: net.ipv4.ipfrag_high_thresh raised to 128 MiB (host-wide IPv4 defrag memory before aggressive eviction).${NC}"
-sudo sysctl -w net.ipv4.ipfrag_high_thresh=134217728  # 128 MiB
+# # tune IP fragmentation settings
+# echo -e "${BOLD_BLUE}Warning: net.ipv4.ipfrag_time=3 shortens IPv4 fragment reassembly timeout (host-wide; can drop late fragments on lossy paths).${NC}"
+# sudo sysctl -w net.ipv4.ipfrag_time=3                 # 3s
+# echo -e "${BOLD_BLUE}Warning: net.ipv4.ipfrag_high_thresh raised to 128 MiB (host-wide IPv4 defrag memory before aggressive eviction).${NC}"
+# sudo sysctl -w net.ipv4.ipfrag_high_thresh=134217728  # 128 MiB
 
 
 

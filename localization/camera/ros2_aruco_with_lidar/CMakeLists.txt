@@ -22,6 +22,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED COMPONENTS
   common
   segmentation
+  sample_consensus
   filters
 )
 find_package(visualization_msgs REQUIRED)
@@ -45,6 +46,7 @@ ament_target_dependencies(aruco_lidar_recovery_manager
 
 target_link_libraries(detect_cube
   ${PCL_SEGMENTATION_LIBRARIES}
+  ${PCL_SAMPLE_CONSENSUS_LIBRARIES}
   ${PCL_FILTERS_LIBRARIES}
   ${PCL_COMMON_LIBRARIES}
 )
