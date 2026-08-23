@@ -6,6 +6,14 @@ if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
+# Without this colcon configures with an empty CMAKE_BUILD_TYPE, which passes no
+# -O flag at all (i.e. -O0). detect_cube's RANSAC path is almost entirely PCL and
+# Eigen template code, so at -O0 every Eigen accessor stays an out-of-line call.
+# This changes no algorithm or tuning value, only how it is compiled.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

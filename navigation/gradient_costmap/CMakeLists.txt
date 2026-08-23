@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.8)
 project(gradient_costmap)
 
+# Without this colcon configures with an empty CMAKE_BUILD_TYPE, which passes no
+# -O flag at all (i.e. -O0). The PCL/Eigen headers this package leans on are
+# template-heavy, so every trivial accessor stays an out-of-line call and the
+# traversability nodes burn ~10-30x more CPU than they need to.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 # Dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
