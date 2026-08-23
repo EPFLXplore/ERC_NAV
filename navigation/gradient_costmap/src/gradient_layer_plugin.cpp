@@ -566,12 +566,47 @@ void GradientLayer::updateCosts(
   // which rejects the whole polygon when any footprint vertex is outside the
   // fixed global costmap.
   auto clear_footprint = [&]() {
-    if (!footprint_clearing_enabled_) {
+    const double resolution = master_grid.getResolution();
+    if (!footprint_clearing_enabled_ || transformed_footprint_.size() < 3 ||
+      resolution <= 0.0)
+    {
       return;
     }
+
+    // Only cells inside the footprint's bounding box can pass the polygon
+    // test, so scan that box instead of the whole update window. The global
+    // costmap window is the entire saved map because the file-backed layer
+    // expands the bounds to it, which made the full-window scan run ~640k
+    // polygon tests per update to clear ~220 cells.
+    double footprint_min_x = std::numeric_limits<double>::max();
+    double footprint_min_y = std::numeric_limits<double>::max();
+    double footprint_max_x = std::numeric_limits<double>::lowest();
+    double footprint_max_y = std::numeric_limits<double>::lowest();
+    for (const auto & point : transformed_footprint_) {
+      footprint_min_x = std::min(footprint_min_x, point.x);
+      footprint_min_y = std::min(footprint_min_y, point.y);
+      footprint_max_x = std::max(footprint_max_x, point.x);
+      footprint_max_y = std::max(footprint_max_y, point.y);
+    }
+
+    // mapToWorld() returns cell centres, so derive the cell range the same way
+    // and keep one cell of margin to absorb the rounding between a vertex
+    // coordinate and the centre the polygon test actually uses.
+    const double origin_x = master_grid.getOriginX();
+    const double origin_y = master_grid.getOriginY();
+    const int scan_min_i = std::max(
+      min_i, static_cast<int>(std::floor((footprint_min_x - origin_x) / resolution)) - 1);
+    const int scan_min_j = std::max(
+      min_j, static_cast<int>(std::floor((footprint_min_y - origin_y) / resolution)) - 1);
+    const int scan_max_i = std::min(
+      max_i, static_cast<int>(std::floor((footprint_max_x - origin_x) / resolution)) + 2);
+    const int scan_max_j = std::min(
+      max_j, static_cast<int>(std::floor((footprint_max_y - origin_y) / resolution)) + 2);
+
     size_t cleared_cells = 0;
-    for (int i = min_i; i < max_i; ++i) {
-      for (int j = min_j; j < max_j; ++j) {
+    // j outer / i inner matches the row-major getIndex(i, j) = j * size_x + i.
+    for (int j = scan_min_j; j < scan_max_j; ++j) {
+      for (int i = scan_min_i; i < scan_max_i; ++i) {
         double wx, wy;
         master_grid.mapToWorld(i, j, wx, wy);
         if (!pointInPolygon(wx, wy, transformed_footprint_)) {
@@ -587,7 +622,7 @@ void GradientLayer::updateCosts(
         ++cleared_cells;
       }
     }
-    if (cleared_cells == 0 && transformed_footprint_.size() >= 3 && clock_) {
+    if (cleared_cells == 0 && clock_) {
       RCLCPP_WARN_THROTTLE(
         tf_logger_, *clock_, 5000,
         "GradientLayer '%s': no master-costmap cells lie inside the robot footprint; "
