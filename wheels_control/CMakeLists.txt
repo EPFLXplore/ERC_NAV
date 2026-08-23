@@ -6,6 +6,14 @@ if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17) # needed for inline object variables
 endif()
 
+# Required for the CMAKE_CXX_FLAGS_RELEASE below to be used at all: CMake only
+# appends CMAKE_CXX_FLAGS_<CONFIG> when CMAKE_BUILD_TYPE names a config. With it
+# empty (colcon's default) those flags are set but never consulted, so these
+# nodes were compiled with no -O flag at all.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
   set(CMAKE_CXX_FLAGS_DEBUG "-g")

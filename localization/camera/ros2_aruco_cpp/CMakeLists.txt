@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.8)
 project(ros2_aruco_cpp)
 
+# This package currently gets Release only from a stale CMakeCache entry left by
+# a past --cmake-args invocation. Pin it in-source so a clean build cannot
+# silently drop -DNDEBUG.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# NOTE: the -O2 below lands after Release's -O3 on the command line, and GCC
+# honours the last -O flag, so this package actually builds at -O2.
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -O2)
 endif()
