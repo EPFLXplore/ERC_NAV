@@ -87,6 +87,13 @@ def generate_launch_description():
     ransac_context_max_points = LaunchConfiguration('ransac_context_max_points')
     ransac_require_vertical_long_axis = LaunchConfiguration('ransac_require_vertical_long_axis')
     ransac_vertical_long_axis_max_deg = LaunchConfiguration('ransac_vertical_long_axis_max_deg')
+    ransac_side_normal_gravity_max_deg = LaunchConfiguration('ransac_side_normal_gravity_max_deg')
+    ransac_require_scanline_support = LaunchConfiguration('ransac_require_scanline_support')
+    ransac_scanline_max_thickness_m = LaunchConfiguration('ransac_scanline_max_thickness_m')
+    ransac_scanline_min_points = LaunchConfiguration('ransac_scanline_min_points')
+    ransac_scanline_min_count = LaunchConfiguration('ransac_scanline_min_count')
+    ransac_scanline_min_span_fraction = LaunchConfiguration('ransac_scanline_min_span_fraction')
+    gravity_frame = LaunchConfiguration('gravity_frame')
     t = LaunchConfiguration('t')
     min_inliers = LaunchConfiguration('min_inliers')
     max_lines = LaunchConfiguration('max_lines')
@@ -164,12 +171,12 @@ def generate_launch_description():
             executable='global_nav_kf_2d_node',
             name='global_nav_kf_2d',
             parameters=[{
-                'broadcast_rate_hz': 20.0,
+                'broadcast_rate_hz': 10.0,
                 # ^ [Hz] map->odom TF rate. Matches the 50 ms republish_tf rate
                 #   it replaces in pose_estimator_lidar_node. Increase: smoother
                 #   TF updates but more CPU/network traffic. Decrease: lower load
                 #   but a coarser transform stream.
-                'meas_sigma_xy_m': 0.25,
+                'meas_sigma_xy_m': 0.45,
                 # ^ [m] FALLBACK only: /aruco_rover_pos now carries its own
                 #   per-solution covariance (solution_sigma_xy_m in
                 #   pose_estimator_lidar_node, scaled by the marker count), and
@@ -180,13 +187,13 @@ def generate_launch_description():
                 'meas_sigma_yaw_deg': 5.0,
                 # ^ [deg] same fallback for heading: increase trusts a fallback
                 #   yaw less; decrease corrects heading faster but more noisily.
-                'process_sigma_xy_m_per_s': 0.02,
+                'process_sigma_xy_m_per_s': 0.06,
                 # ^ [m/s] assumed odom drift rate. High: filter forgets fast,
                 #   accepts big corrections. Low: filter is stiff, a real drift
                 #   takes many measurements to correct.
                 'process_sigma_yaw_deg_per_s': 0.5,
                 # ^ [deg/s] same for yaw drift (mostly gyro bias).
-                'mahalanobis_gate_chi2': 16.27,
+                'mahalanobis_gate_chi2': 11.34,
                 # ^ chi2 outlier gate on 3 DOF: 7.815 = 95%, 11.34 = 99%,
                 #   16.27 = 99.9%. High: mislabeled cubes get in. Low:
                 #   legitimate corrections are rejected.
@@ -303,7 +310,7 @@ def generate_launch_description():
         # ^ independent failed IDs required to enter recovery. Increase: more
         #   robust to one bad ID but slower/harder to recover. Decrease: enters
         #   recovery sooner, but is more susceptible to a false trigger.
-        DeclareLaunchArgument('recovery_enter_hold_sec', default_value='0.5'),
+        DeclareLaunchArgument('recovery_enter_hold_sec', default_value='1.0'),
         # ^ [s] continuous failure evidence required before entering recovery.
         #   Increase: filters brief failures but delays recovery. Decrease:
         #   switches sooner but can react to short dropouts.
@@ -319,7 +326,7 @@ def generate_launch_description():
         # ^ [m] camera/map agreement diagnostic threshold during reacquisition.
         #   Increase: tolerates more disagreement; decrease: requires tighter
         #   agreement. Final return validation still uses tolerance_radius.
-        DeclareLaunchArgument('recovery_exit_hold_sec', default_value='2.0'),
+        DeclareLaunchArgument('recovery_exit_hold_sec', default_value='1.0'),
         # ^ [s] continuous LiDAR/solver/map-zone agreement before returning to
         #   MAP_GUIDED. Increase: safer, slower return. Decrease: faster return
         #   but more likely to bounce back into CAMERA_RECOVERY.
@@ -352,15 +359,29 @@ def generate_launch_description():
         # ^ occupied sectors (of 8) at which the candidate is called embedded. A cube face standing on the ground has its plane clip the ground in a line, occupying ~2 opposite sectors, so this must stay above that. High: only fully surrounded patches vetoed. Low: the ground-intersection strip alone can veto a real face
         DeclareLaunchArgument('ransac_require_vertical_long_axis', default_value='true'),
         # ^ require a side-face candidate's LONG edge to run with gravity, as a cube standing on the ground does. Kills tilted slivers that happen to measure face-sized. Near-horizontal planes (top-face candidates) are exempt, since a top face's long axis is horizontal. NOTE: a side face seen below ~78% of its height measures wider than tall, so its long axis is horizontal and it gets rejected -- turn this off if you rely on heavily-cropped partial faces
-        DeclareLaunchArgument('ransac_vertical_long_axis_max_deg', default_value='20.0'),
-        # ^ [deg] half-angle of the cone about +/-z that the long edge must fall inside; for a side face this is the rectangle's roll within its own plane, and it does not constrain the face's heading. High: tilted clutter passes again. Low: strict, but a tilted cube or a LiDAR mounting tilt (this uses the cloud z, like top_vertical_dot_min) will reject real faces
+        DeclareLaunchArgument('ransac_vertical_long_axis_max_deg', default_value='10.0'),
+        # ^ [deg] half-angle of the cone about gravity that the long edge must fall inside; for a side face this is the rectangle's roll within its own plane, and it does not constrain the face's heading. High: tilted clutter passes again. Low: strict, but a genuinely tilted cube will be rejected.
+        DeclareLaunchArgument('ransac_side_normal_gravity_max_deg', default_value='15.0'),
+        # ^ [deg] side-face pitch tolerance about gravity: the face normal must stay this close to horizontal. This rejects tilted environmental patches that have cube-like dimensions. Independent from the roll/long-edge check above.
+        DeclareLaunchArgument('ransac_require_scanline_support', default_value='true'),
+        # ^ require a side candidate to contain several thin, gravity-horizontal LiDAR scanline strips. This rejects face-sized random scatter; disable only for a sensor whose returns are not organised in scan lines.
+        DeclareLaunchArgument('ransac_scanline_max_thickness_m', default_value='0.025'),
+        # ^ [m] maximum vertical thickness of one scanline strip. Increase for noisier/farther clouds; decrease to make random scatter less likely to form a line.
+        DeclareLaunchArgument('ransac_scanline_min_points', default_value='10'),
+        # ^ minimum inliers in one scanline strip. Increase for stricter line evidence; decrease if distant cube faces are sparse.
+        DeclareLaunchArgument('ransac_scanline_min_count', default_value='3'),
+        # ^ number of separate scanline strips required on a side face. Increase for stronger structural evidence; decrease only if the LiDAR has too few vertical channels at the cube range.
+        DeclareLaunchArgument('ransac_scanline_min_span_fraction', default_value='0.40'),
+        # ^ fraction of cube_width_m that each supported scanline must span. Increase rejects short clutter strokes; decrease accepts more partial/occluded faces.
+        DeclareLaunchArgument('gravity_frame', default_value='map'),
+        # ^ TF frame whose +Z is gravity-up. The detector transforms it into the cloud frame, so pitch and roll checks remain correct with a tilted LiDAR mount.
         DeclareLaunchArgument('t', default_value='0.25'),
         # ^ UNUSED: legacy face width [m] of the old 2D-line detector; the plane path uses cube_width_m instead
         DeclareLaunchArgument('min_inliers', default_value='10'),
         # ^ min points per plane (a range-based dynamic floor also applies). High: only dense/close detections, far cube missed. Low: accepts sparse planes -> more false positives
         DeclareLaunchArgument('max_lines', default_value='3'),
         # ^ UNUSED: legacy limit of the old 2D-line detector
-        DeclareLaunchArgument('max_planes', default_value='5'),
+        DeclareLaunchArgument('max_planes', default_value='2'),
         # ^ RANSAC plane extractions per tag. High: digs past ground/walls to find the cube faces (more CPU). Low: only dominant planes, cube missed if clutter is fit first
         DeclareLaunchArgument('plane_group_centroid_max_m', default_value='0.80'),
         # ^ [m] max centroid distance to group a 2nd side face / top with the 1st. High: planes from different objects merged into one cube. Low: valid 2nd face rejected -> center estimated from a single face (less accurate)
@@ -368,15 +389,15 @@ def generate_launch_description():
         # ^ [m] allowed excess over nominal face dims (also scales the accept score). High: oversized/odd planes accepted as faces. Low: strict size match, partial or noisy faces rejected
         DeclareLaunchArgument('side_perpendicular_dot_max', default_value='0.75'),
         # ^ max |dot| between two side-face normals to pair them (0 = strictly perpendicular). High: near-parallel planes can pair as "two faces". Low: true face pairs dropped when normals are noisy
-        DeclareLaunchArgument('top_vertical_dot_min', default_value='0.50'), #0.35
-        # ^ min |normal.z| for a plane to count as top face. High: only near-horizontal planes are tops. Low: tilted side-ish planes get classified as top
-        DeclareLaunchArgument('face_min_short_frac', default_value='0.20'),
+        DeclareLaunchArgument('top_vertical_dot_min', default_value='0.50'), #0.35max_pla
+        # ^ min |normal·gravity_up| for a plane to count as top face. High: only near-horizontal planes are tops. Low: tilted side-ish planes get classified as top
+        DeclareLaunchArgument('face_min_short_frac', default_value='0.10'),
         # ^ min short dim as fraction of cube width. High: must see most of the face width. Low: thin slivers accepted as faces
-        DeclareLaunchArgument('side_min_long_frac', default_value='0.20'),
+        DeclareLaunchArgument('side_min_long_frac', default_value='0.10'),
         # ^ min side-face long dim as fraction of cube height. High: must see most of the face height. Low: small patches accepted as side faces
-        DeclareLaunchArgument('top_min_long_frac', default_value='0.20'),
+        DeclareLaunchArgument('top_min_long_frac', default_value='0.10'),
         # ^ min top-face long dim as fraction of cube width. High: must see most of the top. Low: small patches accepted as top faces
-        DeclareLaunchArgument('face_score_tolerance_multiplier', default_value='5.0'),
+        DeclareLaunchArgument('face_score_tolerance_multiplier', default_value='3.0'),
         # ^ multiplies face_dimension_tolerance_m for the size-score accept gate. High: looser, wrong-sized planes pass. Low: strict, partial views rejected
         DeclareLaunchArgument('max_face_diagonal_multiplier', default_value='1.1'),
         # ^ max plane long dim vs face diagonal (<=0 disables). High: big planes (walls, ground patches) pass as faces. Low: slightly oversized real faces rejected
@@ -465,6 +486,13 @@ def generate_launch_description():
                 'ransac_context_max_points': ransac_context_max_points,
                 'ransac_require_vertical_long_axis': ransac_require_vertical_long_axis,
                 'ransac_vertical_long_axis_max_deg': ransac_vertical_long_axis_max_deg,
+                'ransac_side_normal_gravity_max_deg': ransac_side_normal_gravity_max_deg,
+                'ransac_require_scanline_support': ransac_require_scanline_support,
+                'ransac_scanline_max_thickness_m': ransac_scanline_max_thickness_m,
+                'ransac_scanline_min_points': ransac_scanline_min_points,
+                'ransac_scanline_min_count': ransac_scanline_min_count,
+                'ransac_scanline_min_span_fraction': ransac_scanline_min_span_fraction,
+                'gravity_frame': gravity_frame,
                 't': t,
                 'min_inliers': min_inliers,
                 'max_lines': max_lines,

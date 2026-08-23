@@ -153,9 +153,9 @@ public:
         const double meas_sigma_yaw_deg =
             declare_parameter<double>("meas_sigma_yaw_deg", 3.0);
         const double process_sigma_xy_m_per_s =
-            declare_parameter<double>("process_sigma_xy_m_per_s", 0.1);
+            declare_parameter<double>("process_sigma_xy_m_per_s", 0.25);
         const double process_sigma_yaw_deg_per_s =
-            declare_parameter<double>("process_sigma_yaw_deg_per_s", 0.5);
+            declare_parameter<double>("process_sigma_yaw_deg_per_s", 0.3);
         gate_chi2_ = declare_parameter<double>("mahalanobis_gate_chi2", 16.27);
         max_consecutive_rejects_ =
             declare_parameter<int>("max_consecutive_rejects", 10);

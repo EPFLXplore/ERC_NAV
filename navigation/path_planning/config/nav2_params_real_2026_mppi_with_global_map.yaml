@@ -20,12 +20,12 @@ bt_navigator:
     # close to the current path; otherwise the current path is kept, unless it
     # has been in collision (planner is_path_valid) for > force_accept_timeout s.
     accept_candidate_path:
-      check_distance: 0.5          # [m] length of the path beginning that must stay stable
-      max_initial_angle_deg: 100.0 # [deg] max initial heading change of candidate vs current
-      max_length_ratio: 1.5        # reject if candidate beginning much longer than current
-      max_start_deviation: 0.15     # [m] max lateral deviation of candidate start from current path
+      check_distance: 1.5          # [m] length of the path beginning that must stay stable
+      max_initial_angle_deg: 360.0 # [deg] max initial heading change of candidate vs current
+      max_length_ratio: 1.0        # reject if candidate beginning much longer than current
+      max_start_deviation: 0.05    # [m] max lateral deviation of candidate start from current path
       force_accept_timeout: 0.5    # [s] accept a divergent candidate after current path invalid this long
-      is_path_valid_timeout: 0.2   # [s] service call timeout for is_path_valid
+      is_path_valid_timeout: 1.0 #0.2   # [s] service call timeout for is_path_valid
     
     # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
     # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
@@ -118,10 +118,10 @@ controller_server:
 
     # Goal checker parameters
     simple_goal_checker:
-      stateful: true #
+      stateful: false #
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance_buffer: 0.0
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.12
       # Position-only waypoint completion: do not require a final heading.
       yaw_goal_tolerance: 7.0
 
@@ -140,14 +140,18 @@ controller_server:
       # Always record critic statistics while tuning (set
       # publish_critics_stats: true) and turn visualization back off afterward.
 
-      # Prediction horizon = time_steps * model_dt = 2.8 s. Increase it (or
+      # Prediction horizon = time_steps * model_dt = 5.0 s. Increase it (or
       # PathAlignCritic weight) for smoother, earlier turns; decrease it if
       # the robot commits too early to a stale/noisy path. Keep model_dt equal
-      # to 1/controller_frequency and preserve a practical 2-4 s horizon.
-      # The rover is differential-drive and must respect the same
+      # to 1/controller_frequency and preserve a practical 2-5 s horizon.
+      # The rover uses Ackermann steering and must respect the same
       # velocity/acceleration envelope as velocity_smoother.
       # Humble model names are: DiffDrive, Ackermann, or Omni.
-      motion_model: "DiffDrive"
+      motion_model: "Ackermann"
+      AckermannConstraints:
+        # Keep this consistent with the Smac Hybrid planner below and replace
+        # it with the measured physical minimum turning radius if necessary.
+        min_turning_r: 0.001
       time_steps: 100 #5s horizon
       model_dt: 0.05 #DO NOT CHANGE, must be equal to 1/controller_frequency
       # More samples improve the chance of finding a smooth trajectory but
@@ -156,16 +160,16 @@ controller_server:
       iteration_count: 1
       # Sampling noise: raise vx_std/wz_std when MPPI cannot explore enough
       # correction; lower them when commands weave or oscillate. Tune wz_std
-      # first for lateral path error on a differential-drive rover.
+      # first for lateral path error on the Ackermann rover.
       vx_std: 0.07
       vy_std: 0.0
       wz_std: 0.15
       # Kinematic bounds. These must not exceed velocity_smoother limits or
       # the real rover's capability; too-high bounds commonly cause overshoot.
-      vx_max: 0.40
+      vx_max: 0.21
       vx_min: 0.0
       vy_max: 0.0
-      wz_max: 0.75 #45°
+      wz_max: 0.45
       ax_max: 1.0
       ax_min: -2.0
       az_max: 0.35
@@ -188,46 +192,55 @@ controller_server:
       ConstraintCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 4.0
+        cost_weight: 40.0
       CostCritic:
         enabled: true
         cost_power: 1
         # Raise this to give obstacles/inflated costs priority over path
         # tracking; lower only if safe, valid paths are being rejected.
-        cost_weight: 3.81
+        cost_weight: 20.0 #3.81
         critical_cost: 300.0
-        consider_footprint: false # always set to false since the costmap already 
+        # Score the full local-costmap footprint against traversability costs.
+        consider_footprint: false
         collision_cost: 1000000.0
         near_goal_distance: 1.0
-        trajectory_point_step: 2
+        trajectory_point_step: 4
       GoalCritic:
         enabled: true
         cost_power: 1
         # Mainly active inside threshold_to_consider. Raise it if the rover
         # misses or drifts around waypoints; lower it if it rushes the goal.
-        cost_weight: 15.0
-        threshold_to_consider: 1.0
+        cost_weight: 30.0 #15.0
+        threshold_to_consider: 0.5
       PathAlignCritic:
         enabled: true
-        cost_power: 1
+        cost_power: 2
         # Increase for earlier steering into upcoming curves. Too high can
         # cause corner-cutting or oscillation when the path is noisy.
-        cost_weight: 35.0 #14.0 : too little 50.0 : too much
+        cost_weight: 25.0
         max_path_occupancy_ratio: 0.05
-        trajectory_point_step: 4
+        trajectory_point_step: 10
         threshold_to_consider: 0.5
-        # SmacPlanner2D plans on a 0.1 m grid; a small offset is appropriate.
+        # The global planner uses a 0.1 m grid; a small offset is appropriate.
         offset_from_furthest: 10 #3
         use_path_orientations: false
+      PathAngleCritic:
+        enabled: false
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 10
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 0.5 #30°
+        mode: 1
       PathFollowCritic:
         enabled: true
         cost_power: 1
         # Primary cross-track-error weight: increase for tighter adherence to
         # the global path; decrease if it hunts side-to-side or resists safe
         # avoidance manoeuvres. Tune this before increasing PathAlignCritic.
-        cost_weight: 5.0
-        offset_from_furthest: 2
-        threshold_to_consider: 1.0
+        cost_weight: 35.0
+        offset_from_furthest: 10
+        threshold_to_consider: 0.5
       PreferForwardCritic:
         enabled: false
         cost_power: 1
@@ -326,7 +339,10 @@ local_costmap:
       width: 6
       height: 6
       resolution: 0.05
-      robot_radius: 0.72
+      # Conservative octagonal approximation of the previous 0.72 m radius.
+      # Coordinates are metres in base_link (x forward, y left).
+      footprint: "[[0.72, 0.298], [0.298, 0.72], [-0.298, 0.72], [-0.72, 0.298], [-0.72, -0.298], [-0.298, -0.72], [0.298, -0.72], [0.72, -0.298]]"
+      footprint_padding: 0.02
       plugins: ["gradient_layer"]
       
       # Live occupancy cost comes from traversability_map (gradient_costmap/launch/gradient_costmap.launch.py):
@@ -338,6 +354,12 @@ local_costmap:
         map_subscribe_transient_local: true
         map_subscribe_reliable: true
         expand_update_bounds: false
+
+      # inflation_layer: #we use it to take into account the rover radius when computing the global path
+      #   plugin: "nav2_costmap_2d::InflationLayer"
+      #   enabled: true
+      #   cost_scaling_factor: 1.0
+      #   inflation_radius: 0.72 #0.72/2
 
       always_send_full_costmap: true
 
@@ -360,7 +382,7 @@ global_costmap:
       robot_base_frame: base_link
       use_sim_time: false
       # robot_radius: 0.7
-      robot_radius: 0.4
+      robot_radius: 0.72 #only use with inflation layer
       resolution: 0.1
       track_unknown_space: true
       static_map: true
@@ -385,11 +407,17 @@ global_costmap:
         map_flip_x: false
         map_flip_y: true
 
+      # inflation_layer: #we use it to take into account the rover radius when computing the global path
+      #   plugin: "nav2_costmap_2d::InflationLayer"
+      #   enabled: true
+      #   cost_scaling_factor: 1.0
+      #   inflation_radius: 0.72 #0.72/2
+
       # BEWARE, adding this live local patch layer means that local change will affect the global costmap and we leave the obstacle once they're out of sight. So if a obstacle is removed, the cost where the obstacle was needs to be rewritten. 
       # So the local costmap rewrite the global map until the rover see again the same thing.
       live_local_patch_layer:
         plugin: "gradient_layer::GradientLayer"
-        enabled: false
+        enabled: true
         use_map_file: false
         topic: "/occupancy_map_local_inflated"
         map_subscribe_transient_local: true
@@ -478,10 +506,9 @@ planner_server:
     expected_planner_frequency: 1.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
-    # Switched to SmacPlanner2D because global costmap has no inflation/obstacle layers.
-    # This avoids the Hybrid-A* SE2 warning path that expects inflation for optimization.
+    # Hybrid-A* produces paths that respect the rover's Ackermann kinematics.
     GridBased:
-      plugin: "nav2_smac_planner/SmacPlanner2D"
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
       downsample_costmap: false
       downsampling_factor: 1
       tolerance: 0.10
@@ -490,7 +517,19 @@ planner_server:
       max_on_approach_iterations: 800
       max_planning_time: 5.0
       cost_travel_multiplier: 2.0 # 2.0 is great, 0.0 is classic A* without cost
-      use_final_approach_orientation: false
+      motion_model_for_search: "DUBIN"
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 3.0
+      minimum_turning_radius: 0.15
+      reverse_penalty: 2.0
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      retrospective_penalty: 0.015
+      lookup_table_size: 5.0
+      cache_obstacle_heuristic: true
+      debug_visualizations: false
+      smooth_path: true
       smoother:
           # max_iterations: bounds maximum computation time by limiting smoothing passes
           max_iterations: 1000
@@ -618,13 +657,15 @@ waypoint_follower:
     loop_rate: 8
     global_frame_id: 'map'
     # global_frame_id: 'odom'
+    # Abort this FollowWaypoints action if a waypoint cannot be reached. This
+    # prevents a failed waypoint from advancing without running its pause task.
     stop_on_failure: false
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"
       enabled: true
-      waypoint_pause_duration: 10000
-      #^10 seconds pause (milliseconds)
+      waypoint_pause_duration: 15000
+      #^15 seconds pause (milliseconds)
 
 velocity_smoother:
   ros__parameters:

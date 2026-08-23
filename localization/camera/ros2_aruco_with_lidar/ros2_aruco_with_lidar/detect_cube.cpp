@@ -87,6 +87,8 @@
 #include "tf2_ros/transform_listener.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2/exceptions.h"
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
 
 
 // #include <pcl/filters/project_inliers.h>
@@ -232,6 +234,89 @@ inline PlaneRect min_area_rect(const std::vector<UV> &uv, double angle_step_rad)
     return best;
 }
 
+/* A spinning LiDAR intersects an upright cube side with several nearly
+ * horizontal scan lines. Random coplanar clutter can have the correct
+ * bounding rectangle, but is very unlikely to contain multiple thin,
+ * gravity-horizontal rows that each span a useful part of the cube width.
+ *
+ * The input is already projected into the candidate plane. `gravity_up` is
+ * expressed in the same cloud frame; it is projected onto the face to obtain
+ * its vertical coordinate. This deliberately does not depend on the arbitrary
+ * (u, v) plane basis. */
+inline bool has_cube_like_scanline_support(
+    const std::vector<UV> &uv,
+    const Eigen::Vector3f &normal,
+    const Eigen::Vector3f &u_axis,
+    const Eigen::Vector3f &v_axis,
+    const Eigen::Vector3f &gravity_up,
+    double max_line_thickness_m,
+    int min_line_points,
+    int min_line_count,
+    double min_line_span_m)
+{
+    if (min_line_count <= 0) {
+        return true;
+    }
+    if (uv.empty() || !(max_line_thickness_m > 0.0) ||
+        min_line_points <= 0 || !(min_line_span_m >= 0.0)) {
+        return false;
+    }
+
+    Eigen::Vector3f vertical = gravity_up - normal * normal.dot(gravity_up);
+    if (vertical.norm() < 1e-6f) {
+        return false;  // A top face has no gravity direction inside its plane.
+    }
+    vertical.normalize();
+    Eigen::Vector3f horizontal = normal.cross(vertical);
+    if (horizontal.norm() < 1e-6f) {
+        return false;
+    }
+    horizontal.normalize();
+
+    struct LinePoint {
+        double horizontal;
+        double vertical;
+    };
+    std::vector<LinePoint> points;
+    points.reserve(uv.size());
+    for (const auto &p : uv) {
+        points.push_back({
+            p.u * horizontal.dot(u_axis) + p.v * horizontal.dot(v_axis),
+            p.u * vertical.dot(u_axis) + p.v * vertical.dot(v_axis)});
+    }
+    std::sort(points.begin(), points.end(),
+        [](const LinePoint &a, const LinePoint &b) {
+            return a.vertical < b.vertical;
+        });
+
+    int supported_lines = 0;
+    for (size_t first = 0; first < points.size();) {
+        size_t last = first + 1;
+        /* A row's thickness is bounded against its first point, rather than
+         * chaining adjacent gaps, so a gradual random vertical scatter cannot
+         * turn into one apparently thin line. */
+        while (last < points.size() &&
+               points[last].vertical - points[first].vertical <= max_line_thickness_m) {
+            ++last;
+        }
+
+        if (static_cast<int>(last - first) >= min_line_points) {
+            double min_horizontal = points[first].horizontal;
+            double max_horizontal = min_horizontal;
+            for (size_t i = first + 1; i < last; ++i) {
+                min_horizontal = std::min(min_horizontal, points[i].horizontal);
+                max_horizontal = std::max(max_horizontal, points[i].horizontal);
+            }
+            if (max_horizontal - min_horizontal >= min_line_span_m &&
+                ++supported_lines >= min_line_count) {
+                return true;
+            }
+        }
+        first = last;
+    }
+    return false;
+}
+
 /* RANSAC plane model that only scores hypotheses whose inliers actually look
  * like a cube face.
  *
@@ -264,7 +349,14 @@ public:
         int embedded_min_occupied_bins,
         bool require_vertical_long_axis,
         double vertical_long_axis_max_deg,
-        double top_normal_z_min)
+        double top_normal_gravity_min,
+        const Eigen::Vector3f &gravity_up,
+        double side_normal_gravity_max_deg,
+        bool require_scanline_support,
+        double scanline_max_thickness_m,
+        int scanline_min_points,
+        int scanline_min_count,
+        double scanline_min_span_m)
         : Base(cloud),
           max_short_extent_m_(max_short_extent_m),
           max_long_extent_m_(max_long_extent_m),
@@ -277,7 +369,15 @@ public:
           require_vertical_long_axis_(require_vertical_long_axis),
           vertical_long_axis_min_cos_(
               std::cos(vertical_long_axis_max_deg * M_PI / 180.0)),
-          top_normal_z_min_(top_normal_z_min)
+          top_normal_gravity_min_(top_normal_gravity_min),
+          gravity_up_(gravity_up.normalized()),
+          side_normal_gravity_max_sin_(
+              std::sin(side_normal_gravity_max_deg * M_PI / 180.0)),
+          require_scanline_support_(require_scanline_support),
+          scanline_max_thickness_m_(scanline_max_thickness_m),
+          scanline_min_points_(scanline_min_points),
+          scanline_min_count_(scanline_min_count),
+          scanline_min_span_m_(scanline_min_span_m)
     {
     }
 
@@ -368,19 +468,35 @@ public:
          * Skipped for near-horizontal planes: a top face's long axis is
          * horizontal by construction, so the test would reject every one.
          *
-         * Note this is the cloud's z, as everywhere else in this node (see
-         * top_vertical_dot_min), so it inherits any LiDAR mounting tilt. */
-        if (require_vertical_long_axis_ &&
-            std::fabs(normal.z()) < top_normal_z_min_) {
+         * Gravity is transformed into the cloud frame once per input cloud,
+         * so a static LiDAR mounting tilt does not weaken this gate. */
+        const double normal_gravity_dot = std::fabs(normal.dot(gravity_up_));
+        const bool is_side_orientation =
+            normal_gravity_dot <= side_normal_gravity_max_sin_;
+        const bool is_top_orientation =
+            normal_gravity_dot >= top_normal_gravity_min_;
+        if (!is_side_orientation && !is_top_orientation) {
+            return 0;
+        }
+
+        if (is_side_orientation && require_vertical_long_axis_) {
             const float cos_t = std::cos(static_cast<float>(rect.angle_rad));
             const float sin_t = std::sin(static_cast<float>(rect.angle_rad));
             const Eigen::Vector3f long_axis =
                 rect.extent_a >= rect.extent_b
                     ? (u_axis * cos_t + v_axis * sin_t)
                     : (u_axis * -sin_t + v_axis * cos_t);
-            if (std::fabs(long_axis.z()) < vertical_long_axis_min_cos_) {
+            if (std::fabs(long_axis.dot(gravity_up_)) < vertical_long_axis_min_cos_) {
                 return 0;
             }
+        }
+
+        if (is_side_orientation && require_scanline_support_ &&
+            !has_cube_like_scanline_support(
+                uv, normal, u_axis, v_axis, gravity_up_,
+                scanline_max_thickness_m_, scanline_min_points_,
+                scanline_min_count_, scanline_min_span_m_)) {
+            return 0;
         }
 
         // Face-sized, but is it a face, or just a face-sized window onto
@@ -483,7 +599,14 @@ private:
     int embedded_min_occupied_bins_;
     bool require_vertical_long_axis_;
     double vertical_long_axis_min_cos_;
-    double top_normal_z_min_;
+    double top_normal_gravity_min_;
+    Eigen::Vector3f gravity_up_;
+    double side_normal_gravity_max_sin_;
+    bool require_scanline_support_;
+    double scanline_max_thickness_m_;
+    int scanline_min_points_;
+    int scanline_min_count_;
+    double scanline_min_span_m_;
 };
 }
 
@@ -525,6 +648,19 @@ public:
          * candidates) are exempt -- their long axis is horizontal. */
         this->declare_parameter<bool>("ransac_require_vertical_long_axis", true);
         this->declare_parameter<double>("ransac_vertical_long_axis_max_deg", 20.0);
+        /* Side-face pitch: its normal must remain nearly perpendicular to
+         * gravity. Roll is checked separately by ransac_vertical_long_axis_*:
+         * the face's long edge must run with gravity. */
+        this->declare_parameter<double>("ransac_side_normal_gravity_max_deg", 20.0);
+        /* Require side-face returns to form horizontal LiDAR scanline strips,
+         * not a coincidental, face-sized scatter of coplanar environment
+         * points. Set ransac_require_scanline_support=false for sensors whose
+         * return pattern is not organised in horizontal scan lines. */
+        this->declare_parameter<bool>("ransac_require_scanline_support", true);
+        this->declare_parameter<double>("ransac_scanline_max_thickness_m", 0.025);
+        this->declare_parameter<int>("ransac_scanline_min_points", 4);
+        this->declare_parameter<int>("ransac_scanline_min_count", 2);
+        this->declare_parameter<double>("ransac_scanline_min_span_fraction", 0.30);
         this->declare_parameter<double>("t", 0.25);
         this->declare_parameter<int>("min_inliers", 40);
         this->declare_parameter<int>("max_lines", 4);
@@ -551,6 +687,8 @@ public:
         this->declare_parameter<double>("max_distance_from_aruco", 0.3);
         // Map frame for landmark_map_pos_* (same as lidar_phi_filter_node / multiview_aruco).
         this->declare_parameter<std::string>("map_frame", "map");
+        // Gravity-aligned frame used for side-face pitch/roll validation.
+        this->declare_parameter<std::string>("gravity_frame", "map");
         // Angular gate vs ref_angle (camera bearing + offset); wide default while upstream filter is tight.
         this->declare_parameter<double>("angular_tolerance_deg", 45.0);
         this->declare_parameter<bool>("use_camera_aruco_position", false);
@@ -621,6 +759,20 @@ public:
             "ransac_require_vertical_long_axis", ransac_require_vertical_long_axis_);
         this->get_parameter(
             "ransac_vertical_long_axis_max_deg", ransac_vertical_long_axis_max_deg_);
+        this->get_parameter(
+            "ransac_side_normal_gravity_max_deg",
+            ransac_side_normal_gravity_max_deg_);
+        this->get_parameter(
+            "ransac_require_scanline_support", ransac_require_scanline_support_);
+        this->get_parameter(
+            "ransac_scanline_max_thickness_m", ransac_scanline_max_thickness_m_);
+        this->get_parameter(
+            "ransac_scanline_min_points", ransac_scanline_min_points_);
+        this->get_parameter(
+            "ransac_scanline_min_count", ransac_scanline_min_count_);
+        this->get_parameter(
+            "ransac_scanline_min_span_fraction",
+            ransac_scanline_min_span_fraction_);
         /* Resolve the extent bounds once: 0 means "derive from the cube
          * geometry", so the bounds track cube_width_m / cube_height_m without
          * having to be restated in the launch file. */
@@ -646,6 +798,7 @@ public:
             "publish_candidate_plane_markers", publish_candidate_plane_markers_);
         this->get_parameter("max_distance_from_aruco", max_distance_from_aruco_);
         this->get_parameter("map_frame", map_frame_);
+        this->get_parameter("gravity_frame", gravity_frame_);
         this->get_parameter("angular_tolerance_deg", angular_tolerance_deg_);
         bool initial_camera_mode = false;
         this->get_parameter("use_camera_aruco_position", initial_camera_mode);
@@ -672,6 +825,15 @@ public:
             !(camera_cone_depth_tolerance_m_ > 0.0) ||
             !(camera_cone_depth_tolerance_ratio_ >= 0.0)) {
             throw std::runtime_error("invalid camera recovery cone parameters");
+        }
+        if (!(ransac_side_normal_gravity_max_deg_ >= 0.0) ||
+            !(ransac_side_normal_gravity_max_deg_ <= 90.0) ||
+            !(ransac_vertical_long_axis_max_deg_ >= 0.0) ||
+            !(ransac_vertical_long_axis_max_deg_ <= 90.0) ||
+            !(ransac_scanline_max_thickness_m_ > 0.0) ||
+            ransac_scanline_min_points_ <= 0 || ransac_scanline_min_count_ < 0 ||
+            !(ransac_scanline_min_span_fraction_ >= 0.0) || gravity_frame_.empty()) {
+            throw std::runtime_error("invalid RANSAC gravity/scanline parameters");
         }
         min_process_period_ns_ =
             process_rate_hz_ > 0.0 ? static_cast<int64_t>(1e9 / process_rate_hz_) : 0;
@@ -1004,6 +1166,48 @@ private:
         return p;
     }
 
+    /* Transform map-frame up into the LiDAR cloud frame. Map/odom is the
+     * gravity-aligned navigation frame; using this instead of cloud.z keeps
+     * pitch and roll gating correct when the LiDAR mounting is tilted. */
+    bool gravity_up_in_cloud_frame(
+        const std::string &cloud_frame,
+        const builtin_interfaces::msg::Time &stamp,
+        Vec3 &gravity_up)
+    {
+        if (cloud_frame.empty()) {
+            return false;
+        }
+        if (cloud_frame == gravity_frame_) {
+            gravity_up = {0.0, 0.0, 1.0};
+            return true;
+        }
+
+        try {
+            geometry_msgs::msg::TransformStamped transform;
+            const bool zero_stamp = stamp.sec == 0u && stamp.nanosec == 0u;
+            if (zero_stamp) {
+                transform = tf_buffer_.lookupTransform(
+                    cloud_frame, gravity_frame_, tf2::TimePointZero);
+            } else {
+                const rclcpp::Time time(stamp, get_clock()->get_clock_type());
+                try {
+                    transform = tf_buffer_.lookupTransform(
+                        cloud_frame, gravity_frame_, time);
+                } catch (const tf2::TransformException &) {
+                    transform = tf_buffer_.lookupTransform(
+                        cloud_frame, gravity_frame_, tf2::TimePointZero);
+                }
+            }
+            tf2::Quaternion q;
+            tf2::fromMsg(transform.transform.rotation, q);
+            const tf2::Vector3 up = tf2::quatRotate(q, tf2::Vector3(0.0, 0.0, 1.0));
+            gravity_up = normalize_vec({up.x(), up.y(), up.z()});
+            return norm_vec(gravity_up) > 0.99;
+        } catch (const tf2::TransformException &) {
+            return false;
+        }
+    }
+
     bool transform_point_to_base(
         const sensor_msgs::msg::PointCloud2 &cloud_msg,
         geometry_msgs::msg::Point &point,
@@ -1077,6 +1281,7 @@ private:
     bool fit_bounded_plane(
         const pcl::PointCloud<pcl::PointXYZ>::Ptr &remaining,
         const pcl::PointCloud<pcl::PointXYZ>::Ptr &context_cloud,
+        const Vec3 &gravity_up,
         int min_inliers,
         pcl::PointIndices &inliers,
         pcl::ModelCoefficients &coefficients)
@@ -1096,7 +1301,17 @@ private:
                 ransac_embedded_min_occupied_bins_,
                 ransac_require_vertical_long_axis_,
                 ransac_vertical_long_axis_max_deg_,
-                top_vertical_dot_min_));
+                top_vertical_dot_min_,
+                Eigen::Vector3f(
+                    static_cast<float>(gravity_up.x),
+                    static_cast<float>(gravity_up.y),
+                    static_cast<float>(gravity_up.z)),
+                ransac_side_normal_gravity_max_deg_,
+                ransac_require_scanline_support_,
+                ransac_scanline_max_thickness_m_,
+                ransac_scanline_min_points_,
+                ransac_scanline_min_count_,
+                ransac_scanline_min_span_fraction_ * cube_width_m_));
 
         pcl::RandomSampleConsensus<pcl::PointXYZ> ransac(model);
         ransac.setDistanceThreshold(distance_threshold_inliers);
@@ -1152,6 +1367,7 @@ private:
     bool extract_plane(
         pcl::PointCloud<pcl::PointXYZ>::Ptr remaining,
         const pcl::PointCloud<pcl::PointXYZ>::Ptr &context_cloud,
+        const Vec3 &gravity_up,
         int min_inliers,
         PlaneDetection &plane)
     {
@@ -1164,7 +1380,8 @@ private:
 
         if (ransac_bounded_plane_enable_) {
             if (!fit_bounded_plane(
-                    remaining, context_cloud, min_inliers, *inliers, *coefficients)) {
+                    remaining, context_cloud, gravity_up, min_inliers,
+                    *inliers, *coefficients)) {
                 return false;
             }
         } else {
@@ -1305,18 +1522,52 @@ private:
                 ? max_face_diagonal_multiplier_ * face_diagonal
                 : std::numeric_limits<double>::infinity();
         const bool plausible_face_extent = plane.dim_long <= max_face_extent;
+        const double normal_gravity_dot = std::fabs(dot_vec(normal, gravity_up));
+        const bool plausible_side_orientation =
+            normal_gravity_dot <= std::sin(
+                ransac_side_normal_gravity_max_deg_ * M_PI / 180.0);
+        const bool plausible_top_orientation =
+            normal_gravity_dot >= top_vertical_dot_min_;
+        const Vec3 long_axis =
+            plane.extent_u >= plane.extent_v ? plane.u_axis : plane.v_axis;
+        const bool plausible_side_roll =
+            !ransac_require_vertical_long_axis_ ||
+            std::fabs(dot_vec(long_axis, gravity_up)) >=
+                std::cos(ransac_vertical_long_axis_max_deg_ * M_PI / 180.0);
+        const bool plausible_side_scanlines =
+            !ransac_require_scanline_support_ ||
+            has_cube_like_scanline_support(
+                uv,
+                Eigen::Vector3f(
+                    static_cast<float>(normal.x), static_cast<float>(normal.y),
+                    static_cast<float>(normal.z)),
+                Eigen::Vector3f(
+                    static_cast<float>(u_axis.x), static_cast<float>(u_axis.y),
+                    static_cast<float>(u_axis.z)),
+                Eigen::Vector3f(
+                    static_cast<float>(v_axis.x), static_cast<float>(v_axis.y),
+                    static_cast<float>(v_axis.z)),
+                Eigen::Vector3f(
+                    static_cast<float>(gravity_up.x), static_cast<float>(gravity_up.y),
+                    static_cast<float>(gravity_up.z)),
+                ransac_scanline_max_thickness_m_,
+                ransac_scanline_min_points_,
+                ransac_scanline_min_count_,
+                ransac_scanline_min_span_fraction_ * cube_width_m_);
 
         plane.side_score = side_score;
         plane.top_score = top_score;
         plane.is_side = plausible_side_size &&
             plausible_face_extent &&
+            plausible_side_orientation &&
+            plausible_side_roll &&
+            plausible_side_scanlines &&
             side_score <= face_score_tolerance_multiplier_ * face_dimension_tolerance_m_;
         plane.is_top =
             plausible_top_size &&
             plausible_face_extent &&
             top_score <= face_score_tolerance_multiplier_ * face_dimension_tolerance_m_ &&
-            (std::fabs(plane.normal.z) >= top_vertical_dot_min_ ||
-             top_score + 0.03 < side_score);
+            plausible_top_orientation;
 
         plane.reject_reason.clear();
         if (!plane.is_side && !plane.is_top) {
@@ -1324,8 +1575,13 @@ private:
                 plane.reject_reason = "extent";
             } else if (!plausible_side_size && !plausible_top_size) {
                 plane.reject_reason = "dims";
-            } else if (plausible_top_size &&
-                       std::fabs(plane.normal.z) < top_vertical_dot_min_) {
+            } else if (!plausible_side_orientation && !plausible_top_orientation) {
+                plane.reject_reason = "gravity";
+            } else if (plausible_side_size && !plausible_side_roll) {
+                plane.reject_reason = "roll";
+            } else if (plausible_side_size && !plausible_side_scanlines) {
+                plane.reject_reason = "scanlines";
+            } else if (plausible_top_size && !plausible_top_orientation) {
                 plane.reject_reason = "score/tilt";
             } else {
                 plane.reject_reason = "score";
@@ -1511,6 +1767,20 @@ private:
     {
         const int64_t now_ns = this->now().nanoseconds();
         if (now_ns < mode_switch_guard_until_ns_.load()) return;
+
+        Vec3 gravity_up;
+        if (!gravity_up_in_cloud_frame(
+                cloud_msg.header.frame_id, cloud_msg.header.stamp, gravity_up)) {
+            /* Retain the historical cloud-z behaviour only when TF is
+             * temporarily unavailable. This keeps detections alive through a
+             * startup race, while making the degraded gravity check visible. */
+            gravity_up = {0.0, 0.0, 1.0};
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 5000,
+                "[detect_cube PLANES] no %s->%s transform for gravity gating; "
+                "falling back to cloud +Z",
+                gravity_frame_.c_str(), cloud_msg.header.frame_id.c_str());
+        }
         const bool use_camera_mode = use_camera_aruco_position_.load();
 
         std::vector<int64_t> aruco_ids;
@@ -1719,7 +1989,8 @@ private:
 
             for (int plane_idx = 0; plane_idx < max_planes_; ++plane_idx) {
                 PlaneDetection plane;
-                if (!extract_plane(remaining, context_cloud, min_inliers, plane)) {
+                if (!extract_plane(
+                        remaining, context_cloud, gravity_up, min_inliers, plane)) {
                     break;
                 }
                 extracted_planes.push_back(plane);
@@ -2146,6 +2417,12 @@ private:
     int ransac_context_max_points_{600};
     bool ransac_require_vertical_long_axis_{true};
     double ransac_vertical_long_axis_max_deg_{20.0};
+    double ransac_side_normal_gravity_max_deg_{20.0};
+    bool ransac_require_scanline_support_{true};
+    double ransac_scanline_max_thickness_m_{0.025};
+    int ransac_scanline_min_points_{4};
+    int ransac_scanline_min_count_{2};
+    double ransac_scanline_min_span_fraction_{0.30};
     int min_inliers_;
     int max_lines_;
     double t;
@@ -2168,6 +2445,7 @@ private:
     bool publish_candidate_plane_markers_{true};
     double max_distance_from_aruco_;
     double angular_tolerance_deg_;
+    std::string gravity_frame_{"map"};
     std::atomic_bool use_camera_aruco_position_{false};
     double camera_cone_half_angle_deg_{5.0};
     double camera_cone_depth_tolerance_m_{1.0};

@@ -333,7 +333,7 @@ public:
         /* Sigma published on /aruco_rover_pos for a 3-marker solution; the
          * 2-marker and 4+-marker tiers are scaled from it (see
          * marker_count_sigma_scale). */
-        declare_parameter<double>("solution_sigma_xy_m", 0.25);
+        declare_parameter<double>("solution_sigma_xy_m", 0.4);
         declare_parameter<double>("solution_sigma_yaw_deg", 5.0);
         solution_sigma_xy_m_ = get_parameter("solution_sigma_xy_m").as_double();
         const double solution_sigma_yaw_deg =
@@ -502,7 +502,7 @@ private:
     double bearing_sigma_rad_{5.0 * M_PI / 180.0};
     double edge_chi2_reject_{9.210};
     double max_normalized_chi2_{5.0};
-    double solution_sigma_xy_m_{0.1}; // Published 2-sigma for a 3-marker solution; scaled for 2 or 4+ markers.
+    double solution_sigma_xy_m_{0.2}; // Published 2-sigma for a 3-marker solution; scaled for 2 or 4+ markers.
 
     double solution_sigma_yaw_rad_{5.0 * M_PI / 180.0};
 

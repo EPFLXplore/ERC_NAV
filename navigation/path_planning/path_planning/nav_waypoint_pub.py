@@ -12,6 +12,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
+from action_msgs.msg import GoalStatus
 from nav2_msgs.action import FollowWaypoints
 from geometry_msgs.msg import PoseStamped, PoseArray, Point
 from nav_msgs.msg import Odometry, Path
@@ -23,7 +24,8 @@ import tf_transformations
 
 class WaypointFollower(Node):
     def __init__(self):
-        super().__init__("waypoint_follower")
+        # Keep this client distinct from Nav2's /waypoint_follower server.
+        super().__init__("waypoint_sender")
 
         # =====================================================================
         # Coordinate convention
@@ -96,6 +98,7 @@ class WaypointFollower(Node):
         # ---------------- State ----------------
         self.waypoints = self.create_waypoints()
         self.curr_waypoint_index = 0
+        self._last_active_waypoint = None
         self.current_speed = 0.0
 
         # ---------------- Nav2 action client ----------------
@@ -535,7 +538,24 @@ class WaypointFollower(Node):
 
     def feedback_callback(self, feedback):
         current_wp = feedback.feedback.current_waypoint
-        self.curr_waypoint_index = int(current_wp)
+        current_wp = int(current_wp)
+
+        if self._last_active_waypoint is None:
+            self._last_active_waypoint = current_wp
+        elif current_wp > self._last_active_waypoint:
+            for reached_wp in range(self._last_active_waypoint, current_wp):
+                self.report_waypoint_reached(reached_wp)
+            self._last_active_waypoint = current_wp
+
+        self.curr_waypoint_index = current_wp
+
+    def report_waypoint_reached(self, waypoint_index):
+        self.get_logger().info(
+            "\n"
+            "========================================\n"
+            f"  WAYPOINT {waypoint_index + 1} REACHED\n"
+            "========================================"
+        )
 
     def goal_response_callback(self, future):
         goal_handle = future.result()
@@ -549,7 +569,28 @@ class WaypointFollower(Node):
         self._get_result_future.add_done_callback(self.get_result_callback)
 
     def get_result_callback(self, future):
-        result = future.result().result
+        wrapped_result = future.result()
+        result = wrapped_result.result
+        missed_waypoints = list(getattr(result, "missed_waypoints", []))
+
+        if (
+            wrapped_result.status == GoalStatus.STATUS_SUCCEEDED
+            and not missed_waypoints
+            and self.waypoints
+        ):
+            self.report_waypoint_reached(len(self.waypoints) - 1)
+            self.curr_waypoint_index = len(self.waypoints)
+            self.get_logger().info(
+                "\n"
+                "========================================\n"
+                "  ALL WAYPOINTS COMPLETED\n"
+                "========================================"
+            )
+        else:
+            self.get_logger().warn(
+                f"FollowWaypoints ended with missed waypoints: {missed_waypoints}"
+            )
+
         self.get_logger().info(f"FollowWaypoints finished with result: {result}")
 
 
