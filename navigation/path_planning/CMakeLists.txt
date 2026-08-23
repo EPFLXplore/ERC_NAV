@@ -35,6 +35,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   path_planning/lidar_calibrator.py
   path_planning/nav_waypoint_pub.py
+  path_planning/nav_waypoints_pub_extra_time.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

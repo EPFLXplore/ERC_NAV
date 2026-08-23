@@ -475,7 +475,7 @@ private:
     // Phase 2: cube-refined init samples (after Phase-1 TF is broadcast).
     static constexpr int    NBR_INIT_CALLBACKS_PHASE2 = 10;
     static constexpr double CALLBACK_PERIOD_LIMIT = 1.0 / 15.0;
-    static constexpr double MAX_TRANSLATION_JUMP  = 2.5;
+    static constexpr double MAX_TRANSLATION_JUMP  = 10.0;
     /** 3 DOF need at least 2 range-bearing edges (4 residuals) to be solvable. */
     static constexpr size_t MIN_SOLVER_MARKERS = 2u;
     static constexpr double MAX_YAW_JUMP = 45.0 * M_PI / 180.0;

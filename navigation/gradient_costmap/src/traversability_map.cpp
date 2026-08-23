@@ -83,10 +83,23 @@ private:
     // Lists for New Scan
     vector<mapCell_t*> observingList1; // save newly observed cells for traversability update
 
+    // Synthetic observations are applied only while publishing. Saving the
+    // previous state lets the next scan restore real/unknown cells before any
+    // elevation fusion or traversability calculation takes place.
+    struct FootprintCellBackup {
+        int grid_index;
+        int observe_times;
+        float elevation;
+        float elevation_var;
+        float occupancy;
+        float occupancy_var;
+        bool needs_update;
+        float point_z;
+        float point_intensity;
+    };
+    vector<FootprintCellBackup> footprint_cell_backups_;
+
     // Inflation Parameters
-    int cost;
-    int cost_inflated;
-    float cost_kernel;
     std::string pointcloud_topic_;
     std::string output_local_topic_;
     std::string output_local_inflated_topic_;
@@ -101,6 +114,11 @@ private:
     float lidar_dead_zone_min_angle_deg_{-70.0f};
     float lidar_dead_zone_max_angle_deg_{-20.0f};
     float lidar_dead_zone_radius_m_{10.0f};
+    bool footprint_output_clearing_enabled_{true};
+    std::vector<std::array<float, 2>> footprint_clear_polygon_;
+    int footprint_observation_stride_cells_{2};
+    bool has_robot_pose_{false};
+    float robot_yaw_{0.0f};
     bool has_lidar_from_map_transform_{false};
     Eigen::Matrix3f lidar_from_map_rot_{Eigen::Matrix3f::Identity()};
     Eigen::Vector3f lidar_from_map_trans_{Eigen::Vector3f::Zero()};
@@ -164,6 +182,35 @@ public:
         lidar_dead_zone_min_angle_deg_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_min_angle_deg", -70.0));
         lidar_dead_zone_max_angle_deg_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_max_angle_deg", -20.0));
         lidar_dead_zone_radius_m_ = static_cast<float>(this->declare_parameter<double>("lidar_dead_zone_radius_m", 10.0));
+        footprint_output_clearing_enabled_ =
+            this->declare_parameter<bool>("footprint_output_clearing_enabled", true);
+        const std::vector<double> default_footprint_xy{
+            0.74, 0.318, 0.318, 0.74, -0.318, 0.74, -0.74, 0.318,
+            -0.74, -0.318, -0.318, -0.74, 0.318, -0.74, 0.74, -0.318};
+        const auto footprint_xy = this->declare_parameter<std::vector<double>>(
+            "footprint_clear_polygon_xy", default_footprint_xy);
+        footprint_observation_stride_cells_ =
+            this->declare_parameter<int>("footprint_observation_stride_cells", 2);
+        if (footprint_xy.size() >= 6 && footprint_xy.size() % 2 == 0) {
+            footprint_clear_polygon_.reserve(footprint_xy.size() / 2);
+            for (size_t i = 0; i < footprint_xy.size(); i += 2) {
+                footprint_clear_polygon_.push_back({
+                    static_cast<float>(footprint_xy[i]),
+                    static_cast<float>(footprint_xy[i + 1])});
+            }
+        } else {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "footprint_clear_polygon_xy must contain at least three flattened XY pairs; "
+                "producer footprint clearing is disabled");
+            footprint_output_clearing_enabled_ = false;
+        }
+        if (footprint_observation_stride_cells_ < 1) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "footprint_observation_stride_cells must be >= 1, clamping to 1");
+            footprint_observation_stride_cells_ = 1;
+        }
         output_lookup_radius_cells_ = this->declare_parameter<int>("output_lookup_radius_cells", 2);
         if (grid_size_m_ <= 0.0f) {
             RCLCPP_WARN(this->get_logger(), "grid_size_m must be > 0, using %.3f", static_cast<float>(globalMapDim));
@@ -242,7 +289,8 @@ public:
             if (name == "pointcloud_topic" || name == "output_local_topic" ||
                 name == "output_local_inflated_topic" || name == "output_elevation_topic" ||
                 name == "map_frame" || name == "base_frame" || name == "source_frame" ||
-                name == "grid_size_m" || name == "grid_resolution_m") {
+                name == "grid_size_m" || name == "grid_resolution_m" ||
+                name == "footprint_clear_polygon_xy") {
                 reason = name + " is structural (topics/frames/grid allocation); restart the node to change it";
             } else if (name == "inflation_radius" && p.as_int() < 0) {
                 reason = "inflation_radius must be >= 0";
@@ -262,6 +310,8 @@ public:
                 reason = "lidar_dead_zone_radius_m must be >= 0";
             } else if (name == "cell_clear_timeout_s" && p.as_double() < 0.0) {
                 reason = "cell_clear_timeout_s must be >= 0 (0 disables)";
+            } else if (name == "footprint_observation_stride_cells" && p.as_int() < 1) {
+                reason = "footprint_observation_stride_cells must be >= 1";
             }
             if (!reason.empty()) {
                 result.successful = false;
@@ -287,6 +337,8 @@ public:
             else if (name == "lidar_dead_zone_min_angle_deg") lidar_dead_zone_min_angle_deg_ = static_cast<float>(p.as_double());
             else if (name == "lidar_dead_zone_max_angle_deg") lidar_dead_zone_max_angle_deg_ = static_cast<float>(p.as_double());
             else if (name == "lidar_dead_zone_radius_m")   lidar_dead_zone_radius_m_ = static_cast<float>(p.as_double());
+            else if (name == "footprint_output_clearing_enabled") footprint_output_clearing_enabled_ = p.as_bool();
+            else if (name == "footprint_observation_stride_cells") footprint_observation_stride_cells_ = static_cast<int>(p.as_int());
             else if (name == "cell_clear_timeout_s")       cell_clear_timeout_s_ = static_cast<float>(p.as_double());
             else if (name == "fixed_origin_x")             fixed_origin_x_ = p.as_double();
             else if (name == "fixed_origin_y")             fixed_origin_y_ = p.as_double();
@@ -380,6 +432,10 @@ public:
         
         // Lock the the processes to prevent new data from interrupting old data
         std::lock_guard<std::mutex> lock(mtx);
+
+        // Remove the synthetic footprint observations from the preceding
+        // publication before ingesting real measurements from this scan.
+        restoreFootprintObservationCells();
 
         ++current_scan_id_;
         current_scan_time_ = this->now();
@@ -503,9 +559,14 @@ public:
             occupancyMap2DInflated.info.origin.position.y = fixed_origin_y_;
         }
         occupancyMap2DInflated.info.origin.position.z = 0.0;
+        occupancyMap2DInflated.info.origin.orientation.x = 0.0;
+        occupancyMap2DInflated.info.origin.orientation.y = 0.0;
+        occupancyMap2DInflated.info.origin.orientation.z = 0.0;
+        occupancyMap2DInflated.info.origin.orientation.w = 1.0;
         // Fill data
-        occupancyMap2DInflated.data.clear();
-        occupancyMap2DInflated.data.resize(output_map_cells_ * output_map_cells_, -1);
+        occupancyMap2DInflated.data.assign(output_map_cells_ * output_map_cells_, -1);
+        std::vector<int8_t> source_costs(output_map_cells_ * output_map_cells_, -1);
+        std::vector<uint8_t> footprint_mask(output_map_cells_ * output_map_cells_, 0);
 
 
         const float origin_x = occupancyMap2DInflated.info.origin.position.x;
@@ -513,6 +574,14 @@ public:
         const float half_res = grid_resolution_m_ / 2.0f;
         const float inv_rad1 = 1.0f / (radius_inflation + 1);
 
+        // Rasterize the footprint only over its small grid-aligned bounding
+        // box. The former implementation ran the polygon test for every cell
+        // in the full output map, which was especially expensive at 0.05 m.
+        markFootprintCellsInGrid(occupancyMap2DInflated, footprint_mask);
+
+        // First pass: calculate each observed cell's uninflated cost. Keeping
+        // this separate from inflation makes the result independent of scan
+        // order; a later source cell can no longer erase an earlier kernel.
         for (int i = 0; i < output_map_cells_; ++i) {
             for (int j = 0; j < output_map_cells_; ++j) {
                 PointType point;
@@ -521,6 +590,11 @@ public:
                 point.z = 0.0f;
 
                 int index = i + j * output_map_cells_;
+                if (footprint_mask[index]) {
+                    source_costs[index] = 0;
+                    occupancyMap2DInflated.data[index] = 0;
+                    continue;
+                }
                 if (isInLidarDeadZone(point)) {
                     occupancyMap2DInflated.data[index] = 100;
                     continue;
@@ -529,10 +603,22 @@ public:
                 mapCell_t *cell = getOutputCellFromPoint(point);
                 if (!isCellKnownForOutput(cell)) continue;
 
-                occupancyMap2DInflated.data[index] = 0;
+                const int source_cost = std::clamp(
+                    static_cast<int>(applySigmoidToOccupancy(cell->occupancy) * 100.0f),
+                    0, 100);
+                source_costs[index] = static_cast<int8_t>(source_cost);
+                occupancyMap2DInflated.data[index] = static_cast<int8_t>(source_cost);
+            }
+        }
 
-                cost = int(applySigmoidToOccupancy(cell->occupancy) * 100);
-                if (cost <= 0) continue;
+        // Second pass: spread a decayed copy of each positive source cost.
+        // At distance zero the kernel is 1, so the source keeps its original
+        // value. The old `cost * (1 + kernel)` doubled every source and, with
+        // a small decay factor, nearly doubled the whole local patch.
+        for (int i = 0; i < output_map_cells_; ++i) {
+            for (int j = 0; j < output_map_cells_; ++j) {
+                const int source_cost = source_costs[i + j * output_map_cells_];
+                if (source_cost <= 0) continue;
 
                 for (int m = -radius_inflation; m <= radius_inflation; ++m) {
                     for (int n = -radius_inflation; n <= radius_inflation; ++n) {
@@ -541,16 +627,21 @@ public:
                         if (x < 0 || x >= output_map_cells_ || y < 0 || y >= output_map_cells_)
                             continue;
                         int kernel_idx = x + y * output_map_cells_;
-                        cost_kernel = std::exp(-alpha_inflation * std::sqrt(float(m * m + n * n)) * inv_rad1);
-                        cost_inflated = int(cost * (1 + cost_kernel));
-                        cost_inflated = std::min(cost_inflated, 100);
+                        if (footprint_mask[kernel_idx])
+                            continue;
+                        const float cost_kernel = std::exp(
+                            -alpha_inflation * std::sqrt(float(m * m + n * n)) * inv_rad1);
+                        const int cost_inflated = std::clamp(
+                            static_cast<int>(source_cost * cost_kernel), 0, 100);
                         if (occupancyMap2DInflated.data[kernel_idx] < cost_inflated) {
-                            occupancyMap2DInflated.data[kernel_idx] = cost_inflated;
+                            occupancyMap2DInflated.data[kernel_idx] =
+                                static_cast<int8_t>(cost_inflated);
                         }
                     }
                 }
             }
         }
+
     }
 
     void TraversabilityThread(){
@@ -603,6 +694,10 @@ public:
         {
             std::lock_guard<std::mutex> lock(mtx);
 
+            // Synthetic footprint cells must never participate in stale-cell
+            // handling or terrain plane fitting.
+            restoreFootprintObservationCells();
+
             const size_t clearedCells = clearStaleCells();
 
             if (observingList1.empty() && clearedCells == 0)
@@ -619,9 +714,14 @@ public:
         }
 
         {
-        std::lock_guard<std::mutex> lock(mtx);
-        updateOccupancyGrid();
-        publishMap();
+            std::lock_guard<std::mutex> lock(mtx);
+            const size_t footprint_cells = injectFootprintObservationCells();
+            updateOccupancyGrid();
+            publishMap();
+            RCLCPP_INFO_THROTTLE(
+                this->get_logger(), *this->get_clock(), 5000,
+                "Injected %zu synthetic zero-cost observations inside the robot footprint",
+                footprint_cells);
         }
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "Calculating traversability");
     }
@@ -782,12 +882,19 @@ public:
     }
 
     bool getRobotPosition(){
+        has_robot_pose_ = false;
         try{
             auto transform = tf_buffer_->lookupTransform(map_frame_, base_frame_, tf2::TimePointZero);
             
             robotPoint.x = transform.transform.translation.x;
             robotPoint.y = transform.transform.translation.y;
             robotPoint.z = transform.transform.translation.z;
+
+            const auto &q = transform.transform.rotation;
+            robot_yaw_ = static_cast<float>(std::atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z)));
+            has_robot_pose_ = true;
 
             updateLidarDeadZoneTransform();
 
@@ -871,6 +978,10 @@ public:
             occupancyMap2D.info.origin.position.y = fixed_origin_y_;
         }
         occupancyMap2D.info.origin.position.z = 0.0;
+        occupancyMap2D.info.origin.orientation.x = 0.0;
+        occupancyMap2D.info.origin.orientation.y = 0.0;
+        occupancyMap2D.info.origin.orientation.z = 0.0;
+        occupancyMap2D.info.origin.orientation.w = 1.0;
         
         // Fill data
         occupancyMap2D.data.clear();
@@ -896,12 +1007,20 @@ public:
             }
         }
 
+        const size_t cleared_cells = clearFootprintInGrid(occupancyMap2D);
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
+            cleared_cells, output_local_topic_.c_str());
         pubOccupancyMapLocal->publish(occupancyMap2D);
     }
 
     void publishLocalOccupancyGridInflated(){
-        
-
+        const size_t cleared_cells = clearFootprintInGrid(occupancyMap2DInflated);
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
+            cleared_cells, output_local_inflated_topic_.c_str());
         pubOccupancyMapLocalInflated->publish(occupancyMap2DInflated);
     }
 
@@ -963,6 +1082,320 @@ public:
 
         const float angle_deg = std::atan2(lidar_point.y(), lidar_point.x()) * 180.0f / static_cast<float>(M_PI);
         return angleInSectorDeg(angle_deg, lidar_dead_zone_min_angle_deg_, lidar_dead_zone_max_angle_deg_);
+    }
+
+    bool isInRobotFootprint(const PointType &point) const {
+        if (!footprint_output_clearing_enabled_ || footprint_clear_polygon_.size() < 3) {
+            return false;
+        }
+
+        const float dx = point.x - robotPoint.x;
+        const float dy = point.y - robotPoint.y;
+        float x = dx;
+        float y = dy;
+
+        // In local mode the published grid is already in base_link and is
+        // centered on the robot. Do not make footprint clearing depend on a
+        // second TF condition in that mode. For a map-frame grid, transform
+        // the cell into base_link using the robot pose as before.
+        const bool robot_centered_base_grid =
+            use_robot_centered_origin_ && map_frame_ == base_frame_;
+        if (!robot_centered_base_grid) {
+            if (!has_robot_pose_) {
+                return false;
+            }
+            const float cos_yaw = std::cos(robot_yaw_);
+            const float sin_yaw = std::sin(robot_yaw_);
+            x = cos_yaw * dx + sin_yaw * dy;
+            y = -sin_yaw * dx + cos_yaw * dy;
+        }
+
+        bool inside = false;
+        for (size_t i = 0, j = footprint_clear_polygon_.size() - 1;
+            i < footprint_clear_polygon_.size(); j = i++) {
+            const auto &pi = footprint_clear_polygon_[i];
+            const auto &pj = footprint_clear_polygon_[j];
+
+            const float edge_x = pi[0] - pj[0];
+            const float edge_y = pi[1] - pj[1];
+            const float point_x = x - pj[0];
+            const float point_y = y - pj[1];
+            const float cross = edge_x * point_y - edge_y * point_x;
+            if (std::abs(cross) <= 1e-6f &&
+                x >= std::min(pi[0], pj[0]) - 1e-6f &&
+                x <= std::max(pi[0], pj[0]) + 1e-6f &&
+                y >= std::min(pi[1], pj[1]) - 1e-6f &&
+                y <= std::max(pi[1], pj[1]) + 1e-6f) {
+                return true;
+            }
+
+            const bool crosses_scanline = (pi[1] > y) != (pj[1] > y);
+            if (crosses_scanline) {
+                const float intersection_x =
+                    pj[0] + (y - pj[1]) * (pi[0] - pj[0]) / (pi[1] - pj[1]);
+                if (x < intersection_x) {
+                    inside = !inside;
+                }
+            }
+        }
+        return inside;
+    }
+
+    bool isFootprintObservationCell(const PointType &point) const {
+        int grid_x;
+        int grid_y;
+        if (!getGridIndexFromPoint(point, grid_x, grid_y)) {
+            return false;
+        }
+
+        return grid_x % footprint_observation_stride_cells_ == 0 &&
+               grid_y % footprint_observation_stride_cells_ == 0;
+    }
+
+    // Restore the cells changed by injectFootprintObservationCells(). This is
+    // called before processing the next real scan so synthetic observations do
+    // not affect elevation fusion, slope fitting, or persist behind the rover.
+    void restoreFootprintObservationCells() {
+        for (const auto &backup : footprint_cell_backups_) {
+            mapCell_t *cell = getCellAt(
+                backup.grid_index % map_width_cells_,
+                backup.grid_index / map_width_cells_);
+            if (cell == nullptr) {
+                continue;
+            }
+
+            cell->observeTimes = backup.observe_times;
+            cell->elevation = backup.elevation;
+            cell->elevationVar = backup.elevation_var;
+            cell->occupancy = backup.occupancy;
+            cell->occupancyVar = backup.occupancy_var;
+            cell->needsUpdate = backup.needs_update;
+            cell->xyz->z = backup.point_z;
+            cell->xyz->intensity = backup.point_intensity;
+        }
+        footprint_cell_backups_.clear();
+    }
+
+    // Add sampled observations at centers of the existing internal grid.
+    // Unknown cells become synthetic observations and already observed cells
+    // retain their elevation, but every sampled footprint cost is forced to
+    // zero. Their original state is restored before the next scan.
+    size_t injectFootprintObservationCells() {
+        restoreFootprintObservationCells();
+
+        if (!footprint_output_clearing_enabled_ || footprint_clear_polygon_.size() < 3) {
+            return 0;
+        }
+
+        const bool robot_centered_base_grid =
+            use_robot_centered_origin_ && map_frame_ == base_frame_;
+        if (!robot_centered_base_grid && !has_robot_pose_) {
+            return 0;
+        }
+
+        const float yaw = robot_centered_base_grid ? 0.0f : robot_yaw_;
+        const float cos_yaw = std::cos(yaw);
+        const float sin_yaw = std::sin(yaw);
+        float min_x = std::numeric_limits<float>::max();
+        float min_y = std::numeric_limits<float>::max();
+        float max_x = std::numeric_limits<float>::lowest();
+        float max_y = std::numeric_limits<float>::lowest();
+
+        for (const auto &vertex : footprint_clear_polygon_) {
+            const float map_x = robotPoint.x + cos_yaw * vertex[0] - sin_yaw * vertex[1];
+            const float map_y = robotPoint.y + sin_yaw * vertex[0] + cos_yaw * vertex[1];
+            min_x = std::min(min_x, map_x);
+            min_y = std::min(min_y, map_y);
+            max_x = std::max(max_x, map_x);
+            max_y = std::max(max_y, map_y);
+        }
+
+        const int min_grid_x = std::max(
+            0, static_cast<int>(std::floor((min_x - map_origin_x_) / grid_resolution_m_)) - 1);
+        const int min_grid_y = std::max(
+            0, static_cast<int>(std::floor((min_y - map_origin_y_) / grid_resolution_m_)) - 1);
+        const int max_grid_x = std::min(
+            map_width_cells_ - 1,
+            static_cast<int>(std::floor((max_x - map_origin_x_) / grid_resolution_m_)) + 1);
+        const int max_grid_y = std::min(
+            map_height_cells_ - 1,
+            static_cast<int>(std::floor((max_y - map_origin_y_) / grid_resolution_m_)) + 1);
+
+        if (min_grid_x <= max_grid_x && min_grid_y <= max_grid_y) {
+            const size_t bounding_cell_count =
+                static_cast<size_t>(max_grid_x - min_grid_x + 1) *
+                static_cast<size_t>(max_grid_y - min_grid_y + 1);
+            footprint_cell_backups_.reserve(bounding_cell_count);
+        }
+
+        for (int grid_y = min_grid_y; grid_y <= max_grid_y; ++grid_y) {
+            for (int grid_x = min_grid_x; grid_x <= max_grid_x; ++grid_x) {
+                mapCell_t *cell = getCellAt(grid_x, grid_y);
+                if (cell == nullptr || !isFootprintObservationCell(*cell->xyz) ||
+                    !isInRobotFootprint(*cell->xyz)) {
+                    continue;
+                }
+
+                footprint_cell_backups_.push_back({
+                    cell->grid.gridIndex,
+                    cell->observeTimes,
+                    cell->elevation,
+                    cell->elevationVar,
+                    cell->occupancy,
+                    cell->occupancyVar,
+                    cell->needsUpdate,
+                    cell->xyz->z,
+                    cell->xyz->intensity});
+
+                if (cell->observeTimes <= 0 || !std::isfinite(cell->elevation)) {
+                    // A synthetic observation needs a finite height for the
+                    // PointCloud2 output. It is excluded from calculations and
+                    // restored before the next scan, so this height is only a
+                    // visualization placeholder.
+                    cell->elevation = robotPoint.z;
+                    cell->elevationVar = 0.0f;
+                    cell->xyz->z = robotPoint.z;
+                }
+                cell->observeTimes = std::max(1, cell->observeTimes);
+                cell->occupancy = 0.0f;
+                cell->occupancyVar = 0.0f;
+                cell->needsUpdate = false;
+                cell->xyz->intensity = 0.0f;
+            }
+        }
+
+        return footprint_cell_backups_.size();
+    }
+
+    // Rasterize sampled robot-footprint cells into an existing occupancy-grid-
+    // sized mask. Only cells in the footprint bounding box require a polygon
+    // test; all later full-map passes use a constant-time mask lookup.
+    size_t markFootprintCellsInGrid(
+        const nav_msgs::msg::OccupancyGrid &grid,
+        std::vector<uint8_t> &footprint_mask) const {
+        const size_t grid_cell_count =
+            static_cast<size_t>(grid.info.width) * static_cast<size_t>(grid.info.height);
+        if (!footprint_output_clearing_enabled_ || footprint_clear_polygon_.size() < 3 ||
+            grid.info.resolution <= 0.0 || grid.info.width == 0 || grid.info.height == 0 ||
+            footprint_mask.size() != grid_cell_count) {
+            return 0;
+        }
+
+        const bool robot_centered_base_grid =
+            use_robot_centered_origin_ && map_frame_ == base_frame_;
+        if (!robot_centered_base_grid && !has_robot_pose_) {
+            return 0;
+        }
+
+        const float yaw = robot_centered_base_grid ? 0.0f : robot_yaw_;
+        const float cos_yaw = std::cos(yaw);
+        const float sin_yaw = std::sin(yaw);
+        float min_x = std::numeric_limits<float>::max();
+        float min_y = std::numeric_limits<float>::max();
+        float max_x = std::numeric_limits<float>::lowest();
+        float max_y = std::numeric_limits<float>::lowest();
+
+        for (const auto &vertex : footprint_clear_polygon_) {
+            const float map_x = robotPoint.x + cos_yaw * vertex[0] - sin_yaw * vertex[1];
+            const float map_y = robotPoint.y + sin_yaw * vertex[0] + cos_yaw * vertex[1];
+            min_x = std::min(min_x, map_x);
+            min_y = std::min(min_y, map_y);
+            max_x = std::max(max_x, map_x);
+            max_y = std::max(max_y, map_y);
+        }
+
+        const float origin_x = static_cast<float>(grid.info.origin.position.x);
+        const float origin_y = static_cast<float>(grid.info.origin.position.y);
+        const float resolution = grid.info.resolution;
+        const int width = static_cast<int>(grid.info.width);
+        const int height = static_cast<int>(grid.info.height);
+        const int min_cell_x = std::max(
+            0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - 1);
+        const int min_cell_y = std::max(
+            0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - 1);
+        const int max_cell_x = std::min(
+            width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + 1);
+        const int max_cell_y = std::min(
+            height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + 1);
+
+        size_t marked_cells = 0;
+        for (int y = min_cell_y; y <= max_cell_y; ++y) {
+            for (int x = min_cell_x; x <= max_cell_x; ++x) {
+                PointType point;
+                point.x = origin_x + (static_cast<float>(x) + 0.5f) * resolution;
+                point.y = origin_y + (static_cast<float>(y) + 0.5f) * resolution;
+                point.z = 0.0f;
+                if (!isFootprintObservationCell(point) || !isInRobotFootprint(point)) {
+                    continue;
+                }
+
+                footprint_mask[
+                    static_cast<size_t>(x) + static_cast<size_t>(y) * grid.info.width] = 1;
+                ++marked_cells;
+            }
+        }
+        return marked_cells;
+    }
+
+    // This is intentionally the last operation on an OccupancyGrid before it
+    // is published. It synthesizes sampled free cells inside the configured
+    // footprint even when the upstream self-filter removed lidar returns there.
+    size_t clearFootprintInGrid(nav_msgs::msg::OccupancyGrid &grid) const {
+        if (!footprint_output_clearing_enabled_ || footprint_clear_polygon_.size() < 3 ||
+            grid.info.resolution <= 0.0 || grid.info.width == 0 || grid.info.height == 0 ||
+            grid.data.size() != static_cast<size_t>(grid.info.width) * grid.info.height) {
+            return 0;
+        }
+
+        const bool robot_centered_base_grid =
+            use_robot_centered_origin_ && map_frame_ == base_frame_;
+        if (!robot_centered_base_grid && !has_robot_pose_) {
+            return 0;
+        }
+
+        const float yaw = robot_centered_base_grid ? 0.0f : robot_yaw_;
+        const float cos_yaw = std::cos(yaw);
+        const float sin_yaw = std::sin(yaw);
+        float min_x = std::numeric_limits<float>::max();
+        float min_y = std::numeric_limits<float>::max();
+        float max_x = std::numeric_limits<float>::lowest();
+        float max_y = std::numeric_limits<float>::lowest();
+
+        for (const auto &vertex : footprint_clear_polygon_) {
+            const float map_x = robotPoint.x + cos_yaw * vertex[0] - sin_yaw * vertex[1];
+            const float map_y = robotPoint.y + sin_yaw * vertex[0] + cos_yaw * vertex[1];
+            min_x = std::min(min_x, map_x);
+            min_y = std::min(min_y, map_y);
+            max_x = std::max(max_x, map_x);
+            max_y = std::max(max_y, map_y);
+        }
+
+        const float origin_x = static_cast<float>(grid.info.origin.position.x);
+        const float origin_y = static_cast<float>(grid.info.origin.position.y);
+        const float resolution = grid.info.resolution;
+        const int width = static_cast<int>(grid.info.width);
+        const int height = static_cast<int>(grid.info.height);
+        const int min_cell_x = std::max(0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - 1);
+        const int min_cell_y = std::max(0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - 1);
+        const int max_cell_x = std::min(width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + 1);
+        const int max_cell_y = std::min(height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + 1);
+
+        size_t cleared_cells = 0;
+        for (int y = min_cell_y; y <= max_cell_y; ++y) {
+            for (int x = min_cell_x; x <= max_cell_x; ++x) {
+                PointType point;
+                point.x = origin_x + (static_cast<float>(x) + 0.5f) * resolution;
+                point.y = origin_y + (static_cast<float>(y) + 0.5f) * resolution;
+                point.z = 0.0f;
+                if (!isFootprintObservationCell(point) || !isInRobotFootprint(point)) {
+                    continue;
+                }
+
+                grid.data[static_cast<size_t>(x) + static_cast<size_t>(y) * grid.info.width] = 0;
+                ++cleared_cells;
+            }
+        }
+        return cleared_cells;
     }
 
     void publishTraversabilityMap(){

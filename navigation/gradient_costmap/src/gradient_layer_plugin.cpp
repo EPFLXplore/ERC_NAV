@@ -1,6 +1,7 @@
 #include "gradient_layer_plugin.hpp"
 
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/footprint.hpp"
 
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -76,6 +77,54 @@ bool readTokenSkippingComments(std::istream & in, std::string & token)
   return false;
 }
 
+unsigned char occupancyToNav2Cost(unsigned int occupancy)
+{
+  constexpr unsigned int kMaxOccupancy = 100U;
+  constexpr unsigned int kMaxNonLethalCost = 252U;
+  const unsigned int bounded_occupancy = std::min(occupancy, kMaxOccupancy);
+  return static_cast<unsigned char>(
+    (bounded_occupancy * kMaxNonLethalCost) / kMaxOccupancy);
+}
+
+bool pointInPolygon(
+  double x, double y,
+  const std::vector<geometry_msgs::msg::Point> & polygon)
+{
+  if (polygon.size() < 3) {
+    return false;
+  }
+
+  bool inside = false;
+  for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
+    const auto & pi = polygon[i];
+    const auto & pj = polygon[j];
+
+    // Treat points on an edge as inside so no one-cell dead-zone outline is
+    // allowed to leak through at the footprint boundary.
+    const double edge_x = pi.x - pj.x;
+    const double edge_y = pi.y - pj.y;
+    const double point_x = x - pj.x;
+    const double point_y = y - pj.y;
+    const double cross = edge_x * point_y - edge_y * point_x;
+    if (std::abs(cross) <= 1e-9 &&
+      x >= std::min(pi.x, pj.x) - 1e-9 && x <= std::max(pi.x, pj.x) + 1e-9 &&
+      y >= std::min(pi.y, pj.y) - 1e-9 && y <= std::max(pi.y, pj.y) + 1e-9)
+    {
+      return true;
+    }
+
+    const bool crosses_scanline = (pi.y > y) != (pj.y > y);
+    if (crosses_scanline) {
+      const double intersection_x =
+        pj.x + (y - pj.y) * (pi.x - pj.x) / (pi.y - pj.y);
+      if (x < intersection_x) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
 }  // namespace
 
 namespace gradient_layer
@@ -100,6 +149,7 @@ void GradientLayer::onInitialize()
   declareParameter("map_subscribe_transient_local", rclcpp::ParameterValue(true));
   declareParameter("map_subscribe_reliable", rclcpp::ParameterValue(true));
   declareParameter("expand_update_bounds", rclcpp::ParameterValue(true));
+  declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(false));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.2));
   declareParameter("persistent_patch", rclcpp::ParameterValue(false));
   declareParameter("persistence_timeout", rclcpp::ParameterValue(8.0));
@@ -117,6 +167,7 @@ void GradientLayer::onInitialize()
   node->get_parameter(name_ + ".map_subscribe_transient_local", map_subscribe_transient_local);
   node->get_parameter(name_ + ".map_subscribe_reliable", map_subscribe_reliable);
   node->get_parameter(name_ + ".expand_update_bounds", expand_update_bounds_);
+  node->get_parameter(name_ + ".footprint_clearing_enabled", footprint_clearing_enabled_);
   node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
   node->get_parameter(name_ + ".persistent_patch", persistent_patch_);
   node->get_parameter(name_ + ".persistence_timeout", persistence_timeout_);
@@ -162,10 +213,12 @@ void GradientLayer::onInitialize()
   current_ = true;
   RCLCPP_INFO(
     node->get_logger(),
-    "GradientLayer initialized, subscribing to %s (transient_local=%s, reliable=%s)",
+    "GradientLayer initialized, subscribing to %s "
+    "(transient_local=%s, reliable=%s, footprint_clearing_enabled=%s)",
     topic.c_str(),
     map_subscribe_transient_local ? "true" : "false",
-    map_subscribe_reliable ? "true" : "false");
+    map_subscribe_reliable ? "true" : "false",
+    footprint_clearing_enabled_ ? "true" : "false");
 }
 
 bool GradientLayer::loadMapFromYaml(const std::string & yaml_path)
@@ -357,9 +410,26 @@ void GradientLayer::resizePersistenceIfNeeded(const nav2_costmap_2d::Costmap2D &
 }
 
 void GradientLayer::updateBounds(
-  double /*robot_x*/, double /*robot_y*/, double /*robot_yaw*/,
+  double robot_x, double robot_y, double robot_yaw,
   double * min_x, double * min_y, double * max_x, double * max_y)
 {
+  transformed_footprint_.clear();
+  if (footprint_clearing_enabled_ && layered_costmap_) {
+    nav2_costmap_2d::transformFootprint(
+      robot_x, robot_y, robot_yaw,
+      layered_costmap_->getFootprint(), transformed_footprint_);
+
+    // Footprint clearing must request its own update region. This keeps the
+    // footprint at zero even when the live map is missing or this layer is
+    // configured not to expand to the full incoming grid.
+    for (const auto & point : transformed_footprint_) {
+      *min_x = std::min(*min_x, point.x);
+      *min_y = std::min(*min_y, point.y);
+      *max_x = std::max(*max_x, point.x);
+      *max_y = std::max(*max_y, point.y);
+    }
+  }
+
   if (use_map_file_) {
     if (!file_map_loaded_) {
       return;
@@ -470,38 +540,18 @@ void GradientLayer::updateCosts(
         const int sample_x = file_flip_x_ ? (file_width_ - 1 - map_x) : map_x;
         const int sample_y = file_flip_y_ ? (file_height_ - 1 - map_y) : map_y;
         const int index = sample_y * file_width_ + sample_x;
-        // const unsigned char pixel = file_data_[index];
-
-        // // PGM ROS convention: white (254-255) = free, black (0) = occupied,
-        // // gray (205) = unknown. Convert to costmap values.
-        // if (pixel == 205) {
-        //   master_grid.setCost(i, j, nav2_costmap_2d::NO_INFORMATION);
-        // } else {
-        //   const double occ = (255.0 - pixel) / 255.0;
-        //   if (occ < 0.25) {
-        //     master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
-        //   } else if (occ > 0.65) {
-        //     master_grid.setCost(i, j, nav2_costmap_2d::LETHAL_OBSTACLE);
-        //   } else {
-        //     auto scaled = static_cast<unsigned char>(
-        //       1 + (occ - 0.25) / (0.65 - 0.25) * 251);
-        //     master_grid.setCost(i, j, scaled);
-        //   }
-        // }
         const unsigned char pixel = file_data_[index];
 
-        // Saved PGM semantics:
-        //   255 = safest / free
-        //     0 = most dangerous
-        //
-        // Convert directly to Nav2 cost range:
-        //   0   = FREE_SPACE
-        //   252 = maximum non-lethal traversal cost
-        // const double danger = (255.0 - static_cast<double>(pixel)) / 255.0;
-        const double danger = (static_cast<double>(pixel)) / 255.0;
-
-        const unsigned char scaled_cost =
-          static_cast<unsigned char>(std::round(danger * 252.0));
+        // Nav2 raw OccupancyGrid PGM semantics used by the saved gradient map:
+        //   0..100 = traversability cost
+        //   255    = unknown
+        // Match the live OccupancyGrid path by scaling known values into the
+        // full non-lethal Nav2 cost range (0..252).
+        if (pixel > 100) {
+          master_grid.setCost(i, j, nav2_costmap_2d::NO_INFORMATION);
+          continue;
+        }
+        const unsigned char scaled_cost = occupancyToNav2Cost(pixel);
 
         master_grid.setCost(i, j, scaled_cost);
       }
@@ -509,10 +559,52 @@ void GradientLayer::updateCosts(
     return;
   }
 
-  if (!active_map_ || !grid_from_master_.valid) return;
-
   resizePersistenceIfNeeded(master_grid);
   std::fill(gradient_touched_cells_.begin(), gradient_touched_cells_.end(), 0);
+
+  // Keep this clipping-safe instead of Costmap2D::setConvexPolygonCost(),
+  // which rejects the whole polygon when any footprint vertex is outside the
+  // fixed global costmap.
+  auto clear_footprint = [&]() {
+    if (!footprint_clearing_enabled_) {
+      return;
+    }
+    size_t cleared_cells = 0;
+    for (int i = min_i; i < max_i; ++i) {
+      for (int j = min_j; j < max_j; ++j) {
+        double wx, wy;
+        master_grid.mapToWorld(i, j, wx, wy);
+        if (!pointInPolygon(wx, wy, transformed_footprint_)) {
+          continue;
+        }
+
+        const size_t master_index = master_grid.getIndex(i, j);
+        master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
+        gradient_owned_cells_[master_index] = 0;
+        gradient_touched_cells_[master_index] = 1;
+        persistent_stamps_ms_[master_index] = 0;
+        persistent_costs_[master_index] = nav2_costmap_2d::FREE_SPACE;
+        ++cleared_cells;
+      }
+    }
+    if (cleared_cells == 0 && transformed_footprint_.size() >= 3 && clock_) {
+      RCLCPP_WARN_THROTTLE(
+        tf_logger_, *clock_, 5000,
+        "GradientLayer '%s': no master-costmap cells lie inside the robot footprint; "
+        "the footprint may be outside the fixed costmap bounds.",
+        name_.c_str());
+    } else if (cleared_cells > 0 && clock_) {
+      RCLCPP_INFO_THROTTLE(
+        tf_logger_, *clock_, 5000,
+        "GradientLayer '%s': forced %zu footprint cells to FREE_SPACE.",
+        name_.c_str(), cleared_cells);
+    }
+  };
+
+  if (!active_map_ || !grid_from_master_.valid) {
+    clear_footprint();
+    return;
+  }
 
   const double inv_res   = 1.0 / active_map_->info.resolution;
   const double grid_ox   = active_map_->info.origin.position.x;
@@ -580,7 +672,7 @@ void GradientLayer::updateCosts(
       }
 
       // Scale 1-100 occupancy to 2-252 costmap range.
-      const unsigned char scaled_cost = static_cast<unsigned char>((cost * 252) / 100);
+      const unsigned char scaled_cost = occupancyToNav2Cost(static_cast<unsigned int>(cost));
       if (persistent_patch_ && master_index < persistent_costs_.size()) {
         if (scaled_cost < persistence_min_cost_) {
           continue;
@@ -630,6 +722,11 @@ void GradientLayer::updateCosts(
       persistent_costs_[master_index] = nav2_costmap_2d::FREE_SPACE;
     }
   }
+
+  // This layer is last in the configured plugin order. Clear after all live,
+  // dead-zone, persistence, and stale-cell writes so the footprint is always
+  // the final FREE_SPACE value in the combined costmap.
+  clear_footprint();
 }
 
 }  // namespace gradient_layer

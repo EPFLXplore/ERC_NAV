@@ -4,6 +4,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
+#include "geometry_msgs/msg/point.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 
 #include <cstdint>
@@ -72,6 +73,7 @@ private:
 
   bool use_map_file_{false};
   bool expand_update_bounds_{true};
+  bool footprint_clearing_enabled_{false};
   bool persistent_patch_{false};
   bool file_map_loaded_{false};
   double file_resolution_{0.0};
@@ -104,6 +106,11 @@ private:
   PlanarTransform2D master_from_grid_;
   PlanarTransform2D grid_from_master_;
   double transform_tolerance_{0.2};
+
+  // Robot footprint transformed into the master costmap frame for this
+  // update cycle. Cells inside it are forced to FREE_SPACE when footprint
+  // clearing is enabled.
+  std::vector<geometry_msgs::msg::Point> transformed_footprint_;
 
   rclcpp::Logger tf_logger_{rclcpp::get_logger("gradient_layer")};
   rclcpp::Clock::SharedPtr clock_;

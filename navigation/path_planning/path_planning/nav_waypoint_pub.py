@@ -551,9 +551,19 @@ class WaypointFollower(Node):
 
     def report_waypoint_reached(self, waypoint_index):
         self.get_logger().info(
-            "\n"
             "========================================\n"
+            "\n"
+            "\n"
+            "\n"
+            "\n"
+            "\n"
+            "\n"
             f"  WAYPOINT {waypoint_index + 1} REACHED\n"
+            "\n"
+            "\n"
+            "\n"
+            "\n"
+            "\n"
             "========================================"
         )
 

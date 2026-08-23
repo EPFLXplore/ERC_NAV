@@ -5,6 +5,21 @@ from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterValue
 
 
+# Keep synchronized with the Nav2 footprint and its 0.02 m padding in
+# nav2_params_real_2026_mppi_with_global_map.yaml. ROS parameters do not
+# support nested arrays, so this is flattened as [x0, y0, x1, y1, ...].
+ROVER_FOOTPRINT_XY = [
+    0.74, 0.318,
+    0.318, 0.74,
+    -0.318, 0.74,
+    -0.74, 0.318,
+    -0.74, -0.318,
+    -0.318, -0.74,
+    0.318, -0.74,
+    0.74, -0.318,
+]
+
+
 def lc(name):
     return LaunchConfiguration(name)
 
@@ -177,6 +192,12 @@ def generate_launch_description():
             "higher is coarser and smoother.",
         ),
         arg(
+            "footprint_observation_stride_cells",
+            "2",
+            "Place one synthetic zero-cost footprint observation every N traversability cells in both "
+            "X and Y. 1 fills every cell; 2 uses one quarter as many observations.",
+        ),
+        arg(
             "lidar_dead_zone_enabled",
             "true",
             "traversability_map: mark the LiDAR blind/dead angular sector as max cost in output maps.",
@@ -317,6 +338,14 @@ def generate_launch_description():
         "output_lookup_radius_cells": typed("output_lookup_radius_cells", int),
         "grid_size_m": typed("grid_size_m", float),
         "grid_resolution_m": typed("grid_resolution_m", float),
+        "footprint_observation_stride_cells": typed(
+            "footprint_observation_stride_cells", int),
+        "lidar_dead_zone_enabled": typed("lidar_dead_zone_enabled", bool),
+        "lidar_dead_zone_min_angle_deg": typed("lidar_dead_zone_min_angle_deg", float),
+        "lidar_dead_zone_max_angle_deg": typed("lidar_dead_zone_max_angle_deg", float),
+        "lidar_dead_zone_radius_m": typed("lidar_dead_zone_radius_m", float),
+        "footprint_output_clearing_enabled": True,
+        "footprint_clear_polygon_xy": ROVER_FOOTPRINT_XY,
 
         "neighbor_search_radius_m": typed("neighbor_search_radius_m", float),
         "slope_angle_limit_deg": typed("slope_angle_limit_deg", float),

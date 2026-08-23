@@ -369,7 +369,7 @@ def generate_launch_description():
         # ^ [m] maximum vertical thickness of one scanline strip. Increase for noisier/farther clouds; decrease to make random scatter less likely to form a line.
         DeclareLaunchArgument('ransac_scanline_min_points', default_value='10'),
         # ^ minimum inliers in one scanline strip. Increase for stricter line evidence; decrease if distant cube faces are sparse.
-        DeclareLaunchArgument('ransac_scanline_min_count', default_value='3'),
+        DeclareLaunchArgument('ransac_scanline_min_count', default_value='2'),
         # ^ number of separate scanline strips required on a side face. Increase for stronger structural evidence; decrease only if the LiDAR has too few vertical channels at the cube range.
         DeclareLaunchArgument('ransac_scanline_min_span_fraction', default_value='0.40'),
         # ^ fraction of cube_width_m that each supported scanline must span. Increase rejects short clutter strokes; decrease accepts more partial/occluded faces.
