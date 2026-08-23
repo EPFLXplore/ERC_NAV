@@ -6,18 +6,19 @@
         <NetworkInterface name="enP8p1s0" priority="100" presence_required="true"/>
       </Interfaces>
       <AllowMulticast>spdp</AllowMulticast>
-      <MaxMessageSize>1400B</MaxMessageSize>
+      <MaxMessageSize>65500B</MaxMessageSize>
       <FragmentSize>1344B</FragmentSize>
     </General>
     <!-- Unicast discovery fallback if multicast on the point-to-point IMU link is flaky -->
     <Discovery>
+      <ParticipantIndex>none</ParticipantIndex>
       <!-- Do not declare another machine dead because of
            a short network interruption. -->
-      <LeaseDuration>30s</LeaseDuration>
+      <LeaseDuration>2s</LeaseDuration>
 
       <!-- Re-advertise ourselves frequently so discovery
            recovers quickly after a network interruption. -->
-      <SPDPInterval>3s</SPDPInterval>
+      <SPDPInterval>1s</SPDPInterval>
       <Peers>
         <Peer Address="169.254.55.231"/>
         <Peer Address="169.254.55.166"/>
@@ -37,12 +38,12 @@
            backlog of stale control data. Adaptive backpressure throttles the
            writer instead of letting the queue grow. -->
       <Watermarks>
-        <WhcHigh>512kB</WhcHigh>
+        <WhcHigh>2MiB</WhcHigh>
         <WhcLow>16kB</WhcLow>
         <WhcAdaptive>true</WhcAdaptive>
       </Watermarks>
 
-      <HeartbeatInterval min="20ms" max="250ms"/>
+      <HeartbeatInterval min="100ms" max="250ms"/>
 
     </Internal>
   </Domain>
