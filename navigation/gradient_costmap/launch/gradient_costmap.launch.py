@@ -132,7 +132,7 @@ def generate_launch_description():
         ),
         arg(
             "filter_noise_radius_m", 
-            "0.10", # must be bigger than the size of voxel
+            "0.12", # must be bigger than the size of voxel
             "traversability_filter: PCL RadiusOutlierRemoval radius in meters AFTER optional voxel downsampling. "
             "0.0 disables radius noise filtering; higher removes more isolated sparse returns.",
         ),
@@ -276,7 +276,7 @@ def generate_launch_description():
         ),
         arg(
             "min_neighbor_quadrants",
-            "4",
+            "1",
             "Minimum number of XY quadrants around a cell that must contain observed neighbors before "
             "fitting traversability. Higher rejects one-sided edge fits; lower accepts sparser geometry.",
         ),

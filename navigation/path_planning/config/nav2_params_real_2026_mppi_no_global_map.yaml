@@ -597,7 +597,7 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 1.0
+    expected_planner_frequency: 3.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
     # SmacPlanner2D plans collision-aware XY paths without imposing an Ackermann

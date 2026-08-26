@@ -22,12 +22,12 @@ bt_navigator:
     accept_candidate_path:
       check_distance: 1.5            # [m] prefix compared from the rover's closest path point
       max_initial_angle_deg: 200.0    # [deg] max candidate-vs-current prefix heading change
-      max_length_ratio: 1.3          # reject if the candidate prefix is much longer
-      max_start_deviation: 0.20      # [m] stable corridor around the followed prefix
+      max_length_ratio: 30.0          # reject if the candidate prefix is much longer
+      max_start_deviation: 10.0      # [m] stable corridor around the followed prefix
       costmap_topic: "global_costmap/costmap"
       obstacle_check_distance: 3.0   # [m] cost-scored path ahead of the rover
-      obstacle_switch_cost: 220.0    # costs remain non-lethal, but trigger a route switch here
-      minimum_cost_improvement: 20.0 # required max or mean cost reduction
+      obstacle_switch_cost: 1.0    # costs remain non-lethal, but trigger a route switch here
+      minimum_cost_improvement: 1.0 # required max or mean cost reduction
       obstacle_confirmation_time: 0.0 # [s] planner already filters map updates; switch immediately
       treat_unknown_as_obstacle: false
       accepted_path_topic: "accepted_plan" # actual path written to FollowPath's blackboard
@@ -580,7 +580,7 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 1.0
+    expected_planner_frequency: 3.0
     use_sim_time: false
     planner_plugins: ["GridBased"]
     # SmacPlanner2D plans collision-aware XY paths without imposing an Ackermann
