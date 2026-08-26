@@ -26,7 +26,14 @@
  *
  * After initialization, the node continuously publishes the rover's map-frame
  * pose from valid marker range/bearing measurements with nonlinear
- * optimization.  It stops owning map->odom at the end of Phase 2: the refined
+ * optimization.  Each measurement carries its own R_i, built from a centroid
+ * covariance that depends on the source (LiDAR centroid vs camera solvePnP) and
+ * on range, so the published covariance is the inverse of the solver's
+ * information matrix sum(H_i^T R_i^-1 H_i) over the inliers, inflated by the
+ * chi2/dof of the fit.  It is anisotropic: markers clustered in bearing produce
+ * an error ellipse elongated along the bisector, which is what
+ * global_nav_kf_2d_node needs in order to gate and weight correctly.
+ * It stops owning map->odom at the end of Phase 2: the refined
  * transform is published once on the latched /map_odom_init topic and the TF
  * broadcast stops there.  global_nav_kf_2d_node seeds itself from that message
  * and owns map->odom from then on, correcting it with the post-init
@@ -109,14 +116,100 @@ static geometry_msgs::msg::Quaternion yaw_to_quat(double yaw)
     return q;
 }
 
-/* Solver accuracy tiers, measured on the rover: 2 markers up to 1 m of error,
- * 3 up to 15 cm, 4+ up to 5 cm.  Scales the published sigma about the
- * 3-marker base. */
-static inline double marker_count_sigma_scale(int n_markers)
+/* Where a marker centre came from.  The two sources are not comparable: a
+ * detect_cube centre is a LiDAR centroid, whereas a /cube_markers_phi centre is
+ * copied verbatim from the camera ArucoMarkers message, i.e. a solvePnP pose
+ * whose depth error is several times larger than its lateral error. */
+enum class MeasSource { LIDAR, CAMERA };
+
+/* Centroid noise model, in (along-range, lateral) axes.  Both sigmas grow
+ * linearly with range; the camera overrides the radial scale (solvePnP depth)
+ * and the lateral growth rate (constant angular error) only. */
+struct CentroidSigmaModel {
+    double sigma_along_m{0.20};
+    double sigma_along_per_m{0.04};
+    double sigma_lat_m{0.12};
+    double sigma_lat_per_m{0.03};
+    double camera_range_scale{4.0};
+    double camera_sigma_lat_per_m{0.06};
+};
+
+/* Centroid covariance in base_link.  Built diagonal in (along, lateral) and
+ * rotated into base_link.  This function is the single seam where a covariance
+ * published by detect_cube would replace the model: everything downstream
+ * consumes the 2x2 and does not care where it came from. */
+static Eigen::Matrix2d centroid_cov_base_link(
+    double base_x, double base_y, MeasSource src,
+    const CentroidSigmaModel &m)
 {
-    if (n_markers <= 2) return 2.5;
-    if (n_markers == 3) return 1.0;
-    return 0.33;
+    const double range = std::hypot(base_x, base_y);
+    const bool is_camera = (src == MeasSource::CAMERA);
+
+    const double scale = is_camera ? m.camera_range_scale : 1.0;
+    const double sigma_along =
+        scale * std::hypot(m.sigma_along_m, m.sigma_along_per_m * range);
+    const double lat_per_m =
+        is_camera ? m.camera_sigma_lat_per_m : m.sigma_lat_per_m;
+    const double sigma_lat = std::hypot(m.sigma_lat_m, lat_per_m * range);
+
+    Eigen::Matrix2d cov_polar = Eigen::Matrix2d::Zero();
+    cov_polar(0, 0) = sigma_along * sigma_along;
+    cov_polar(1, 1) = sigma_lat * sigma_lat;
+
+    if (range < 1e-6) {
+        return cov_polar;
+    }
+
+    const double c = base_x / range;
+    const double s = base_y / range;
+    Eigen::Matrix2d rot;
+    rot << c, -s,
+           s,  c;
+    return rot * cov_polar * rot.transpose();
+}
+
+/* R_i in (range, bearing) from a centroid covariance in base_link:
+ *   R = J C J^T,  J = d(range, bearing)/d(x, y)
+ *                   = [[ cos t,     sin t    ],
+ *                      [-sin t / r, cos t / r]] */
+static Eigen::Matrix2d range_bearing_R(
+    double base_x, double base_y, const Eigen::Matrix2d &centroid_cov)
+{
+    const double range = std::hypot(base_x, base_y);
+    if (!(range > 1e-6)) {
+        return Eigen::Matrix2d::Zero();
+    }
+    const double c = base_x / range;
+    const double s = base_y / range;
+
+    Eigen::Matrix2d J;
+    J <<      c,     s,
+         -s / range, c / range;
+    return J * centroid_cov * J.transpose();
+}
+
+/* d(range, bearing)/d(x, y, yaw) of the predicted measurement at `pose`.
+ * Shared by the g2o edge and by the information accumulation so there is
+ * exactly one Jacobian in this file. */
+static Eigen::Matrix<double, 2, 3> range_bearing_jacobian(
+    const Eigen::Vector3d &pose, const Eigen::Vector2d &landmark)
+{
+    const double dx = landmark.x() - pose.x();
+    const double dy = landmark.y() - pose.y();
+    const double range_sq = dx * dx + dy * dy;
+    const double range = std::sqrt(range_sq);
+
+    Eigen::Matrix<double, 2, 3> H = Eigen::Matrix<double, 2, 3>::Zero();
+    if (range < 1e-9) {
+        return H;
+    }
+
+    H(0, 0) = -dx / range;
+    H(0, 1) = -dy / range;
+    H(1, 0) = dy / range_sq;
+    H(1, 1) = -dx / range_sq;
+    H(1, 2) = -1.0;
+    return H;
 }
 
 static double quat_to_yaw(const geometry_msgs::msg::Quaternion &q)
@@ -176,22 +269,8 @@ public:
     void linearizeOplus() override
     {
         const auto *vertex = static_cast<const RoverPoseVertex *>(_vertices[0]);
-        const Eigen::Vector3d &pose = vertex->estimate();
-        const double dx = landmark_.x() - pose.x();
-        const double dy = landmark_.y() - pose.y();
-        const double range_sq = dx * dx + dy * dy;
-        const double range = std::sqrt(range_sq);
-
-        _jacobianOplusXi.setZero();
-        if (range < 1e-9) {
-            return;
-        }
-
-        _jacobianOplusXi(0, 0) = -dx / range;
-        _jacobianOplusXi(0, 1) = -dy / range;
-        _jacobianOplusXi(1, 0) = dy / range_sq;
-        _jacobianOplusXi(1, 1) = -dx / range_sq;
-        _jacobianOplusXi(1, 2) = -1.0;
+        _jacobianOplusXi =
+            range_bearing_jacobian(vertex->estimate(), landmark_);
     }
 
     bool read(std::istream &) override { return false; }
@@ -203,6 +282,11 @@ private:
     double measured_bearing_;
 };
 
+/* DontAlign: a plain Matrix2d is fixed-size vectorizable, so a ValidMarker
+ * holding one would impose a 16-byte alignment that std::vector only honours
+ * through C++17 aligned new.  These 2x2s gain nothing from vectorization. */
+using Mat2Unaligned = Eigen::Matrix<double, 2, 2, Eigen::DontAlign>;
+
 struct ValidMarker {
     int landmark_index;
     int msg_index;
@@ -210,6 +294,18 @@ struct ValidMarker {
     double base_y;
     double range;
     double bearing_rad;
+    MeasSource source;
+    /** Measurement noise of this (range, bearing) pair, and its inverse. */
+    Mat2Unaligned R;
+    Mat2Unaligned Omega;
+};
+
+/** Accepted solver output: pose, its covariance, and the fit it came from. */
+struct SolverSolution {
+    Eigen::Vector3d pose;
+    Eigen::Matrix3d covariance;
+    int n_inliers;
+    double normalized_chi2;
 };
 
 /* ------------------------------------------------------------------ */
@@ -260,7 +356,7 @@ public:
         if (flat_erc.size() == 2) {
             erc_start_pos_ = {flat_erc[0], flat_erc[1]};
         } else {
-           RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
+        //    RCLCPP_ERROR(get_logger(), "erc_start_pos must have exactly 2 values, got %zu", flat_erc.size());
         }
 
         /* Fallback heading used when Phase 1 sees no landmarks: the rover is
@@ -302,52 +398,98 @@ public:
             phase2_backup_yaw_gate_deg * M_PI / 180.0;
 
         if (std::isfinite(backup_erc_map_yaw_rad_)) {
-            RCLCPP_INFO(get_logger(),
-                "Phase-1 fallback armed: backup_erc_map_yaw_rad=%.5f rad "
-                "(%.2f deg) at erc_start_pos=(%.3f, %.3f), timeout=%.1f s",
-                backup_erc_map_yaw_rad_,
-                backup_erc_map_yaw_rad_ * 180.0 / M_PI,
-                erc_start_pos_[0], erc_start_pos_[1],
-                init_camera_timeout_sec_);
+            // RCLCPP_INFO(get_logger(),
+            //     "Phase-1 fallback armed: backup_erc_map_yaw_rad=%.5f rad "
+            //     "(%.2f deg) at erc_start_pos=(%.3f, %.3f), timeout=%.1f s",
+            //     backup_erc_map_yaw_rad_,
+            //     backup_erc_map_yaw_rad_ * 180.0 / M_PI,
+            //     erc_start_pos_[0], erc_start_pos_[1],
+            //     init_camera_timeout_sec_);
         } else {
-            RCLCPP_WARN(get_logger(),
-                "backup_erc_map_yaw_rad not set: Phase 1 has no fallback and "
-                "will wait for camera landmarks indefinitely");
+            // RCLCPP_WARN(get_logger(),
+            //     "backup_erc_map_yaw_rad not set: Phase 1 has no fallback and "
+            //     "will wait for camera landmarks indefinitely");
         }
 
-        declare_parameter<double>("range_sigma_m", 0.20);
-        declare_parameter<double>("bearing_sigma_deg", 5.0);
-        range_sigma_m_ = get_parameter("range_sigma_m").as_double();
-        const double bearing_sigma_deg = get_parameter("bearing_sigma_deg").as_double();
-        bearing_sigma_rad_ = bearing_sigma_deg * M_PI / 180.0;
-        if (!std::isfinite(range_sigma_m_) || range_sigma_m_ <= 0.0 ||
-            !std::isfinite(bearing_sigma_rad_) || bearing_sigma_rad_ <= 0.0) {
-            RCLCPP_ERROR(
-                get_logger(),
-                "range_sigma_m and bearing_sigma_deg must both be finite and positive "
-                "(got %.6f m and %.6f deg)",
-                range_sigma_m_, bearing_sigma_deg);
-            throw std::runtime_error("invalid nonlinear localization measurement sigmas");
+        /* Centroid noise model.  Each marker centre gets a 2x2 covariance in
+         * base_link from these, which becomes its (range, bearing) R_i and
+         * therefore both its weight in the solve and its contribution to the
+         * published covariance. */
+        declare_parameter<double>("centroid_sigma_along_m", 0.10);
+        declare_parameter<double>("centroid_sigma_along_per_m", 0.02);
+        declare_parameter<double>("centroid_sigma_lat_m", 0.08);
+        declare_parameter<double>("centroid_sigma_lat_per_m", 0.01);
+        declare_parameter<double>("camera_range_sigma_scale", 4.0);
+        declare_parameter<double>("camera_sigma_lat_per_m", 0.017);
+        sigma_model_.sigma_along_m =
+            get_parameter("centroid_sigma_along_m").as_double();
+        sigma_model_.sigma_along_per_m =
+            get_parameter("centroid_sigma_along_per_m").as_double();
+        sigma_model_.sigma_lat_m =
+            get_parameter("centroid_sigma_lat_m").as_double();
+        sigma_model_.sigma_lat_per_m =
+            get_parameter("centroid_sigma_lat_per_m").as_double();
+        sigma_model_.camera_range_scale =
+            get_parameter("camera_range_sigma_scale").as_double();
+        sigma_model_.camera_sigma_lat_per_m =
+            get_parameter("camera_sigma_lat_per_m").as_double();
+        /* The two sigma_*_m terms are the sigma at zero range, so they must be
+         * strictly positive or a close marker gets infinite weight.  The growth
+         * rates may be zero (range-independent noise). */
+        if (!(sigma_model_.sigma_along_m > 0.0) ||
+            !(sigma_model_.sigma_lat_m > 0.0) ||
+            !(sigma_model_.camera_range_scale > 0.0) ||
+            !(sigma_model_.sigma_along_per_m >= 0.0) ||
+            !(sigma_model_.sigma_lat_per_m >= 0.0) ||
+            !(sigma_model_.camera_sigma_lat_per_m >= 0.0)) {
+            throw std::runtime_error(
+                "invalid centroid sigma model: the zero-range sigmas and the "
+                "camera range scale must be positive, the per-metre growth "
+                "rates non-negative");
         }
 
-        /* Sigma published on /aruco_rover_pos for a 3-marker solution; the
-         * 2-marker and 4+-marker tiers are scaled from it (see
-         * marker_count_sigma_scale). */
-        declare_parameter<double>("solution_sigma_xy_m", 0.4);
-        declare_parameter<double>("solution_sigma_yaw_deg", 5.0);
-        solution_sigma_xy_m_ = get_parameter("solution_sigma_xy_m").as_double();
-        const double solution_sigma_yaw_deg =
-            get_parameter("solution_sigma_yaw_deg").as_double();
-        solution_sigma_yaw_rad_ = solution_sigma_yaw_deg * M_PI / 180.0;
-        if (!std::isfinite(solution_sigma_xy_m_) || solution_sigma_xy_m_ <= 0.0 ||
-            !std::isfinite(solution_sigma_yaw_rad_) ||
-            solution_sigma_yaw_rad_ <= 0.0) {
-            RCLCPP_ERROR(
-                get_logger(),
-                "solution_sigma_xy_m and solution_sigma_yaw_deg must both be "
-                "finite and positive (got %.6f m and %.6f deg)",
-                solution_sigma_xy_m_, solution_sigma_yaw_deg);
-            throw std::runtime_error("invalid published solution sigmas");
+        /* Floor added to the solved covariance.  The information matrix only
+         * knows about the noise modelled above; it says nothing about landmark
+         * survey error, extrinsic calibration or measurement/TF timing skew, so
+         * a many-marker solve would otherwise publish a few centimetres of
+         * sigma and the KF would over-trust it. */
+        declare_parameter<double>("solution_sigma_floor_xy_m", 0.10);
+        declare_parameter<double>("solution_sigma_floor_yaw_deg", 0.5);
+        /* Above these the geometry is degenerate and the solution is dropped. */
+        declare_parameter<double>("solution_sigma_max_xy_m", 3.0);
+        declare_parameter<double>("solution_sigma_max_yaw_deg", 30.0);
+        solution_sigma_floor_xy_m_ =
+            get_parameter("solution_sigma_floor_xy_m").as_double();
+        solution_sigma_floor_yaw_rad_ =
+            get_parameter("solution_sigma_floor_yaw_deg").as_double() * M_PI / 180.0;
+        solution_sigma_max_xy_m_ =
+            get_parameter("solution_sigma_max_xy_m").as_double();
+        solution_sigma_max_yaw_rad_ =
+            get_parameter("solution_sigma_max_yaw_deg").as_double() * M_PI / 180.0;
+        if (!(solution_sigma_floor_xy_m_ >= 0.0) ||
+            !(solution_sigma_floor_yaw_rad_ >= 0.0) ||
+            !(solution_sigma_max_xy_m_ > solution_sigma_floor_xy_m_) ||
+            !(solution_sigma_max_yaw_rad_ > solution_sigma_floor_yaw_rad_)) {
+            throw std::runtime_error(
+                "invalid solution sigma floor/max: the floors must be "
+                "non-negative and strictly below the maxima");
+        }
+
+        /* Covariance published during Phase 1 and Phase 2.  Neither phase runs
+         * the solver -- the pose is pinned to erc_start_pos with a deduced yaw
+         * -- so there is no information matrix to invert and this prior is
+         * published instead. */
+        declare_parameter<double>("init_sigma_xy_m", 0.30);
+        declare_parameter<double>("init_sigma_yaw_deg", 5.0);
+        declare_parameter<double>("init_backup_sigma_yaw_deg", 20.0);
+        init_sigma_xy_m_ = get_parameter("init_sigma_xy_m").as_double();
+        init_sigma_yaw_rad_ =
+            get_parameter("init_sigma_yaw_deg").as_double() * M_PI / 180.0;
+        init_backup_sigma_yaw_rad_ =
+            get_parameter("init_backup_sigma_yaw_deg").as_double() * M_PI / 180.0;
+        if (!(init_sigma_xy_m_ > 0.0) || !(init_sigma_yaw_rad_ > 0.0) ||
+            !(init_backup_sigma_yaw_rad_ > 0.0)) {
+            throw std::runtime_error("invalid init prior sigmas");
         }
 
         /* Per-edge outlier gate, chi2 on 2 DOF (range + bearing):
@@ -362,16 +504,16 @@ public:
         edge_chi2_reject_ = get_parameter("edge_chi2_reject").as_double();
         max_normalized_chi2_ = get_parameter("max_normalized_chi2").as_double();
         if (!(edge_chi2_reject_ > 0.0) || !(max_normalized_chi2_ > 0.0)) {
-            RCLCPP_ERROR(get_logger(),
-                "edge_chi2_reject and max_normalized_chi2 must be positive "
-                "(got %.6f and %.6f)",
-                edge_chi2_reject_, max_normalized_chi2_);
+            // RCLCPP_ERROR(get_logger(),
+            //     "edge_chi2_reject and max_normalized_chi2 must be positive "
+            //     "(got %.6f and %.6f)",
+            //     edge_chi2_reject_, max_normalized_chi2_);
             throw std::runtime_error("invalid nonlinear localization chi2 gates");
         }
-        RCLCPP_INFO(get_logger(),
-            "Nonlinear solver gates: edge_chi2_reject=%.3f (2 DOF), "
-            "max_normalized_chi2=%.3f",
-            edge_chi2_reject_, max_normalized_chi2_);
+        // RCLCPP_INFO(get_logger(),
+        //     "Nonlinear solver gates: edge_chi2_reject=%.3f (2 DOF), "
+        //     "max_normalized_chi2=%.3f",
+        //     edge_chi2_reject_, max_normalized_chi2_);
 
         /* ---- init averaging ---- */
         init_phase_ = InitPhase::CAMERA;
@@ -498,13 +640,16 @@ private:
     double init_cube_timeout_sec_{30.0};
     double phase2_yaw_gate_rad_{10.0 * M_PI / 180.0};
     double phase2_backup_yaw_gate_rad_{45.0 * M_PI / 180.0};
-    double range_sigma_m_{0.20};
-    double bearing_sigma_rad_{5.0 * M_PI / 180.0};
+    CentroidSigmaModel sigma_model_;
     double edge_chi2_reject_{9.210};
     double max_normalized_chi2_{5.0};
-    double solution_sigma_xy_m_{0.2}; // Published 2-sigma for a 3-marker solution; scaled for 2 or 4+ markers.
-
-    double solution_sigma_yaw_rad_{5.0 * M_PI / 180.0};
+    double solution_sigma_floor_xy_m_{0.10};
+    double solution_sigma_floor_yaw_rad_{0.5 * M_PI / 180.0};
+    double solution_sigma_max_xy_m_{3.0};
+    double solution_sigma_max_yaw_rad_{30.0 * M_PI / 180.0};
+    double init_sigma_xy_m_{0.30};
+    double init_sigma_yaw_rad_{5.0 * M_PI / 180.0};
+    double init_backup_sigma_yaw_rad_{20.0 * M_PI / 180.0};
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
@@ -658,10 +803,12 @@ private:
     /* ================================================================ */
     /*  Publish /aruco_rover_pos odometry                               */
     /* ================================================================ */
-    /* n_markers = markers actually constraining the solution (solver inliers).
-     * It sets the published sigma: fewer markers, weaker geometry, less trust
-     * downstream in global_nav_kf_2d. */
-    void publish_odom(double x, double y, double yaw, int n_markers)
+    /* P is the [x, y, yaw] covariance of this solution: post-init it is the
+     * inverse of the solver's information matrix (see solution_covariance),
+     * during initialization the fixed prior from init_covariance().  It is
+     * anisotropic and carries the yaw cross-terms, both of which
+     * global_nav_kf_2d consumes. */
+    void publish_odom(double x, double y, double yaw, const Eigen::Matrix3d &P)
     {
         nav_msgs::msg::Odometry msg;
         msg.header.stamp = stamp_now(this);
@@ -671,15 +818,34 @@ private:
         msg.pose.pose.position.y = y;
         msg.pose.pose.orientation = yaw_to_quat(yaw);
 
-        const double scale = marker_count_sigma_scale(n_markers);
-        const double sigma_xy  = scale * solution_sigma_xy_m_;
-        const double sigma_yaw = scale * solution_sigma_yaw_rad_;
-        // 6x6 row-major over [x y z roll pitch yaw]: fill the x/y/yaw diagonal.
-        msg.pose.covariance[0]  = sigma_xy * sigma_xy;
-        msg.pose.covariance[7]  = sigma_xy * sigma_xy;
-        msg.pose.covariance[35] = sigma_yaw * sigma_yaw;
+        // 6x6 row-major over [x y z roll pitch yaw]: fill the x/y/yaw block.
+        msg.pose.covariance[0]  = P(0, 0);
+        msg.pose.covariance[1]  = P(0, 1);
+        msg.pose.covariance[5]  = P(0, 2);
+        msg.pose.covariance[6]  = P(1, 0);
+        msg.pose.covariance[7]  = P(1, 1);
+        msg.pose.covariance[11] = P(1, 2);
+        msg.pose.covariance[30] = P(2, 0);
+        msg.pose.covariance[31] = P(2, 1);
+        msg.pose.covariance[35] = P(2, 2);
 
         odom_pub_->publish(msg);
+    }
+
+    /* Prior published while init_phase_ != DONE.  The rover is assumed to be on
+     * erc_start_pos, so xy uncertainty is the placement error and yaw comes
+     * from the camera bearings -- or, when Phase 1 fell back to the hand
+     * alignment, from backup_erc_map_yaw_rad, which deserves a much wider
+     * sigma. */
+    Eigen::Matrix3d init_covariance(bool from_backup_yaw) const
+    {
+        const double sigma_yaw =
+            from_backup_yaw ? init_backup_sigma_yaw_rad_ : init_sigma_yaw_rad_;
+        Eigen::Matrix3d P = Eigen::Matrix3d::Zero();
+        P(0, 0) = init_sigma_xy_m_ * init_sigma_xy_m_;
+        P(1, 1) = init_sigma_xy_m_ * init_sigma_xy_m_;
+        P(2, 2) = sigma_yaw * sigma_yaw;
+        return P;
     }
 
     /* ================================================================ */
@@ -1031,6 +1197,89 @@ private:
     }
 
     /* ================================================================ */
+    /*  Covariance of an accepted solve                                 */
+    /*                                                                  */
+    /*  P = (sum over inliers of H_i^T Omega_i H_i)^-1, i.e. the        */
+    /*  Cramer-Rao bound of the linearised problem at the solution.     */
+    /*  Unlike a marker count this is aware of the geometry: markers    */
+    /*  clustered in bearing leave the along-bisector direction weakly  */
+    /*  constrained and P comes out correspondingly elongated.          */
+    /*                                                                  */
+    /*  Two corrections on top of the raw inverse:                      */
+    /*   - chi2/dof inflation, so a solve whose measurements disagree   */
+    /*     more than R_i predicts is published as less certain rather   */
+    /*     than merely being closer to the rejection gate;              */
+    /*   - a diagonal floor, because the information matrix only knows  */
+    /*     about the noise we modelled and nothing about landmark       */
+    /*     survey error, extrinsics or measurement/TF timing skew.      */
+    /* ================================================================ */
+    /* Not const so the throttled log below still compiles when uncommented:
+     * Node::get_clock() only yields a non-const Clock& outside a const method. */
+    std::optional<Eigen::Matrix3d> solution_covariance(
+        const std::vector<ValidMarker> &markers,
+        const std::vector<bool> &is_inlier,
+        const Eigen::Vector3d &pose,
+        double normalized_chi2)
+    {
+        if (markers.size() != is_inlier.size()) {
+            return std::nullopt;
+        }
+
+        Eigen::Matrix3d information = Eigen::Matrix3d::Zero();
+        for (size_t i = 0; i < markers.size(); ++i) {
+            if (!is_inlier[i]) continue;
+            const auto &landmark = landmark_poses_[markers[i].landmark_index];
+            const Eigen::Matrix<double, 2, 3> H = range_bearing_jacobian(
+                pose, Eigen::Vector2d(landmark.first, landmark.second));
+            information += H.transpose() * markers[i].Omega * H;
+        }
+
+        if (!information.allFinite()) {
+            return std::nullopt;
+        }
+
+        /* Rank-deficient in practice means the surviving markers cannot pin
+         * all 3 DOF (e.g. a single bearing direction); there is no meaningful
+         * covariance to publish. */
+        Eigen::LDLT<Eigen::Matrix3d> ldlt(information);
+        if (ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
+            return std::nullopt;
+        }
+
+        Eigen::Matrix3d P = ldlt.solve(Eigen::Matrix3d::Identity());
+        if (!P.allFinite()) {
+            return std::nullopt;
+        }
+        P = 0.5 * (P + P.transpose()).eval();
+
+        /* Bounded above by max_normalized_chi2_: a worse fit was already
+         * rejected before this is called. */
+        P *= std::max(1.0, normalized_chi2);
+
+        P(0, 0) += solution_sigma_floor_xy_m_ * solution_sigma_floor_xy_m_;
+        P(1, 1) += solution_sigma_floor_xy_m_ * solution_sigma_floor_xy_m_;
+        P(2, 2) += solution_sigma_floor_yaw_rad_ * solution_sigma_floor_yaw_rad_;
+
+        const double max_var_xy =
+            solution_sigma_max_xy_m_ * solution_sigma_max_xy_m_;
+        const double max_var_yaw =
+            solution_sigma_max_yaw_rad_ * solution_sigma_max_yaw_rad_;
+        if (P(0, 0) > max_var_xy || P(1, 1) > max_var_xy ||
+            P(2, 2) > max_var_yaw) {
+            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            //     "[SOLVER] rejected: degenerate geometry, sigma=(%.2f m, "
+            //     "%.2f m, %.1f deg) exceeds the (%.2f m, %.1f deg) maxima",
+            //     std::sqrt(P(0, 0)), std::sqrt(P(1, 1)),
+            //     std::sqrt(P(2, 2)) * 180.0 / M_PI,
+            //     solution_sigma_max_xy_m_,
+            //     solution_sigma_max_yaw_rad_ * 180.0 / M_PI);
+            return std::nullopt;
+        }
+
+        return P;
+    }
+
+    /* ================================================================ */
     /*  Two-pass robust solve                                           */
     /*                                                                  */
     /*  Pass 1 optimises every edge under a Huber kernel: the kernel    */
@@ -1041,15 +1290,18 @@ private:
     /*  with the kernel switched off, which also makes the final chi2   */
     /*  a properly scaled goodness-of-fit statistic.                    */
     /*                                                                  */
+    /*  Each edge is weighted by its own Omega_i = R_i^-1, so a         */
+    /*  solvePnP centre at 12 m no longer pulls as hard as a LiDAR      */
+    /*  centroid at 3 m, and the chi2 below is properly whitened.       */
+    /*                                                                  */
     /*  Finally the solution is accepted only if chi2/dof is plausible, */
     /*  with dof = 2*inliers - 3 (each edge contributes range+bearing,  */
     /*  the pose costs 3).  A high value after outlier removal means    */
     /*  the surviving measurements disagree with each other, i.e. bad   */
     /*  data association or a wrong landmark table — not noise.         */
     /* ================================================================ */
-    std::optional<Eigen::Vector3d> solve_nonlinear_range_bearing(
-        const std::vector<ValidMarker> &valid_markers,
-        int *n_inliers_out = nullptr)
+    std::optional<SolverSolution> solve_nonlinear_range_bearing(
+        const std::vector<ValidMarker> &valid_markers)
     {
         if (valid_markers.size() < MIN_SOLVER_MARKERS ||
             !std::isfinite(curr_map_base_x_) ||
@@ -1078,10 +1330,6 @@ private:
             return std::nullopt;
         }
 
-        Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
-        information(0, 0) = 1.0 / (range_sigma_m_ * range_sigma_m_);
-        information(1, 1) = 1.0 / (bearing_sigma_rad_ * bearing_sigma_rad_);
-
         std::vector<RangeBearingEdge *> edges;
         edges.reserve(valid_markers.size());
         for (const auto &marker : valid_markers) {
@@ -1092,7 +1340,8 @@ private:
                 marker.bearing_rad);
 
             edge->setVertex(0, pose_vertex);
-            edge->setInformation(information);
+            // Per-measurement: Omega_i = R_i^-1 from this centre's own noise.
+            edge->setInformation(Eigen::Matrix2d(marker.Omega));
 
             // Robust Huber loss
             auto *huber = new g2o::RobustKernelHuber();
@@ -1115,37 +1364,46 @@ private:
         /* ---- reject per-edge outliers ---- */
         optimizer.computeActiveErrors();
         int n_inliers = 0;
-        for (auto *edge : edges) {
-            const double edge_chi2 = edge->chi2();
+        // edges[i] was built from valid_markers[i]; the mask keeps that
+        // alignment so the information sum below uses the same subset.
+        std::vector<bool> is_inlier(edges.size(), false);
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const double edge_chi2 = edges[i]->chi2();
             const bool inlier =
                 std::isfinite(edge_chi2) && edge_chi2 <= edge_chi2_reject_;
             // Level 1 edges are excluded from initializeOptimization(0) below.
-            edge->setLevel(inlier ? 0 : 1);
+            edges[i]->setLevel(inlier ? 0 : 1);
+            is_inlier[i] = inlier;
             if (inlier) ++n_inliers;
         }
 
         // 3 DOF need 2 range-bearing edges (4 residuals) at the very least.
         if (n_inliers < static_cast<int>(MIN_SOLVER_MARKERS)) {
-            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                "[SOLVER] rejected: only %d/%zu edges survived the chi2 gate "
-                "(need %zu)",
-                n_inliers, edges.size(), MIN_SOLVER_MARKERS);
+            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            //     "[SOLVER] rejected: only %d/%zu edges survived the chi2 gate "
+            //     "(need %zu)",
+            //     n_inliers, edges.size(), MIN_SOLVER_MARKERS);
             return std::nullopt;
         }
 
         /* ---- pass 2: inliers only, kernel off ----
-         * Dropping the kernel leaves an unweighted least-squares problem, so
-         * the resulting chi2 can be compared against its expected value. */
-        if (n_inliers < static_cast<int>(edges.size())) {
-            for (auto *edge : edges) {
-                edge->setRobustKernel(nullptr);
-            }
-            optimizer.initializeOptimization(0);
-            if (optimizer.optimize(30) <= 0) {
-                return std::nullopt;
-            }
-            optimizer.computeActiveErrors();
+         * Dropping the kernel leaves a plain weighted least-squares problem, so
+         * the resulting chi2 can be compared against its expected value.  Run
+         * unconditionally, including when every edge is an inlier: the Huber
+         * kernel down-weights any residual past delta^2 = 6.25, which is below
+         * edge_chi2_reject_, so leaving it on would make chi2 a gate statistic
+         * rather than the goodness-of-fit the covariance inflation needs. */
+        for (auto *edge : edges) {
+            edge->setRobustKernel(nullptr);
         }
+        optimizer.initializeOptimization(0);
+        /* A non-positive return means Levenberg stopped without completing an
+         * iteration, which on an already-converged problem -- the common case
+         * now that this pass always runs -- is not a failure: the vertex still
+         * holds the pass-1 estimate.  The finiteness, map-bounds and chi2/dof
+         * gates below decide whether it is usable. */
+        optimizer.optimize(30);
+        optimizer.computeActiveErrors();
 
         Eigen::Vector3d result = pose_vertex->estimate();
         result[2] = wrap(result[2]);
@@ -1166,24 +1424,36 @@ private:
 
         if (!std::isfinite(normalized_chi2) ||
             normalized_chi2 > max_normalized_chi2_) {
-            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                "[SOLVER] rejected: chi2/dof=%.2f > %.2f (chi2=%.2f, dof=%d, "
-                "inliers %d/%zu) — measurements disagree, likely a mislabeled "
-                "cube or a wrong landmark entry",
-                normalized_chi2, max_normalized_chi2_, chi2_sum, dof,
-                n_inliers, edges.size());
+            // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            //     "[SOLVER] rejected: chi2/dof=%.2f > %.2f (chi2=%.2f, dof=%d, "
+            //     "inliers %d/%zu) — measurements disagree, likely a mislabeled "
+            //     "cube or a wrong landmark entry",
+            //     normalized_chi2, max_normalized_chi2_, chi2_sum, dof,
+            //     n_inliers, edges.size());
+            return std::nullopt;
+        }
+
+        auto covariance = solution_covariance(
+            valid_markers, is_inlier, result, normalized_chi2);
+        if (!covariance.has_value()) {
             return std::nullopt;
         }
 
         // Logged every second so max_normalized_chi2 can be calibrated against
         // what the solver actually produces on the rover.
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-            "[SOLVER] accepted: chi2/dof=%.2f (chi2=%.2f, dof=%d), "
-            "inliers %d/%zu",
-            normalized_chi2, chi2_sum, dof, n_inliers, edges.size());
+        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        //     "[SOLVER] accepted: chi2/dof=%.2f (chi2=%.2f, dof=%d), "
+        //     "inliers %d/%zu, sigma=(%.3f m, %.3f m, %.2f deg)",
+        //     normalized_chi2, chi2_sum, dof, n_inliers, edges.size(),
+        //     std::sqrt((*covariance)(0, 0)), std::sqrt((*covariance)(1, 1)),
+        //     std::sqrt((*covariance)(2, 2)) * 180.0 / M_PI);
 
-        if (n_inliers_out) *n_inliers_out = n_inliers;
-        return result;
+        SolverSolution solution;
+        solution.pose = result;
+        solution.covariance = *covariance;
+        solution.n_inliers = n_inliers;
+        solution.normalized_chi2 = normalized_chi2;
+        return solution;
     }
 
     /* ================================================================ */
@@ -1293,11 +1563,11 @@ private:
 
         if (do_log && !line.empty()) {
             last_log = t_now;
-            RCLCPP_INFO(get_logger(),
-                "[BEARING %s] rover_map=(%.2f, %.2f) yaw_map=%.1f deg "
-                "frame=%s%s",
-                src_tag, rov_x, rov_y, rov_yaw_deg,
-                msg.header.frame_id.c_str(), line.c_str());
+            // RCLCPP_INFO(get_logger(),
+            //     "[BEARING %s] rover_map=(%.2f, %.2f) yaw_map=%.1f deg "
+            //     "frame=%s%s",
+            //     src_tag, rov_x, rov_y, rov_yaw_deg,
+            //     msg.header.frame_id.c_str(), line.c_str());
         }
     }
 
@@ -1318,10 +1588,15 @@ private:
     /* ================================================================ */
     /*  Merge /cube_markers + /cube_markers_phi → one measurement set   */
     /* ================================================================ */
+    /* sources_out ends up aligned 1:1 with out.marker_ids: detect_cube centres
+     * are LiDAR centroids, /cube_markers_phi centres are camera solvePnP poses.
+     * They differ by several times in range noise, so the distinction has to
+     * survive the merge. */
     ros2_aruco_interfaces::msg::ArucoMarkers
-    build_merged_cube_markers_unlocked()
+    build_merged_cube_markers_unlocked(std::vector<MeasSource> &sources_out)
     {
         ros2_aruco_interfaces::msg::ArucoMarkers out;
+        sources_out.clear();
         const double t = now().seconds();
         auto fresh = [t](double recv_sec) {
             return recv_sec >= 0.0 && (t - recv_sec) <= CUBE_MERGE_TTL_SEC;
@@ -1334,6 +1609,7 @@ private:
 
         if (use_det) {
             out = last_cube_detect_;
+            sources_out.assign(out.marker_ids.size(), MeasSource::LIDAR);
         }
         if (use_phi) {
             const auto &phi = last_cube_phi_;
@@ -1346,6 +1622,7 @@ private:
                 if (i >= phi.poses.size() || i >= phi.ar_angles_list.size())
                     continue;
                 out.marker_ids.push_back(id);
+                sources_out.push_back(MeasSource::CAMERA);
                 out.poses.push_back(phi.poses[i]);
                 out.ar_angles_list.push_back(phi.ar_angles_list[i]);
                 if (i < phi.landmark_map_pos_x.size() &&
@@ -1379,16 +1656,17 @@ private:
             return;
 
         ros2_aruco_interfaces::msg::ArucoMarkers merged;
+        std::vector<MeasSource> sources;
         {
             std::lock_guard<std::mutex> lk(cube_merge_mutex_);
-            merged = build_merged_cube_markers_unlocked();
+            merged = build_merged_cube_markers_unlocked(sources);
         }
         if (merged.marker_ids.empty())
             return;
 
         auto sp = std::make_shared<ros2_aruco_interfaces::msg::ArucoMarkers>(
             std::move(merged));
-        handle_marker_message(sp, /*from_camera=*/false);
+        handle_marker_message(sp, /*from_camera=*/false, &sources);
     }
 
     /* ================================================================ */
@@ -1427,9 +1705,13 @@ private:
     /*  Shared processing: validate markers, run init or post-init      */
     /*  update, accumulate samples for the active phase, broadcast TF.  */
     /* ================================================================ */
+    /* sources, when given, is aligned 1:1 with msg->marker_ids (see
+     * build_merged_cube_markers_unlocked).  Null means every centre is a camera
+     * measurement, which is what the /aruco_markers Phase-1 path feeds in. */
     void handle_marker_message(
         const ros2_aruco_interfaces::msg::ArucoMarkers::SharedPtr msg,
-        bool from_camera)
+        bool from_camera,
+        const std::vector<MeasSource> *sources = nullptr)
     {
         rclcpp::Time t_now = now();
 
@@ -1516,16 +1798,16 @@ private:
                     lm.first - erc_start_pos_[0]);
                 const double yaw_from_start = wrap(
                     lm_bearing_from_start - bearing_rad);
-                RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                    "[%s MARKER DEBUG] phase=%d msg_i=%zu id=%d frame=%s "
-                    "lm=(%.3f, %.3f) base=(%.3f, %.3f) range=%.3f "
-                    "bearing=%.2f deg lm_bearing_start=%.2f deg "
-                    "yaw_from_start=%.2f deg",
-                    src_tag, phase_id, k, idx, msg->header.frame_id.c_str(),
-                    lm.first, lm.second, base_x, base_y, range,
-                    bearing_rad * 180.0 / M_PI,
-                    lm_bearing_from_start * 180.0 / M_PI,
-                    yaw_from_start * 180.0 / M_PI);
+                // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                //     "[%s MARKER DEBUG] phase=%d msg_i=%zu id=%d frame=%s "
+                //     "lm=(%.3f, %.3f) base=(%.3f, %.3f) range=%.3f "
+                //     "bearing=%.2f deg lm_bearing_start=%.2f deg "
+                //     "yaw_from_start=%.2f deg",
+                //     src_tag, phase_id, k, idx, msg->header.frame_id.c_str(),
+                //     lm.first, lm.second, base_x, base_y, range,
+                //     bearing_rad * 180.0 / M_PI,
+                //     lm_bearing_from_start * 180.0 / M_PI,
+                //     yaw_from_start * 180.0 / M_PI);
 
                 /* Phase-2 yaw gate: a marker whose implied yaw disagrees
                  * with the phase-1 yaw is a mislabeled cube (e.g. detect_cube
@@ -1538,28 +1820,51 @@ private:
                         std::fabs(wrap(yaw_from_start - phase1_yaw_ref_));
                     if (yaw_dev > yaw_gate) {
                         ++phase2_gated_markers_;
-                        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                            "[%s SKIP marker] id=%d yaw_from_start=%.1f deg "
-                            "deviates %.1f deg from phase-1 yaw %.1f deg "
-                            "(gate %.0f deg) — likely mislabeled cube",
-                            src_tag, idx,
-                            yaw_from_start * 180.0 / M_PI,
-                            yaw_dev * 180.0 / M_PI,
-                            phase1_yaw_ref_ * 180.0 / M_PI,
-                            yaw_gate * 180.0 / M_PI);
+                        // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                        //     "[%s SKIP marker] id=%d yaw_from_start=%.1f deg "
+                        //     "deviates %.1f deg from phase-1 yaw %.1f deg "
+                        //     "(gate %.0f deg) — likely mislabeled cube",
+                        //     src_tag, idx,
+                        //     yaw_from_start * 180.0 / M_PI,
+                        //     yaw_dev * 180.0 / M_PI,
+                        //     phase1_yaw_ref_ * 180.0 / M_PI,
+                        //     yaw_gate * 180.0 / M_PI);
                         continue;
                     }
                 }
             }
 
-            valid_markers.push_back({
-                idx,
-                static_cast<int>(k),
-                base_x,
-                base_y,
-                range,
-                bearing_rad
-            });
+            /* Centroid covariance -> R_i.  This is what weights the marker in
+             * the solve and what the published covariance is built from, so a
+             * centre whose noise model degenerates is dropped rather than
+             * silently given infinite weight. */
+            const MeasSource source =
+                (sources && k < sources->size()) ? (*sources)[k]
+                                                 : MeasSource::CAMERA;
+            const Eigen::Matrix2d centroid_cov =
+                centroid_cov_base_link(base_x, base_y, source, sigma_model_);
+            const Eigen::Matrix2d R =
+                range_bearing_R(base_x, base_y, centroid_cov);
+            if (!R.allFinite() || !(R(0, 0) > 0.0) || !(R(1, 1) > 0.0) ||
+                !(R.determinant() > 0.0)) {
+                // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                //     "[%s SKIP marker] msg_i=%zu id=%d reason=degenerate_R "
+                //     "base=(%.3f, %.3f)",
+                //     src_tag, k, idx, base_x, base_y);
+                continue;
+            }
+
+            ValidMarker marker;
+            marker.landmark_index = idx;
+            marker.msg_index = static_cast<int>(k);
+            marker.base_x = base_x;
+            marker.base_y = base_y;
+            marker.range = range;
+            marker.bearing_rad = bearing_rad;
+            marker.source = source;
+            marker.R = R;
+            marker.Omega = R.inverse();
+            valid_markers.push_back(marker);
         }
 
         int n = static_cast<int>(valid_markers.size());
@@ -1577,9 +1882,9 @@ private:
         last_handled_valid_marker_count_ = n;
 
         bool is_measurement_valid = false;
-        // Markers behind the published pose; the solver overwrites it with the
-        // inlier count, which is what the published sigma is derived from.
-        int n_solution_markers = n;
+        // Covariance published with the pose: the init prior until the solver
+        // takes over, then the inverse of its information matrix.
+        Eigen::Matrix3d published_cov = init_covariance(phase1_from_backup_);
         std::optional<geometry_msgs::msg::TransformStamped> transform_msg;
 
         // RCLCPP_INFO(get_logger(),
@@ -1616,25 +1921,25 @@ private:
         /* ============================================================ */
         } else {
             if (n >= 2) {
-                int n_inliers = 0;
-                auto pose = solve_nonlinear_range_bearing(valid_markers, &n_inliers);
+                auto solution = solve_nonlinear_range_bearing(valid_markers);
 
-                if (pose.has_value()) {
-                    double dx = pose->x() - curr_map_base_x_;
-                    double dy = pose->y() - curr_map_base_y_;
+                if (solution.has_value()) {
+                    const Eigen::Vector3d &pose = solution->pose;
+                    double dx = pose.x() - curr_map_base_x_;
+                    double dy = pose.y() - curr_map_base_y_;
                     double jump = std::hypot(dx, dy);
-                    RCLCPP_INFO_THROTTLE(
-                        get_logger(), *get_clock(), 1000,
-                        "[UPDATE solver] solution P=(%.3f, %.3f), "
-                        "current=(%.3f, %.3f), jump=%.3f m",
-                        pose->x(), pose->y(),
-                        curr_map_base_x_, curr_map_base_y_, jump);
+                    // RCLCPP_INFO_THROTTLE(
+                    //     get_logger(), *get_clock(), 1000,
+                    //     "[UPDATE solver] solution P=(%.3f, %.3f), "
+                    //     "current=(%.3f, %.3f), jump=%.3f m",
+                    //     pose.x(), pose.y(),
+                    //     curr_map_base_x_, curr_map_base_y_, jump);
 
                     if (jump <= MAX_TRANSLATION_JUMP) {
-                        x_estimate_ = pose->x();
-                        y_estimate_ = pose->y();
-                        yaw_estimate_ = pose->z();
-                        n_solution_markers = n_inliers;
+                        x_estimate_ = pose.x();
+                        y_estimate_ = pose.y();
+                        yaw_estimate_ = pose.z();
+                        published_cov = solution->covariance;
                         solved_new_xy_ = true;
                         time_of_last_pose_ = t_now;
                         measured_new_yaw_ = true;
@@ -1643,16 +1948,16 @@ private:
                         //     "[UPDATE] yaw = %.2f deg",
                         //     yaw_estimate_ * 180.0 / M_PI);
                     } else {
-                        RCLCPP_WARN_THROTTLE(
-                            get_logger(), *get_clock(), 1000,
-                            "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
-                            jump, pose->x(), pose->y(),
-                            curr_map_base_x_, curr_map_base_y_);
+                        // RCLCPP_WARN_THROTTLE(
+                        //     get_logger(), *get_clock(), 1000,
+                        //     "[UPDATE] Rejected jump: %.2f m candidate=(%.3f, %.3f) current=(%.3f, %.3f)",
+                        //     jump, pose.x(), pose.y(),
+                        //     curr_map_base_x_, curr_map_base_y_);
                     }
                 } else {
-                    RCLCPP_WARN_THROTTLE(
-                        get_logger(), *get_clock(), 1000,
-                        "[UPDATE n>=%d] nonlinear solver returned no solution", n);
+                    // RCLCPP_WARN_THROTTLE(
+                    //     get_logger(), *get_clock(), 1000,
+                    //     "[UPDATE n>=%d] nonlinear solver returned no solution", n);
                 }
             }
 
@@ -1682,7 +1987,7 @@ private:
         /* ---- publish odom ---- */
         if (is_measurement_valid)
             publish_odom(x_estimate_, y_estimate_, yaw_estimate_,
-                         n_solution_markers);
+                         published_cov);
 
         /* ---- reset per-callback flags ---- */
         solved_new_xy_ = false;
@@ -1744,35 +2049,35 @@ private:
             (from_backup ? phase2_backup_yaw_gate_rad_ : phase2_yaw_gate_rad_)
             * 180.0 / M_PI;
         if (from_backup) {
-            RCLCPP_WARN(get_logger(),
-                "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
-                "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
-                "%.0f deg yaw gate.",
-                reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
-                phase1_yaw_ref_ * 180.0 / M_PI,
-                tf_final.transform.translation.x,
-                tf_final.transform.translation.y, yaw_gate_deg);
+            // RCLCPP_WARN(get_logger(),
+            //     "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
+            //     "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
+            //     "%.0f deg yaw gate.",
+            //     reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
+            //     phase1_yaw_ref_ * 180.0 / M_PI,
+            //     tf_final.transform.translation.x,
+            //     tf_final.transform.translation.y, yaw_gate_deg);
         } else {
-            RCLCPP_INFO(get_logger(),
-                "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
-                "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
-                "%.0f deg yaw gate.",
-                reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
-                phase1_yaw_ref_ * 180.0 / M_PI,
-                tf_final.transform.translation.x,
-                tf_final.transform.translation.y, yaw_gate_deg);
+            // RCLCPP_INFO(get_logger(),
+            //     "PHASE 1 DONE (%s, %d/%d camera samples): map->odom yaw=%.2f deg, "
+            //     "t=(%.3f, %.3f). Switching to PHASE 2 (cube refinement) with a "
+            //     "%.0f deg yaw gate.",
+            //     reason, init_counter_phase1_, NBR_INIT_CALLBACKS_PHASE1,
+            //     phase1_yaw_ref_ * 180.0 / M_PI,
+            //     tf_final.transform.translation.x,
+            //     tf_final.transform.translation.y, yaw_gate_deg);
         }
 
         if (init_cube_timeout_sec_ > 0.0) {
-            RCLCPP_INFO(get_logger(),
-                "PHASE 2 armed: %d cube samples needed, falling back to this "
-                "transform after %.1f s without them",
-                NBR_INIT_CALLBACKS_PHASE2, init_cube_timeout_sec_);
+            // RCLCPP_INFO(get_logger(),
+            //     "PHASE 2 armed: %d cube samples needed, falling back to this "
+            //     "transform after %.1f s without them",
+            //     NBR_INIT_CALLBACKS_PHASE2, init_cube_timeout_sec_);
         } else {
-            RCLCPP_WARN(get_logger(),
-                "PHASE 2 has no timeout (init_cube_timeout_sec <= 0): the node "
-                "will own map->odom until %d cube samples arrive",
-                NBR_INIT_CALLBACKS_PHASE2);
+            // RCLCPP_WARN(get_logger(),
+            //     "PHASE 2 has no timeout (init_cube_timeout_sec <= 0): the node "
+            //     "will own map->odom until %d cube samples arrive",
+            //     NBR_INIT_CALLBACKS_PHASE2);
         }
     }
 
@@ -1804,10 +2109,10 @@ private:
         }
 
         if (!std::isfinite(backup_erc_map_yaw_rad_)) {
-            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
-                "PHASE 1 STUCK: no camera landmarks after %.1f s and "
-                "backup_erc_map_yaw_rad is not set — map->odom stays identity",
-                init_camera_timeout_sec_);
+            // RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+            //     "PHASE 1 STUCK: no camera landmarks after %.1f s and "
+            //     "backup_erc_map_yaw_rad is not set — map->odom stays identity",
+            //     init_camera_timeout_sec_);
             return;
         }
 
@@ -1815,11 +2120,11 @@ private:
          * still parked on its start point. */
         const double odom_dist = std::hypot(odom_pos_x_, odom_pos_y_);
         if (odom_dist > 0.5 || std::fabs(odom_yaw_) > 15.0 * M_PI / 180.0) {
-            RCLCPP_WARN(get_logger(),
-                "PHASE 1 backup yaw applied although odom shows the rover "
-                "moved (%.2f m, %.1f deg) since start: the assumed start pose "
-                "is likely wrong",
-                odom_dist, odom_yaw_ * 180.0 / M_PI);
+            // RCLCPP_WARN(get_logger(),
+            //     "PHASE 1 backup yaw applied although odom shows the rover "
+            //     "moved (%.2f m, %.1f deg) since start: the assumed start pose "
+            //     "is likely wrong",
+            //     odom_dist, odom_yaw_ * 180.0 / M_PI);
         }
 
         x_estimate_ = erc_start_pos_[0];
@@ -1829,8 +2134,10 @@ private:
         finalize_phase1(
             build_map_odom_tf(x_estimate_, y_estimate_, yaw_estimate_),
             /*from_backup=*/true, "no camera landmarks, backup yaw");
-        // No marker constrained this pose at all: publish it at the widest tier.
-        publish_odom(x_estimate_, y_estimate_, yaw_estimate_, /*n_markers=*/0);
+        // No marker constrained this pose at all: publish it with the wide
+        // backup-yaw prior.
+        publish_odom(x_estimate_, y_estimate_, yaw_estimate_,
+                     init_covariance(/*from_backup_yaw=*/true));
     }
 
     /* ================================================================ */
@@ -1864,9 +2171,9 @@ private:
         /* prev_map_odom_tf_ is always set in Phase 2 (finalize_phase1 sets it
          * before switching phase); guard anyway rather than throw. */
         if (!prev_map_odom_tf_.has_value()) {
-            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
-                "PHASE 2 TIMEOUT with no Phase-1 transform to fall back on: "
-                "map->odom stays identity");
+            // RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000,
+            //     "PHASE 2 TIMEOUT with no Phase-1 transform to fall back on: "
+            //     "map->odom stays identity");
             return;
         }
 
@@ -1874,13 +2181,13 @@ private:
          * Degraded (camera-only yaw, position pinned to erc_start_pos) but the
          * rover is localized and the KF starts correcting it from the
          * post-init /aruco_rover_pos measurements. */
-        RCLCPP_WARN(get_logger(),
-            "PHASE 2 TIMEOUT after %.1f s with only %d/%d cube samples "
-            "(%d cube markers rejected by the yaw gate): no LiDAR refinement, "
-            "handing the Phase-1 %s transform over as-is",
-            init_cube_timeout_sec_, init_counter_phase2_,
-            NBR_INIT_CALLBACKS_PHASE2, phase2_gated_markers_,
-            phase1_from_backup_ ? "backup-yaw" : "camera");
+        // RCLCPP_WARN(get_logger(),
+        //     "PHASE 2 TIMEOUT after %.1f s with only %d/%d cube samples "
+        //     "(%d cube markers rejected by the yaw gate): no LiDAR refinement, "
+        //     "handing the Phase-1 %s transform over as-is",
+        //     init_cube_timeout_sec_, init_counter_phase2_,
+        //     NBR_INIT_CALLBACKS_PHASE2, phase2_gated_markers_,
+        //     phase1_from_backup_ ? "backup-yaw" : "camera");
 
         finalize_phase2(
             prev_map_odom_tf_.value(),
@@ -1938,10 +2245,10 @@ private:
             const double yaw2_deg =
                 wrap(quat_to_yaw(p2.rotation) + odom_yaw_) * 180.0 / M_PI;
             const double dyaw = ang_diff_deg(yaw2_deg, yaw1_deg);
-            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-                "PHASE 2 refinement vs PHASE 1: rover yaw_map P1=%.2f deg "
-                "-> P2=%.2f deg (dyaw=%.2f deg), dxy=%.3f m",
-                yaw1_deg, yaw2_deg, dyaw, dxy);
+            // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            //     "PHASE 2 refinement vs PHASE 1: rover yaw_map P1=%.2f deg "
+            //     "-> P2=%.2f deg (dyaw=%.2f deg), dxy=%.3f m",
+            //     yaw1_deg, yaw2_deg, dyaw, dxy);
         }
 
         prev_map_odom_tf_ = refined;
@@ -1956,12 +2263,12 @@ private:
         map_odom_init_pub_->publish(refined);
         tf_timer_->cancel();
 
-        RCLCPP_INFO(get_logger(),
-            "PHASE 2 DONE (%s, %d/%d cube samples): INITIALIZED map->odom TF, "
-            "handed over to global_nav_kf_2d_node on /map_odom_init. "
-            "Rate-limiting to %.1f Hz",
-            reason, init_counter_phase2_, NBR_INIT_CALLBACKS_PHASE2,
-            1.0 / CALLBACK_PERIOD_LIMIT);
+        // RCLCPP_INFO(get_logger(),
+        //     "PHASE 2 DONE (%s, %d/%d cube samples): INITIALIZED map->odom TF, "
+        //     "handed over to global_nav_kf_2d_node on /map_odom_init. "
+        //     "Rate-limiting to %.1f Hz",
+        //     reason, init_counter_phase2_, NBR_INIT_CALLBACKS_PHASE2,
+        //     1.0 / CALLBACK_PERIOD_LIMIT);
     }
 };
 

@@ -117,6 +117,10 @@ private:
     bool footprint_output_clearing_enabled_{true};
     std::vector<std::array<float, 2>> footprint_clear_polygon_;
     int footprint_observation_stride_cells_{2};
+    // Extra clearance, in output-grid cells, applied to the published grids only.
+    // The synthetic observations injected into the internal map are NOT dilated:
+    // that would fabricate free terrain the lidar never saw.
+    int footprint_clear_margin_cells_{2};
     bool has_robot_pose_{false};
     float robot_yaw_{0.0f};
     bool has_lidar_from_map_transform_{false};
@@ -136,7 +140,7 @@ private:
     float roughness_norm_m_ = static_cast<float>(this->declare_parameter<double>("roughness_norm_m", filterMaxRoughness));
     int min_neighbor_points_ = this->declare_parameter<int>("min_neighbor_points", 3);
     int min_neighbor_quadrants_ = this->declare_parameter<int>("min_neighbor_quadrants", 3);
-    float cell_clear_timeout_s_ = static_cast<float>(this->declare_parameter<double>("cell_clear_timeout_s", 0.7)); // cells with no new points for this long revert to unknown; 0 disables
+    float cell_clear_timeout_s_ = static_cast<float>(this->declare_parameter<double>("cell_clear_timeout_s", 0.6)); // cells with no new points for this long revert to unknown; 0 disables
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
     
@@ -191,6 +195,8 @@ public:
             "footprint_clear_polygon_xy", default_footprint_xy);
         footprint_observation_stride_cells_ =
             this->declare_parameter<int>("footprint_observation_stride_cells", 2);
+        footprint_clear_margin_cells_ =
+            this->declare_parameter<int>("footprint_clear_margin_cells", 2);
         if (footprint_xy.size() >= 6 && footprint_xy.size() % 2 == 0) {
             footprint_clear_polygon_.reserve(footprint_xy.size() / 2);
             for (size_t i = 0; i < footprint_xy.size(); i += 2) {
@@ -210,6 +216,12 @@ public:
                 this->get_logger(),
                 "footprint_observation_stride_cells must be >= 1, clamping to 1");
             footprint_observation_stride_cells_ = 1;
+        }
+        if (footprint_clear_margin_cells_ < 0) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "footprint_clear_margin_cells must be >= 0, clamping to 0");
+            footprint_clear_margin_cells_ = 0;
         }
         output_lookup_radius_cells_ = this->declare_parameter<int>("output_lookup_radius_cells", 2);
         if (grid_size_m_ <= 0.0f) {
@@ -312,6 +324,8 @@ public:
                 reason = "cell_clear_timeout_s must be >= 0 (0 disables)";
             } else if (name == "footprint_observation_stride_cells" && p.as_int() < 1) {
                 reason = "footprint_observation_stride_cells must be >= 1";
+            } else if (name == "footprint_clear_margin_cells" && p.as_int() < 0) {
+                reason = "footprint_clear_margin_cells must be >= 0";
             }
             if (!reason.empty()) {
                 result.successful = false;
@@ -339,6 +353,7 @@ public:
             else if (name == "lidar_dead_zone_radius_m")   lidar_dead_zone_radius_m_ = static_cast<float>(p.as_double());
             else if (name == "footprint_output_clearing_enabled") footprint_output_clearing_enabled_ = p.as_bool();
             else if (name == "footprint_observation_stride_cells") footprint_observation_stride_cells_ = static_cast<int>(p.as_int());
+            else if (name == "footprint_clear_margin_cells") footprint_clear_margin_cells_ = static_cast<int>(p.as_int());
             else if (name == "cell_clear_timeout_s")       cell_clear_timeout_s_ = static_cast<float>(p.as_double());
             else if (name == "fixed_origin_x")             fixed_origin_x_ = p.as_double();
             else if (name == "fixed_origin_y")             fixed_origin_y_ = p.as_double();
@@ -1084,7 +1099,25 @@ public:
         return angleInSectorDeg(angle_deg, lidar_dead_zone_min_angle_deg_, lidar_dead_zone_max_angle_deg_);
     }
 
-    bool isInRobotFootprint(const PointType &point) const {
+    // Squared distance from (x, y) to the segment (ax, ay)-(bx, by).
+    static float squaredDistanceToSegment(
+        float x, float y, float ax, float ay, float bx, float by) {
+        const float ex = bx - ax;
+        const float ey = by - ay;
+        const float len_sq = ex * ex + ey * ey;
+        float t = 0.0f;
+        if (len_sq > 1e-12f) {
+            t = std::clamp(((x - ax) * ex + (y - ay) * ey) / len_sq, 0.0f, 1.0f);
+        }
+        const float dx = x - (ax + t * ex);
+        const float dy = y - (ay + t * ey);
+        return dx * dx + dy * dy;
+    }
+
+    // margin_m > 0 dilates the polygon outward by that distance (Minkowski sum
+    // with a disc, so corners are rounded). Used to clear a ring beyond the
+    // physical footprint in the published grids.
+    bool isInRobotFootprint(const PointType &point, float margin_m = 0.0f) const {
         if (!footprint_output_clearing_enabled_ || footprint_clear_polygon_.size() < 3) {
             return false;
         }
@@ -1138,7 +1171,20 @@ public:
                 }
             }
         }
-        return inside;
+        if (inside || margin_m <= 0.0f) {
+            return inside;
+        }
+
+        const float margin_sq = margin_m * margin_m;
+        for (size_t i = 0, j = footprint_clear_polygon_.size() - 1;
+            i < footprint_clear_polygon_.size(); j = i++) {
+            const auto &pi = footprint_clear_polygon_[i];
+            const auto &pj = footprint_clear_polygon_[j];
+            if (squaredDistanceToSegment(x, y, pj[0], pj[1], pi[0], pi[1]) <= margin_sq) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool isFootprintObservationCell(const PointType &point) const {
@@ -1309,14 +1355,16 @@ public:
         const float resolution = grid.info.resolution;
         const int width = static_cast<int>(grid.info.width);
         const int height = static_cast<int>(grid.info.height);
+        const int pad_cells = 1 + std::max(0, footprint_clear_margin_cells_);
+        const float margin_m = static_cast<float>(footprint_clear_margin_cells_) * resolution;
         const int min_cell_x = std::max(
-            0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - 1);
+            0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - pad_cells);
         const int min_cell_y = std::max(
-            0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - 1);
+            0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - pad_cells);
         const int max_cell_x = std::min(
-            width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + 1);
+            width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + pad_cells);
         const int max_cell_y = std::min(
-            height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + 1);
+            height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + pad_cells);
 
         size_t marked_cells = 0;
         for (int y = min_cell_y; y <= max_cell_y; ++y) {
@@ -1325,7 +1373,11 @@ public:
                 point.x = origin_x + (static_cast<float>(x) + 0.5f) * resolution;
                 point.y = origin_y + (static_cast<float>(y) + 0.5f) * resolution;
                 point.z = 0.0f;
-                if (!isFootprintObservationCell(point) || !isInRobotFootprint(point)) {
+                // No stride here: the stride thins the synthetic observations
+                // injected into the internal map (the CPU-heavy path), but
+                // sampling the published grid leaves 3 of every 4 footprint
+                // cells uncleared, which shows up as speckle at the rim.
+                if (!isInRobotFootprint(point, margin_m)) {
                     continue;
                 }
 
@@ -1375,10 +1427,12 @@ public:
         const float resolution = grid.info.resolution;
         const int width = static_cast<int>(grid.info.width);
         const int height = static_cast<int>(grid.info.height);
-        const int min_cell_x = std::max(0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - 1);
-        const int min_cell_y = std::max(0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - 1);
-        const int max_cell_x = std::min(width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + 1);
-        const int max_cell_y = std::min(height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + 1);
+        const int pad_cells = 1 + std::max(0, footprint_clear_margin_cells_);
+        const float margin_m = static_cast<float>(footprint_clear_margin_cells_) * resolution;
+        const int min_cell_x = std::max(0, static_cast<int>(std::floor((min_x - origin_x) / resolution)) - pad_cells);
+        const int min_cell_y = std::max(0, static_cast<int>(std::floor((min_y - origin_y) / resolution)) - pad_cells);
+        const int max_cell_x = std::min(width - 1, static_cast<int>(std::floor((max_x - origin_x) / resolution)) + pad_cells);
+        const int max_cell_y = std::min(height - 1, static_cast<int>(std::floor((max_y - origin_y) / resolution)) + pad_cells);
 
         size_t cleared_cells = 0;
         for (int y = min_cell_y; y <= max_cell_y; ++y) {
@@ -1387,7 +1441,11 @@ public:
                 point.x = origin_x + (static_cast<float>(x) + 0.5f) * resolution;
                 point.y = origin_y + (static_cast<float>(y) + 0.5f) * resolution;
                 point.z = 0.0f;
-                if (!isFootprintObservationCell(point) || !isInRobotFootprint(point)) {
+                // No stride here: the stride thins the synthetic observations
+                // injected into the internal map (the CPU-heavy path), but
+                // sampling the published grid leaves 3 of every 4 footprint
+                // cells uncleared, which shows up as speckle at the rim.
+                if (!isInRobotFootprint(point, margin_m)) {
                     continue;
                 }
 

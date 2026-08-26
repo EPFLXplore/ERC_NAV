@@ -17,10 +17,14 @@
   <depend>geometry_msgs</depend>
   <depend>nav2_behavior_tree</depend>
   <depend>nav2_msgs</depend>
+  <exec_depend>nav2_rotation_shim_controller</exec_depend>
   <exec_depend>wheels_control</exec_depend>
   <exec_depend>gradient_costmap</exec_depend>
   <depend>behaviortree_cpp_v3</depend>
   <depend>pluginlib</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_ros</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

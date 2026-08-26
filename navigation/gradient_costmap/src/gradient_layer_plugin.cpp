@@ -151,6 +151,7 @@ void GradientLayer::onInitialize()
   declareParameter("expand_update_bounds", rclcpp::ParameterValue(true));
   declareParameter("footprint_clearing_enabled", rclcpp::ParameterValue(false));
   declareParameter("transform_tolerance", rclcpp::ParameterValue(0.2));
+  declareParameter("authoritative_clear", rclcpp::ParameterValue(false));
   declareParameter("persistent_patch", rclcpp::ParameterValue(false));
   declareParameter("persistence_timeout", rclcpp::ParameterValue(8.0));
   declareParameter("persistence_min_cost", rclcpp::ParameterValue(1));
@@ -169,6 +170,7 @@ void GradientLayer::onInitialize()
   node->get_parameter(name_ + ".expand_update_bounds", expand_update_bounds_);
   node->get_parameter(name_ + ".footprint_clearing_enabled", footprint_clearing_enabled_);
   node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
+  node->get_parameter(name_ + ".authoritative_clear", authoritative_clear_);
   node->get_parameter(name_ + ".persistent_patch", persistent_patch_);
   node->get_parameter(name_ + ".persistence_timeout", persistence_timeout_);
   int persistence_min_cost_param{1};
@@ -686,21 +688,36 @@ void GradientLayer::updateCosts(
         continue;
       }
 
-      // Zero is an explicit clear from the traversability producer. Only apply
-      // it to cells previously written by this layer so flat terrain does not
-      // erase unrelated obstacle layers.
+      // Zero is an explicit clear from the traversability producer. By default
+      // it is applied only to cells previously written by this layer, so flat
+      // terrain does not erase unrelated obstacle layers.
+      //
+      // authoritative_clear makes live free space win over whatever an earlier
+      // layer wrote, within the area the incoming grid actually covers. Enable
+      // it on a live patch layer stacked on top of a stale file-backed map:
+      // without it, a cell the producer reports as free keeps the saved map's
+      // cost forever, because this layer never owned that cell.
       if (cost <= 0) {
         if (master_index < gradient_touched_cells_.size()) {
           gradient_touched_cells_[master_index] = 1;
         }
-        if (master_index < gradient_owned_cells_.size() && gradient_owned_cells_[master_index]) {
-          if (master_index < persistent_costs_.size() &&
-              master_grid.getCost(i, j) == persistent_costs_[master_index]) {
+        const bool owned =
+          master_index < gradient_owned_cells_.size() && gradient_owned_cells_[master_index];
+        if (authoritative_clear_ || owned) {
+          if (authoritative_clear_ ||
+              (master_index < persistent_costs_.size() &&
+               master_grid.getCost(i, j) == persistent_costs_[master_index]))
+          {
             master_grid.setCost(i, j, nav2_costmap_2d::FREE_SPACE);
           }
-          gradient_owned_cells_[master_index] = 0;
+          if (owned) {
+            gradient_owned_cells_[master_index] = 0;
+          }
           if (master_index < persistent_stamps_ms_.size()) {
             persistent_stamps_ms_[master_index] = 0;
+          }
+          if (master_index < persistent_costs_.size()) {
+            persistent_costs_[master_index] = nav2_costmap_2d::FREE_SPACE;
           }
         }
         continue;

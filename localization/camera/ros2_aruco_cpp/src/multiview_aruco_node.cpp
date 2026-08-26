@@ -180,7 +180,7 @@ public:
         } else {
             for (size_t i = 0; i + 1 < flat.size(); i += 2)
                 landmark_poses_.emplace_back(flat[i], flat[i + 1]);
-            RCLCPP_INFO(get_logger(), "Loaded %zu landmark poses", landmark_poses_.size());
+            // RCLCPP_INFO(get_logger(), "Loaded %zu landmark poses", landmark_poses_.size());
         }
 
         tf_buffer_   = std::make_shared<tf2_ros::Buffer>(get_clock());
@@ -331,13 +331,13 @@ private:
             return std::nullopt;
         }
 
-        RCLCPP_INFO(logger,
-            "Camera config %s: loaded frame_id=%s topic=%s (%s) model=%s hardware=%s "
-            "fx=%.1f fy=%.1f cx=%.1f cy=%.1f dist_coeffs=%zu calib=%dx%d",
-            filepath.c_str(), cfg.frame_id.c_str(), cfg.image_topic.c_str(),
-            cfg.compressed_image ? "compressed" : "raw",
-            model_str.c_str(), cfg.hardware_model.c_str(),
-            fx, fy, cx, cy, n_dist, cfg.calib_width, cfg.calib_height);
+        // RCLCPP_INFO(logger,
+        //     "Camera config %s: loaded frame_id=%s topic=%s (%s) model=%s hardware=%s "
+        //     "fx=%.1f fy=%.1f cx=%.1f cy=%.1f dist_coeffs=%zu calib=%dx%d",
+        //     filepath.c_str(), cfg.frame_id.c_str(), cfg.image_topic.c_str(),
+        //     cfg.compressed_image ? "compressed" : "raw",
+        //     model_str.c_str(), cfg.hardware_model.c_str(),
+        //     fx, fy, cx, cy, n_dist, cfg.calib_width, cfg.calib_height);
         return cfg;
     }
 
@@ -601,10 +601,10 @@ private:
             scaled.at<double>(0, 2) *= sx; // cx
             scaled.at<double>(1, 2) *= sy; // cy
             cam.cached_scaled_intrinsic = scaled;
-            RCLCPP_INFO(rclcpp::get_logger("aruco_node"),
-                "[%s] rescaled intrinsics %dx%d -> %dx%d (sx=%.5f sy=%.5f)",
-                cam.frame_id.c_str(), cam.calib_width, cam.calib_height,
-                frame_w, frame_h, sx, sy);
+            // RCLCPP_INFO(rclcpp::get_logger("aruco_node"),
+            //     "[%s] rescaled intrinsics %dx%d -> %dx%d (sx=%.5f sy=%.5f)",
+            //     cam.frame_id.c_str(), cam.calib_width, cam.calib_height,
+            //     frame_w, frame_h, sx, sy);
         }
 
         cam.rescale_cached  = true;

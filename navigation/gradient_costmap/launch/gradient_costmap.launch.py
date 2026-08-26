@@ -8,15 +8,15 @@ from launch_ros.descriptions import ParameterValue
 # Keep synchronized with the Nav2 footprint and its 0.02 m padding in
 # nav2_params_real_2026_mppi_with_global_map.yaml. ROS parameters do not
 # support nested arrays, so this is flattened as [x0, y0, x1, y1, ...].
-ROVER_FOOTPRINT_XY = [
-    0.74, 0.318,
-    0.318, 0.74,
-    -0.318, 0.74,
-    -0.74, 0.318,
-    -0.74, -0.318,
-    -0.318, -0.74,
-    0.318, -0.74,
-    0.74, -0.318,
+ROVER_FOOTPRINT_XY = [ #for cell  clearance
+    0.79, 0.318,
+    0.368, 0.79,
+    -0.368, 0.79,
+    -0.79, 0.368,
+    -0.79, -0.368,
+    -0.368, -0.79,
+    0.368, -0.79,
+    0.79, -0.368,
 ]
 
 
@@ -151,13 +151,13 @@ def generate_launch_description():
 
         arg(
             "local_inflation_radius",
-            "2",
+            "15", #2
             "Inflation radius in cells used when gradient_mode=local. Higher expands obstacles/costs "
             "farther; lower keeps inflated costs tighter.",
         ),
         arg(
             "local_inflation_factor",
-            "0.0001",
+            "0.05", #0.0001
             "Inflation decay factor used when gradient_mode=local. Higher makes inflated cost decay "
             "faster with distance; lower spreads stronger costs farther.",
         ),
@@ -198,6 +198,14 @@ def generate_launch_description():
             "X and Y. 1 fills every cell; 2 uses one quarter as many observations.",
         ),
         arg(
+            "footprint_clear_margin_cells",
+            "2",
+            "Extra clearance in output-grid cells applied around the footprint polygon when zeroing "
+            "the published grids. Higher clears a wider ring around the rover (and keeps inflation "
+            "out of it); 0 clears the polygon exactly. Does not affect the synthetic observations "
+            "injected into the internal map.",
+        ),
+        arg(
             "lidar_dead_zone_enabled",
             "true",
             "traversability_map: mark the LiDAR blind/dead angular sector as max cost in output maps.",
@@ -219,7 +227,7 @@ def generate_launch_description():
         ),
         arg(
             "global_inflation_radius",
-            "1",
+            "10",
             "Inflation radius in cells used when gradient_mode=global. Higher expands obstacles/costs "
             "farther; lower keeps inflated costs tighter.",
         ),
@@ -340,6 +348,7 @@ def generate_launch_description():
         "grid_resolution_m": typed("grid_resolution_m", float),
         "footprint_observation_stride_cells": typed(
             "footprint_observation_stride_cells", int),
+        "footprint_clear_margin_cells": typed("footprint_clear_margin_cells", int),
         "lidar_dead_zone_enabled": typed("lidar_dead_zone_enabled", bool),
         "lidar_dead_zone_min_angle_deg": typed("lidar_dead_zone_min_angle_deg", float),
         "lidar_dead_zone_max_angle_deg": typed("lidar_dead_zone_max_angle_deg", float),

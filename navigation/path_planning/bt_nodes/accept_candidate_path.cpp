@@ -6,6 +6,8 @@
 #include <limits>
 
 #include "behaviortree_cpp_v3/bt_factory.h"
+#include "tf2/utils.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace path_planning
 {
@@ -16,6 +18,8 @@ AcceptCandidatePath::AcceptCandidatePath(
 : BT::SyncActionNode(name, config)
 {
   node_ = config.blackboard->get<rclcpp::Node::SharedPtr>("node");
+  tf_buffer_ = config.blackboard->get<std::shared_ptr<tf2_ros::Buffer>>("tf_buffer");
+  robot_base_frame_ = node_->get_parameter("robot_base_frame").as_string();
 
   declareParameters();
 
@@ -170,17 +174,44 @@ bool AcceptCandidatePath::isCandidateAcceptable(
   const nav_msgs::msg::Path & current_path,
   const nav_msgs::msg::Path & candidate_path) const
 {
-  const double current_heading = initialHeading(current_path, check_distance_);
   const double candidate_heading = initialHeading(candidate_path, check_distance_);
 
+  std::string candidate_frame = candidate_path.header.frame_id;
+  if (candidate_frame.empty() && !candidate_path.poses.empty()) {
+    candidate_frame = candidate_path.poses.front().header.frame_id;
+  }
+
+  if (candidate_frame.empty()) {
+    RCLCPP_WARN(logger_, "Reject candidate: path frame is empty");
+    return false;
+  }
+
+  double robot_heading;
+  try {
+    // The transform rotation is the current base_link heading expressed in the
+    // candidate path frame. Subtracting it from the path direction is
+    // equivalent to expressing that direction in base_link and comparing it
+    // with base_link's +X axis.
+    const auto path_from_base = tf_buffer_->lookupTransform(
+      candidate_frame, robot_base_frame_, tf2::TimePointZero);
+    robot_heading = tf2::getYaw(path_from_base.transform.rotation);
+  } catch (const tf2::TransformException & ex) {
+    RCLCPP_WARN(
+      logger_,
+      "Reject candidate: cannot get current %s heading in %s: %s",
+      robot_base_frame_.c_str(), candidate_frame.c_str(), ex.what());
+    return false;
+  }
+
   const double heading_change_deg =
-    std::abs(angleDiff(candidate_heading, current_heading)) * 180.0 / M_PI;
+    std::abs(angleDiff(candidate_heading, robot_heading)) * 180.0 / M_PI;
 
   if (heading_change_deg > max_initial_angle_deg_) {
     RCLCPP_WARN(
       logger_,
-      "Reject candidate: heading change %.1f deg > %.1f deg",
+      "Reject candidate: initial direction is %.1f deg from current %s heading > %.1f deg",
       heading_change_deg,
+      robot_base_frame_.c_str(),
       max_initial_angle_deg_);
     return false;
   }

@@ -22,6 +22,9 @@ find_package(nav2_behavior_tree REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(pluginlib REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -65,6 +68,9 @@ ament_target_dependencies(path_planning_bt_nodes
   nav2_msgs
   behaviortree_cpp_v3
   pluginlib
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
 )
 
 target_compile_definitions(path_planning_bt_nodes PRIVATE BT_PLUGIN_EXPORT)

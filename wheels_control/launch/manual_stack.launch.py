@@ -226,7 +226,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_steer_control",
         name="motor_steering_servoing",
-        parameters=[{'ANGLE_TOLERANCE': 0.4}],
+        parameters=[{'ANGLE_TOLERANCE':0.8}],
         output="screen"
     )
 
@@ -250,7 +250,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         custom_local_ekf_node,
         ouster_launch,
         # nav_cameras_launch,
-        nav_cameras_launch_opti,
+        # nav_cameras_launch_opti, #we launch via cs
         # delayed_aruco_launch,
         jetson_stats,
         slip_control_node,

@@ -185,7 +185,12 @@ class GamepadInterface : public rclcpp::Node
       float joy_left_horiz = apply_deadzone(msg->axes[GP_AXIS_JOYSTICK_LEFT_HORIZONTAL]);
 
       // filter to make the mapping to ackermann angular speed more linear with the joystick value:
-      joy_left_horiz = joy_left_horiz * joy_left_horiz * joy_left_horiz;
+      // joy_left_horiz = joy_left_horiz * joy_left_horiz * joy_left_horiz; //x³ filtering
+      if(joy_left_horiz >= 0.0){
+        joy_left_horiz = joy_left_horiz * joy_left_horiz;
+      }else{
+        joy_left_horiz = (-1.0f)* joy_left_horiz * joy_left_horiz;
+      }
 
 
       if (current_rover_state == ROVER_MODE::OMNI_DIRECTIONAL)

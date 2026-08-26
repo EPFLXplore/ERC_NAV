@@ -177,13 +177,13 @@ def generate_launch_description():
                 #   TF updates but more CPU/network traffic. Decrease: lower load
                 #   but a coarser transform stream.
                 'meas_sigma_xy_m': 0.45,
-                # ^ [m] FALLBACK only: /aruco_rover_pos now carries its own
-                #   per-solution covariance (solution_sigma_xy_m in
-                #   pose_estimator_lidar_node, scaled by the marker count), and
-                #   that value is used whenever it is present. Tune the trust in
-                #   a solver solution there, not here. If this fallback is used,
-                #   increase it to trust a solution less; decrease it to trust it
-                #   more and accept faster/noisier corrections.
+                # ^ [m] FALLBACK only, used when a message carries no usable
+                #   covariance. /aruco_rover_pos normally carries the inverse of
+                #   the solver's information matrix, which is anisotropic and
+                #   accounts for the marker geometry, the per-source measurement
+                #   noise and the chi2 of the fit. Tune the trust in a solver
+                #   solution through the centroid_sigma_* / solution_sigma_floor_*
+                #   parameters of pose_estimation_node_with_lidar, not here.
                 'meas_sigma_yaw_deg': 5.0,
                 # ^ [deg] same fallback for heading: increase trusts a fallback
                 #   yaw less; decrease corrects heading faster but more noisily.

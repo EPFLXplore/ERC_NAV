@@ -8,6 +8,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "nav2_msgs/srv/is_path_valid.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "tf2_ros/buffer.h"
 
 namespace path_planning
 {
@@ -56,6 +57,8 @@ private:
     const nav_msgs::msg::Path & candidate_path);
 
   rclcpp::Node::SharedPtr node_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::string robot_base_frame_;
   rclcpp::Logger logger_{rclcpp::get_logger("AcceptCandidatePath")};
 
   rclcpp::Client<nav2_msgs::srv::IsPathValid>::SharedPtr is_path_valid_client_;

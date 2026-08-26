@@ -20,15 +20,21 @@
 // compute Kalman gain:   K = P*H^T*(H*P*H^T + R)^-1 = P*(P + R)^-1
 // update covariance:     P = (I - K)*P*(I - K)^T + K*R*K^T    (Joseph form)
 //
-// R is taken from each /aruco_rover_pos message: the solver's accuracy depends
-// on how many marker centres constrained it (a 2-marker solution is ~2.5x
-// noisier than a 3-marker one).  The meas_sigma_* parameters are only the
-// fallback for messages that carry no covariance.
+// R is taken from each /aruco_rover_pos message: pose_estimator_lidar_node
+// publishes the inverse of its solver's information matrix, so R is anisotropic
+// (markers clustered in bearing leave one direction weakly constrained) and
+// carries x-yaw / y-yaw cross-terms.  The full 3x3 block is used.  The
+// meas_sigma_* parameters are only the fallback for messages that carry no
+// usable covariance.
 //
 // /aruco_rover_pos measures T_map_base, not the state, so each measurement is
 // converted with the live odom->base_link TF:
 //
 //     z = T_map_odom = T_map_base * inverse(T_odom_base)
+//
+// and its covariance is converted with the Jacobian of that same expression,
+// which couples the measured yaw into map->odom xy through the lever arm
+// t_odom_base (see measurement_noise_map_odom).
 //
 // The constant-position model is only valid on that quantity: map->odom is the
 // slowly drifting correction, whereas map->base_link moves with the rover.
@@ -313,35 +319,69 @@ private:
     }
 
     /* ================================================================ */
-    /*  Per-measurement noise                                           */
+    /*  Per-measurement noise, in the measured T_map_base frame          */
     /*                                                                  */
-    /*  pose_estimator_lidar_node publishes the sigma of each solution:  */
-    /*  it scales with how many marker centres constrained the solve    */
-    /*  (2 markers are ~2.5x worse than 3).  Messages without a          */
-    /*  covariance fall back to the nominal R.                          */
-    /*                                                                  */
-    /*  The covariance describes T_map_base while the state is          */
-    /*  T_map_odom.  The xy block is isotropic, hence unchanged by the  */
-    /*  rotation, and the yaw lever-arm coupling is neglected, as it     */
-    /*  already was with a fixed R.                                     */
+    /*  pose_estimator_lidar_node publishes P = (sum H_i^T R_i^-1 H_i)^-1 */
+    /*  over its solver inliers, inflated by the chi2/dof of the fit.    */
+    /*  That block is anisotropic and has non-zero x-yaw / y-yaw terms,  */
+    /*  so all nine entries are read.  A message whose block is not a    */
+    /*  usable covariance (non-finite, non-positive diagonal, or not     */
+    /*  positive definite) falls back to the nominal R.                  */
     /* ================================================================ */
-    Mat3 measurement_noise(const nav_msgs::msg::Odometry &msg) const
+    // Not const: the throttled warning below needs a non-const Clock&, which
+    // Node::get_clock() only returns from a non-const context.
+    Mat3 measurement_noise(const nav_msgs::msg::Odometry &msg)
     {
-        // 6x6 row-major over [x y z roll pitch yaw].
-        const double var_x   = msg.pose.covariance[0];
-        const double var_y   = msg.pose.covariance[7];
-        const double var_yaw = msg.pose.covariance[35];
-        if (!std::isfinite(var_x) || !std::isfinite(var_y) ||
-            !std::isfinite(var_yaw) ||
-            var_x <= 0.0 || var_y <= 0.0 || var_yaw <= 0.0) {
+        // 6x6 row-major over [x y z roll pitch yaw]: the x/y/yaw block.
+        Mat3 R;
+        R << msg.pose.covariance[0],  msg.pose.covariance[1],  msg.pose.covariance[5],
+             msg.pose.covariance[6],  msg.pose.covariance[7],  msg.pose.covariance[11],
+             msg.pose.covariance[30], msg.pose.covariance[31], msg.pose.covariance[35];
+
+        if (!R.allFinite() ||
+            R(0, 0) <= 0.0 || R(1, 1) <= 0.0 || R(2, 2) <= 0.0) {
             return R_nominal_;
         }
 
-        Mat3 R = Mat3::Zero();
-        R(0, 0) = var_x;
-        R(1, 1) = var_y;
-        R(2, 2) = var_yaw;
+        // Rounding in transport can leave the block very slightly asymmetric.
+        R = 0.5 * (R + R.transpose()).eval();
+        if (!R.ldlt().isPositive()) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                "ArUco pose covariance is not positive definite, using the "
+                "nominal R instead");
+            return R_nominal_;
+        }
         return R;
+    }
+
+    /* ================================================================ */
+    /*  ... propagated into the T_map_odom state frame                   */
+    /*                                                                  */
+    /*  z = T_map_base * inverse(T_odom_base), i.e. with u = t_odom_base */
+    /*  and psi_mo = psi_mb - psi_ob:                                    */
+    /*                                                                  */
+    /*      t_mo = t_mb - R(psi_mo) * u                                  */
+    /*                                                                  */
+    /*  so the measured yaw enters map->odom xy through the lever arm u. */
+    /*  The coupling grows with |u|, i.e. with how far the rover has     */
+    /*  driven from the odom origin: at 40 m of odom travel a 3 deg yaw  */
+    /*  sigma is worth ~2 m of xy uncertainty, which the gate would      */
+    /*  otherwise never see.                                             */
+    /* ================================================================ */
+    static Mat3 measurement_noise_map_odom(
+        const Mat3 &R_map_base,
+        const tf2::Transform &T_odom_base,
+        double yaw_map_odom)
+    {
+        const double ux = T_odom_base.getOrigin().x();
+        const double uy = T_odom_base.getOrigin().y();
+        const double c = std::cos(yaw_map_odom);
+        const double s = std::sin(yaw_map_odom);
+
+        Mat3 J = Mat3::Identity();
+        J(0, 2) =  s * ux + c * uy;
+        J(1, 2) = -c * ux + s * uy;
+        return J * R_map_base * J.transpose();
     }
 
     /* ================================================================ */
@@ -389,7 +429,8 @@ private:
 
         predict_to_now();
 
-        const Mat3 R = measurement_noise(*msg);
+        const Mat3 R = measurement_noise_map_odom(
+            measurement_noise(*msg), T_odom_base, z(2));
         const Vec3 y = kf_->innovation(z);
         const double chi2 = kf_->chi2(y, R);
         if (!std::isfinite(chi2) || chi2 > gate_chi2_) {

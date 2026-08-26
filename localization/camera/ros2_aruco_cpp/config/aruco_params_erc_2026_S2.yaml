@@ -44,5 +44,56 @@ lidar_phi_filter_node:
 
 pose_estimation_node_with_lidar:
   ros__parameters:
-    range_sigma_m: 0.4
-    bearing_sigma_deg: 1.0
+    # ---- Centroid noise model -------------------------------------------
+    # Each marker centre gets a 2x2 covariance in base_link, diagonal in
+    # (along-range, lateral), which becomes its (range, bearing) R_i.  R_i sets
+    # both the marker's weight in the g2o solve and its contribution to the
+    # information matrix whose inverse is published on /aruco_rover_pos.
+    # Replaces the former single range_sigma_m / bearing_sigma_deg pair
+    # (0.4 m / 1.0 deg), which weighted every source and every range alike.
+    centroid_sigma_along_m: 0.10
+    # ^ [m] radial sigma at zero range: the half-cube extrapolation in
+    #   detect_cube, which infers the centre from 1-2 visible faces. Increase to
+    #   trust LiDAR ranges less.
+    centroid_sigma_along_per_m: 0.02
+    # ^ [m/m] radial sigma added per metre of range (thinning point cloud).
+    centroid_sigma_lat_m: 0.08
+    # ^ [m] lateral sigma at zero range. Divided by the range, this is the
+    #   bearing sigma, so it dominates the heading solution at short range.
+    centroid_sigma_lat_per_m: 0.01
+    # ^ [m/m] lateral sigma per metre, i.e. a constant ~0.6 deg bearing error.
+    camera_range_sigma_scale: 4.0
+    # ^ multiplies the radial sigma for /cube_markers_phi centres, which are
+    #   solvePnP poses copied from the camera, not LiDAR centroids: their depth
+    #   error is several times larger. Increase if phi markers drag the solve.
+    camera_sigma_lat_per_m: 0.017
+    # ^ [m/m] replaces centroid_sigma_lat_per_m for those same centres:
+    #   ~1.0 deg, the camera's bearing error. Bearing is the one quantity the
+    #   camera measures better than range, so it does not inherit the scale.
+
+    # ---- Published solution covariance ----------------------------------
+    solution_sigma_floor_xy_m: 0.10
+    # ^ [m] added in quadrature to the solved sigma. The information matrix only
+    #   accounts for the noise modelled above and knows nothing about landmark
+    #   survey error, extrinsics or measurement/TF timing skew, so without a
+    #   floor a many-marker solve publishes a few cm and the KF over-trusts it.
+    #   Raise this first if global_nav_kf_2d starts rejecting on its chi2 gate.
+    solution_sigma_floor_yaw_deg: 0.5
+    # ^ [deg] same floor for heading.
+    solution_sigma_max_xy_m: 3.0
+    # ^ [m] above this the geometry is degenerate (markers nearly collinear with
+    #   the rover) and the solution is dropped instead of published.
+    solution_sigma_max_yaw_deg: 30.0
+    # ^ [deg] same rejection threshold for heading.
+
+    # ---- Initialization prior -------------------------------------------
+    # Phase 1 and Phase 2 never run the solver: the pose is pinned to
+    # erc_start_pos with a yaw deduced from the bearings, so there is no
+    # information matrix and this fixed prior is published instead.
+    init_sigma_xy_m: 0.30
+    # ^ [m] how accurately the rover is placed on its start point.
+    init_sigma_yaw_deg: 5.0
+    # ^ [deg] spread of the camera-deduced start heading.
+    init_backup_sigma_yaw_deg: 20.0
+    # ^ [deg] used instead when Phase 1 timed out and fell back to
+    #   backup_erc_map_yaw_rad, i.e. the rover's hand alignment towards L15/L7.

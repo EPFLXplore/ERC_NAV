@@ -21,6 +21,7 @@ from rclpy.qos import (
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import FollowWaypoints
+from nav2_msgs.srv import ClearEntireCostmap
 from geometry_msgs.msg import PoseStamped, PoseArray, Point
 from nav_msgs.msg import Odometry, Path
 from rcl_interfaces.msg import Parameter as ParameterMsg
@@ -53,6 +54,14 @@ import tf_transformations
 # waypoints are sent one goal at a time so every one of them can have a
 # different duration. See disable_nav2_waypoint_pause() below for how the
 # Nav2-side pause is neutralised.
+#
+# RETRY POLICY
+# ------------
+# A waypoint that Nav2 reports as failed is NOT skipped. It is re-sent after
+# `retry_delay` seconds, up to `max_attempts_per_waypoint` times
+# (0 = retry forever). Between attempts the costmaps are optionally cleared,
+# because a failure caused by a stale lethal cell is otherwise deterministic
+# and every retry would fail identically.
 #
 # =========================================================================
 
@@ -130,8 +139,30 @@ class WaypointFollower(Node):
         self.declare_parameter("acceptance_radius", 0.07)
         self.declare_parameter("visualization_rate_hz", 2.0)
 
+        # ---------------- Retry policy ----------------
+        # How many times a single waypoint is attempted before it is finally
+        # given up on. 0 means "never give up", which is what you want if a
+        # waypoint must not be skipped under any circumstance. Be aware that
+        # with 0 the mission can block forever on an unreachable waypoint.
+        self.declare_parameter("max_attempts_per_waypoint", 0)
+        # Seconds to wait between two attempts at the same waypoint.
+        self.declare_parameter("retry_delay", 3.0)
+        # Clear the costmaps before re-sending. A failure caused by a stale
+        # lethal cell (planner "starting point in lethal space") repeats
+        # identically otherwise.
+        self.declare_parameter("clear_costmaps_on_retry", True)
+        self.declare_parameter(
+            "local_costmap_clear_service",
+            "/local_costmap/clear_entirely_local_costmap",
+        )
+        self.declare_parameter(
+            "global_costmap_clear_service",
+            "/global_costmap/clear_entirely_global_costmap",
+        )
+
         # Pause the same way even when Nav2 reports the waypoint as missed.
         # False = a failed waypoint is skipped immediately, no science stop.
+        # Only reachable once the retries are exhausted.
         self.declare_parameter("wait_on_failed_waypoint", False)
 
         # Nav2's own WaitAtWaypoint plugin would add its pause on top of the
@@ -155,6 +186,19 @@ class WaypointFollower(Node):
         self.visualization_rate_hz = float(
             self.get_parameter("visualization_rate_hz").value
         )
+        self.max_attempts = int(
+            self.get_parameter("max_attempts_per_waypoint").value
+        )
+        self.retry_delay = float(self.get_parameter("retry_delay").value)
+        self.clear_costmaps_on_retry = bool(
+            self.get_parameter("clear_costmaps_on_retry").value
+        )
+        self.local_costmap_clear_service = self.get_parameter(
+            "local_costmap_clear_service"
+        ).value
+        self.global_costmap_clear_service = self.get_parameter(
+            "global_costmap_clear_service"
+        ).value
         self.wait_on_failed_waypoint = bool(
             self.get_parameter("wait_on_failed_waypoint").value
         )
@@ -178,6 +222,15 @@ class WaypointFollower(Node):
         self.get_logger().info("  ERC -> map conversion:        x_map=x_erc, y_map=-y_erc, yaw_map=-yaw_erc")
         self.get_logger().info("=======================================================")
 
+        attempts_txt = (
+            "unlimited" if self.max_attempts <= 0 else str(self.max_attempts)
+        )
+        self.get_logger().info(
+            f"Retry policy: {attempts_txt} attempts per waypoint, "
+            f"{self.retry_delay:.1f} s between attempts, "
+            f"clear_costmaps_on_retry={self.clear_costmaps_on_retry}"
+        )
+
         # ---------------- TF ----------------
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -186,6 +239,11 @@ class WaypointFollower(Node):
         self.specs, self.waypoints = self.create_waypoints()
         self.curr_waypoint_index = 0
         self.missed_waypoints = []
+
+        # Attempts already made on self.curr_waypoint_index.
+        self._attempt = 0
+        # Total retries over the whole mission, for the final summary.
+        self._total_retries = 0
 
         # ---------------- Navigation EKF state ----------------
         # NavEKF3D publishes twist in child_frame_id = base_link, so the
@@ -214,10 +272,21 @@ class WaypointFollower(Node):
         self._pause_index = None
         self._pause_end_time = None
 
+        self._retry_timer = None
+        self._retry_index = None
+
         self._mission_finished = False
 
         # ---------------- Nav2 action client ----------------
         self._action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
+
+        # ---------------- Costmap clearing clients ----------------
+        self._clear_local_client = self.create_client(
+            ClearEntireCostmap, self.local_costmap_clear_service
+        )
+        self._clear_global_client = self.create_client(
+            ClearEntireCostmap, self.global_costmap_clear_service
+        )
 
         # ---------------- Visualization publishers ----------------
         viz_qos = QoSProfile(
@@ -346,11 +415,12 @@ class WaypointFollower(Node):
         # ---------------- Current test route ----------------
 
         waypoint_list = [
-            WP([2.2, 0.0, 0.0],   ERC_WPT=True,   wait_time=10.0),
-            WP([0.0, -2.5, 0.0],  ERC_WPT=False,   wait_time=5.0),
-            WP([1.6, -5.7, 0.0],  ERC_WPT=True,   wait_time=10.0),
-            WP([-1.4, -5.7, 0.0], ERC_WPT=True,   wait_time=10.0),
-            WP([0.0, 0.0, 0.0],   ERC_WPT=True,   wait_time=10.0),
+            WP([0.0, 8.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
+            WP([-7.0, 5.0, 0.0],  ERC_WPT=True,   wait_time=15.0),
+            WP([-15.0, 8.5, 0.0],  ERC_WPT=True,   wait_time=15.0),
+            WP([-23.0, 6.0, 0.0], ERC_WPT=True,   wait_time=15.0),
+            WP([-15.0, -3.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
+            WP([0.0, 0.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
         ]
 
         # Example of a route that mixes scored stops and shaping waypoints:
@@ -581,6 +651,9 @@ class WaypointFollower(Node):
             remaining = self.pause_remaining()
             if self._pause_index == i and remaining is not None:
                 text = f"{name} | PAUSED {remaining:.0f}s"
+            elif is_current and self._attempt > 1:
+                # Make retries obvious in RViz.
+                text = f"{name} | RETRY {self._attempt}"
 
             label.text = text
 
@@ -761,12 +834,18 @@ class WaypointFollower(Node):
                 0.0,
             )
 
+            attempt_txt = ""
+            if self._attempt > 1:
+                limit = "inf" if self.max_attempts <= 0 else str(self.max_attempts)
+                attempt_txt = f" | attempt {self._attempt}/{limit}"
+
             self.get_logger().info(
                 f"TARGET {self.waypoint_label(self.curr_waypoint_index)} | "
                 f"map: x={target.x:.2f}, y={target.y:.2f} | "
                 f"erc_map: x={target_x_erc:.2f}, y={target_y_erc:.2f} | "
                 f"distance={distance:.2f} m | "
                 f"pause_on_arrival={spec.wait_time:.1f} s"
+                f"{attempt_txt}"
             )
 
             if not self.ekf_is_fresh():
@@ -849,12 +928,44 @@ class WaypointFollower(Node):
             )
 
     # =====================================================================
+    # Costmap clearing between retries
+    # =====================================================================
+    def clear_costmaps(self):
+        """
+        Fire-and-forget clear of both costmaps.
+
+        A planner failure caused by a stale lethal cell around the rover
+        repeats identically on every retry, so the costmaps are wiped before
+        the next attempt. Note this also drops the accumulated live patch in
+        the global costmap; that data is rebuilt as soon as the local
+        traversability map publishes again.
+        """
+        if not self.clear_costmaps_on_retry:
+            return
+
+        for name, client in (
+            ("local", self._clear_local_client),
+            ("global", self._clear_global_client),
+        ):
+            if not client.service_is_ready():
+                self.get_logger().warn(
+                    f"{name} costmap clear service not available, skipping it"
+                )
+                continue
+
+            client.call_async(ClearEntireCostmap.Request())
+            self.get_logger().info(f"Requested {name} costmap clear before retry")
+
+    # =====================================================================
     # Mission sequencing
     # =====================================================================
     #
     # One FollowWaypoints goal per waypoint. Nav2's waypoint_follower only
     # knows about a single pose at a time, which is what makes a different
     # pause per waypoint possible.
+    #
+    # A waypoint is only given up on once max_attempts_per_waypoint attempts
+    # have failed. With that parameter at 0 it is never given up on.
     #
     # =====================================================================
     def start_mission(self):
@@ -869,16 +980,25 @@ class WaypointFollower(Node):
         self.send_waypoint(0)
 
     def send_waypoint(self, index):
+        # Moving on to a different waypoint resets the attempt counter;
+        # re-sending the same index counts as another attempt.
+        if index != self.curr_waypoint_index:
+            self._attempt = 0
+
         self.curr_waypoint_index = index
+        self._attempt += 1
+
         spec = self.specs[index]
 
         goal_msg = FollowWaypoints.Goal()
         goal_msg.poses = [self.waypoints[index]]
 
+        limit = "inf" if self.max_attempts <= 0 else str(self.max_attempts)
         self.get_logger().info(
             f"Sending {self.waypoint_label(index)} to Nav2 in ROS frame "
             f"'{self.map_frame}': x={spec.x:.2f}, y={spec.y:.2f}, "
-            f"pause_on_arrival={spec.wait_time:.1f} s"
+            f"pause_on_arrival={spec.wait_time:.1f} s "
+            f"[attempt {self._attempt}/{limit}]"
         )
 
         self._send_goal_future = self._action_client.send_goal_async(goal_msg)
@@ -888,11 +1008,7 @@ class WaypointFollower(Node):
         goal_handle = future.result()
 
         if not goal_handle.accepted:
-            self.get_logger().warn(
-                f"{self.waypoint_label(self.curr_waypoint_index)} was rejected"
-            )
-            self.missed_waypoints.append(self.curr_waypoint_index)
-            self.advance(self.curr_waypoint_index)
+            self.handle_failure(self.curr_waypoint_index, "goal rejected by Nav2")
             return
 
         self._goal_handle = goal_handle
@@ -912,19 +1028,76 @@ class WaypointFollower(Node):
 
         reached = wrapped_result.status == GoalStatus.STATUS_SUCCEEDED and not missed
 
-        if reached:
-            self.report_waypoint_reached(index)
-        else:
-            self.missed_waypoints.append(index)
+        if not reached:
+            self.handle_failure(
+                index,
+                f"status={wrapped_result.status}, missed={missed}",
+            )
+            return
+
+        self.report_waypoint_reached(index)
+        self.start_pause(index)
+
+    # =====================================================================
+    # Failure handling: retry instead of skipping
+    # =====================================================================
+    def handle_failure(self, index, reason):
+        """
+        Called for every way a waypoint can fail. Re-sends the same waypoint
+        unless the attempt budget is exhausted.
+        """
+        budget_left = self.max_attempts <= 0 or self._attempt < self.max_attempts
+
+        if budget_left:
+            limit = "inf" if self.max_attempts <= 0 else str(self.max_attempts)
+            self._total_retries += 1
+
             self.get_logger().warn(
-                f"{self.waypoint_label(index)} NOT reached "
-                f"(status={wrapped_result.status}, missed={missed}), continuing"
+                f"{self.waypoint_label(index)} FAILED ({reason}) on attempt "
+                f"{self._attempt}/{limit}, retrying in {self.retry_delay:.1f} s"
             )
 
-        if reached or self.wait_on_failed_waypoint:
+            self.clear_costmaps()
+            self.schedule_retry(index)
+            return
+
+        # Attempt budget exhausted. Only here is a waypoint given up on.
+        self.missed_waypoints.append(index)
+        self.get_logger().error(
+            f"{self.waypoint_label(index)} ABANDONED after {self._attempt} "
+            f"attempts (last reason: {reason})"
+        )
+
+        if self.wait_on_failed_waypoint:
             self.start_pause(index)
         else:
             self.advance(index)
+
+    def schedule_retry(self, index):
+        self.cancel_retry_timer()
+
+        self._retry_index = index
+        self._retry_timer = self.create_timer(
+            max(self.retry_delay, 0.1),
+            self.retry_timer_callback,
+        )
+
+    def retry_timer_callback(self):
+        index = self._retry_index
+        self.cancel_retry_timer()
+
+        if index is None or self._mission_finished:
+            return
+
+        self.send_waypoint(index)
+
+    def cancel_retry_timer(self):
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self.destroy_timer(self._retry_timer)
+
+        self._retry_timer = None
+        self._retry_index = None
 
     def start_pause(self, index):
         wait_time = self.specs[index].wait_time
@@ -971,7 +1144,9 @@ class WaypointFollower(Node):
             return
 
         self.curr_waypoint_index = len(self.waypoints)
+        self._attempt = 0
         self._mission_finished = True
+        self.cancel_retry_timer()
 
         if self.missed_waypoints:
             self.get_logger().warn(
@@ -979,6 +1154,7 @@ class WaypointFollower(Node):
                 "========================================\n"
                 f"  ROUTE FINISHED, MISSED WAYPOINTS: "
                 f"{[i + 1 for i in self.missed_waypoints]}\n"
+                f"  TOTAL RETRIES: {self._total_retries}\n"
                 "========================================"
             )
         else:
@@ -986,6 +1162,7 @@ class WaypointFollower(Node):
                 "\n"
                 "========================================\n"
                 "  ALL WAYPOINTS COMPLETED\n"
+                f"  TOTAL RETRIES: {self._total_retries}\n"
                 "========================================"
             )
 
@@ -997,6 +1174,10 @@ class WaypointFollower(Node):
         else:
             headline = f"  INTERMEDIATE WAYPOINT {waypoint_index + 1} REACHED"
 
+        attempts_txt = ""
+        if self._attempt > 1:
+            attempts_txt = f"  AFTER {self._attempt} ATTEMPTS\n"
+
         self.get_logger().info(
             "========================================\n"
             "\n"
@@ -1006,6 +1187,7 @@ class WaypointFollower(Node):
             "\n"
             "\n"
             f"{headline}\n"
+            f"{attempts_txt}"
             f"  PAUSE: {self.specs[waypoint_index].wait_time:.1f} s\n"
             "\n"
             "\n"

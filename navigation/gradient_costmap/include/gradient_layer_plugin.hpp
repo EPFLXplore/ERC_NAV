@@ -74,6 +74,10 @@ private:
   bool use_map_file_{false};
   bool expand_update_bounds_{true};
   bool footprint_clearing_enabled_{false};
+  // When true, a zero from the incoming grid forces FREE_SPACE even on cells
+  // this layer never wrote, so live free space overrides earlier layers
+  // (notably a stale file-backed map) inside the incoming grid's extent.
+  bool authoritative_clear_{false};
   bool persistent_patch_{false};
   bool file_map_loaded_{false};
   double file_resolution_{0.0};

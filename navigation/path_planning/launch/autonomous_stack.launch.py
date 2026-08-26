@@ -66,7 +66,7 @@ def generate_launch_description():
     configured_params = '/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_mppi_with_global_map.yaml'
 
     stdout_linebuf_envvar = SetEnvironmentVariable(
-        'RCUTILS_LOGGING_BUFFERED_STREAM', '1'
+        'RCUTILS_LOGGING_BUFFERED_STREAM', '0'
     )
 
     declare_namespace_cmd = DeclareLaunchArgument(
@@ -110,7 +110,10 @@ def generate_launch_description():
     )
 
     declare_log_level_cmd = DeclareLaunchArgument(
-        'log_level', default_value='info', description='log level'
+        'log_level',
+        default_value='error',
+        description='Log level applied to every Nav2 node. Only ERROR and above are '
+                    'printed by default; pass log_level:=info to get the usual output.',
     )
 
     load_nodes = GroupAction(
@@ -120,6 +123,7 @@ def generate_launch_description():
             Node(
                 package='nav2_controller',
                 executable='controller_server',
+                name='controller_server',
                 output='screen',
                 respawn=use_respawn,
                 respawn_delay=2.0,
@@ -166,6 +170,7 @@ def generate_launch_description():
                 name='map_server',
                 output='screen',
                 parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
                 #remapping needed ??
             ),
             Node(

@@ -7,7 +7,7 @@ is_container_running() {
     fi
 }
 
-CONTAINER_NAME=nav_humble_jetson
+CONTAINER_NAME=nav_humble_jetson_cam_opti
 
 container_status=$(is_container_running "$CONTAINER_NAME")
 

@@ -140,7 +140,7 @@ public:
         for (size_t i = 0; i + 1 < flat.size(); i += 2) {
             landmark_poses_.emplace_back(flat[i], flat[i + 1]);
         }
-        RCLCPP_INFO(get_logger(), "Loaded %zu landmark poses", landmark_poses_.size());
+        // RCLCPP_INFO(get_logger(), "Loaded %zu landmark poses", landmark_poses_.size());
         
 
         camera_detection_ttl_ns_ = static_cast<int64_t>(camera_detection_ttl_sec * 1e9);

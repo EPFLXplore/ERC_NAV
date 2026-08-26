@@ -679,17 +679,17 @@ private:
         }
 
         const std::string lidar_map_details_text = lidar_map_details.str();
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "recovery=%s eligible=%zu failures=%zu consistent=%zu "
-            "camera_agreement=%zu lidar_map_agreement=%zu/%zu "
-            "lidar_map_max_error=%.2f limit=%.2f lidar_batch=%zu "
-            "lidar_centers=%zu pose_recent=%s lidar_map_ids=[%s]",
-            state_name(state_), eligible_count, failures.size(), failure_cluster,
-            camera_agreement_count, lidar_map_agreement_count,
-            lidar_map_checked_count, lidar_map_max_error_m,
-            reacquire_landmark_radius_m_, last_lidar_batch_size_,
-            last_lidar_centers_odom_.size(), pose_recent ? "yes" : "no",
-            lidar_map_details_text.c_str());
+        // RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+        //     "recovery=%s eligible=%zu failures=%zu consistent=%zu "
+        //     "camera_agreement=%zu lidar_map_agreement=%zu/%zu "
+        //     "lidar_map_max_error=%.2f limit=%.2f lidar_batch=%zu "
+        //     "lidar_centers=%zu pose_recent=%s lidar_map_ids=[%s]",
+        //     state_name(state_), eligible_count, failures.size(), failure_cluster,
+        //     camera_agreement_count, lidar_map_agreement_count,
+        //     lidar_map_checked_count, lidar_map_max_error_m,
+        //     reacquire_landmark_radius_m_, last_lidar_batch_size_,
+        //     last_lidar_centers_odom_.size(), pose_recent ? "yes" : "no",
+        //     lidar_map_details_text.c_str());
     }
 
     rcl_interfaces::msg::SetParametersResult on_parameters(
