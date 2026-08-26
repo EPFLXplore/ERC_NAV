@@ -26,8 +26,8 @@ bt_navigator:
       max_start_deviation: 10.0      # [m] stable corridor around the followed prefix
       costmap_topic: "global_costmap/costmap"
       obstacle_check_distance: 3.0   # [m] cost-scored path ahead of the rover
-      obstacle_switch_cost: 1.0    # costs remain non-lethal, but trigger a route switch here
-      minimum_cost_improvement: 1.0 # required max or mean cost reduction
+      obstacle_switch_cost: 100.0    # costs remain non-lethal, but trigger a route switch here
+      minimum_cost_improvement: 23000000.0 # required max or mean cost reduction
       obstacle_confirmation_time: 0.0 # [s] planner already filters map updates; switch immediately
       treat_unknown_as_obstacle: false
       accepted_path_topic: "accepted_plan" # actual path written to FollowPath's blackboard

@@ -102,9 +102,9 @@ private:
             auto stale_cmds = future_motor_cmds_;
             stale_cmds.drive = {0.0, 0.0, 0.0, 0.0};
             pub_motor_cmds_->publish(stale_cmds);
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                "No /NAV/steering_servoing target for more than %.2f s, holding drive at zero",
-                cmd_timeout_.seconds());
+            // RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            //     "No /NAV/steering_servoing target for more than %.2f s, holding drive at zero",
+            //     cmd_timeout_.seconds());
             return;
         }
         // RCLCPP_INFO(this->get_logger(), "angle tolerance incr %.2f",angle_tolerance_incr_);

@@ -733,10 +733,10 @@ public:
             const size_t footprint_cells = injectFootprintObservationCells();
             updateOccupancyGrid();
             publishMap();
-            RCLCPP_INFO_THROTTLE(
-                this->get_logger(), *this->get_clock(), 5000,
-                "Injected %zu synthetic zero-cost observations inside the robot footprint",
-                footprint_cells);
+            // RCLCPP_INFO_THROTTLE(
+            //     this->get_logger(), *this->get_clock(), 5000,
+            //     "Injected %zu synthetic zero-cost observations inside the robot footprint",
+            //     footprint_cells);
         }
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10000, "Calculating traversability");
     }
@@ -1023,19 +1023,19 @@ public:
         }
 
         const size_t cleared_cells = clearFootprintInGrid(occupancyMap2D);
-        RCLCPP_INFO_THROTTLE(
-            this->get_logger(), *this->get_clock(), 5000,
-            "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
-            cleared_cells, output_local_topic_.c_str());
+        // RCLCPP_INFO_THROTTLE(
+        //     this->get_logger(), *this->get_clock(), 5000,
+        //     "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
+        //     cleared_cells, output_local_topic_.c_str());
         pubOccupancyMapLocal->publish(occupancyMap2D);
     }
 
     void publishLocalOccupancyGridInflated(){
         const size_t cleared_cells = clearFootprintInGrid(occupancyMap2DInflated);
-        RCLCPP_INFO_THROTTLE(
-            this->get_logger(), *this->get_clock(), 5000,
-            "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
-            cleared_cells, output_local_inflated_topic_.c_str());
+        // RCLCPP_INFO_THROTTLE(
+        //     this->get_logger(), *this->get_clock(), 5000,
+        //     "Forced %zu footprint cells to occupancy cost 0 immediately before publishing %s",
+        //     cleared_cells, output_local_inflated_topic_.c_str());
         pubOccupancyMapLocalInflated->publish(occupancyMap2DInflated);
     }
 

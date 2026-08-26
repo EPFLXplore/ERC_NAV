@@ -164,9 +164,16 @@ BT::NodeStatus AcceptCandidatePath::tick()
       "Obstacle detour waiting for confirmation: %.2f / %.2f s",
       blocked_for, obstacle_confirmation_time_);
     return BT::NodeStatus::SUCCESS;
+  }else{
+    RCLCPP_INFO(
+    logger_,
+    "BALLS (current max/mean %.0f/%.1f, candidate %.0f/%.1f)",
+    current_cost.maximum, current_cost.mean,
+    candidate_cost.maximum, candidate_cost.mean);
   }
 
   obstacle_since_.reset();
+
 
   if (current_cost.samples > 0 && current_cost.maximum >= obstacle_switch_cost_) {
     outputPath(current_path);
