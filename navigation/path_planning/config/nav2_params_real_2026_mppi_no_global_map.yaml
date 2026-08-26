@@ -309,7 +309,7 @@ controller_server:
         # the global path; decrease if it hunts side-to-side or resists safe
         # avoidance manoeuvres. Tune this before increasing PathAlignCritic.
         cost_weight: 10.0
-        offset_from_furthest: 4
+        offset_from_furthest: 2
         threshold_to_consider: 0.5
       PreferForwardCritic:
         enabled: true
@@ -486,7 +486,7 @@ global_costmap:
         plugin: "gradient_layer::GradientLayer"
         enabled: true #false
         use_map_file: true
-        map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/marsyard_costmap_inflated.yaml"
+        map_yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml"
         map_flip_x: false
         map_flip_y: true
 
@@ -584,7 +584,7 @@ global_costmap:
 map_server:
   ros__parameters:
     use_sim_time: false
-    yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/marsyard_costmap.yaml"
+    yaml_filename: "/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml"
 
 map_saver:
   ros__parameters:

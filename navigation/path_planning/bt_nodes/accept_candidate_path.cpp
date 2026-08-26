@@ -1,11 +1,14 @@
 #include "path_planning/accept_candidate_path.hpp"
 #include "path_planning/restamp_goal.hpp"
 
-#include <chrono>
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 #include "behaviortree_cpp_v3/bt_factory.h"
+#include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "tf2/utils.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
@@ -23,39 +26,73 @@ AcceptCandidatePath::AcceptCandidatePath(
 
   declareParameters();
 
-  callback_group_ = node_->create_callback_group(
-    rclcpp::CallbackGroupType::MutuallyExclusive, false);
-  callback_group_executor_.add_callback_group(
-    callback_group_, node_->get_node_base_interface());
+  auto costmap_qos = rclcpp::QoS(rclcpp::KeepLast(1));
+  costmap_qos.transient_local().reliable();
+  costmap_sub_ = node_->create_subscription<nav2_msgs::msg::Costmap>(
+    costmap_topic_, costmap_qos,
+    [this](nav2_msgs::msg::Costmap::ConstSharedPtr msg) {
+      std::lock_guard<std::mutex> lock(costmap_mutex_);
+      costmap_ = msg;
+    });
 
-  is_path_valid_client_ = node_->create_client<nav2_msgs::srv::IsPathValid>(
-    "is_path_valid", rmw_qos_profile_services_default, callback_group_);
+  auto accepted_path_qos = rclcpp::QoS(rclcpp::KeepLast(1));
+  accepted_path_qos.transient_local().reliable();
+  accepted_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(
+    accepted_path_topic_, accepted_path_qos);
 }
 
 void AcceptCandidatePath::declareParameters()
 {
   const std::string ns = "accept_candidate_path.";
 
-  const auto declare = [this, &ns](const std::string & param, double default_value) {
+  const auto declareDouble = [this, &ns](const std::string & param, double default_value) {
       if (!node_->has_parameter(ns + param)) {
         node_->declare_parameter(ns + param, default_value);
       }
       return node_->get_parameter(ns + param).as_double();
     };
 
-  check_distance_ = declare("check_distance", check_distance_);
-  max_initial_angle_deg_ = declare("max_initial_angle_deg", max_initial_angle_deg_);
-  max_length_ratio_ = declare("max_length_ratio", max_length_ratio_);
-  max_start_deviation_ = declare("max_start_deviation", max_start_deviation_);
-  force_accept_timeout_ = declare("force_accept_timeout", force_accept_timeout_);
-  is_path_valid_timeout_ = declare("is_path_valid_timeout", is_path_valid_timeout_);
+  const auto declareBool = [this, &ns](const std::string & param, bool default_value) {
+      if (!node_->has_parameter(ns + param)) {
+        node_->declare_parameter(ns + param, default_value);
+      }
+      return node_->get_parameter(ns + param).as_bool();
+    };
+
+  const auto declareString = [this, &ns](
+    const std::string & param, const std::string & default_value)
+    {
+      if (!node_->has_parameter(ns + param)) {
+        node_->declare_parameter(ns + param, default_value);
+      }
+      return node_->get_parameter(ns + param).as_string();
+    };
+
+  check_distance_ = declareDouble("check_distance", check_distance_);
+  max_initial_angle_deg_ = declareDouble("max_initial_angle_deg", max_initial_angle_deg_);
+  max_length_ratio_ = declareDouble("max_length_ratio", max_length_ratio_);
+  max_start_deviation_ = declareDouble("max_start_deviation", max_start_deviation_);
+  obstacle_check_distance_ = declareDouble(
+    "obstacle_check_distance", obstacle_check_distance_);
+  obstacle_switch_cost_ = declareDouble("obstacle_switch_cost", obstacle_switch_cost_);
+  obstacle_confirmation_time_ = declareDouble(
+    "obstacle_confirmation_time", obstacle_confirmation_time_);
+  minimum_cost_improvement_ = declareDouble(
+    "minimum_cost_improvement", minimum_cost_improvement_);
+  treat_unknown_as_obstacle_ = declareBool(
+    "treat_unknown_as_obstacle", treat_unknown_as_obstacle_);
+  costmap_topic_ = declareString("costmap_topic", costmap_topic_);
+  accepted_path_topic_ = declareString("accepted_path_topic", accepted_path_topic_);
 
   RCLCPP_INFO(
     logger_,
     "Params: check_distance=%.2f max_initial_angle_deg=%.1f max_length_ratio=%.2f "
-    "max_start_deviation=%.2f force_accept_timeout=%.1f is_path_valid_timeout=%.2f",
-    check_distance_, max_initial_angle_deg_, max_length_ratio_,
-    max_start_deviation_, force_accept_timeout_, is_path_valid_timeout_);
+    "max_start_deviation=%.2f obstacle_check_distance=%.2f obstacle_switch_cost=%.1f "
+    "obstacle_confirmation_time=%.2f minimum_cost_improvement=%.1f "
+    "costmap_topic=%s accepted_path_topic=%s",
+    check_distance_, max_initial_angle_deg_, max_length_ratio_, max_start_deviation_,
+    obstacle_check_distance_, obstacle_switch_cost_, obstacle_confirmation_time_,
+    minimum_cost_improvement_, costmap_topic_.c_str(), accepted_path_topic_.c_str());
 }
 
 BT::PortsList AcceptCandidatePath::providedPorts()
@@ -73,6 +110,7 @@ BT::NodeStatus AcceptCandidatePath::tick()
   nav_msgs::msg::Path current_path;
 
   if (!getInput("candidate_path", candidate_path)) {
+    obstacle_since_.reset();
     RCLCPP_WARN(logger_, "Reject candidate: missing candidate_path");
     return BT::NodeStatus::FAILURE;
   }
@@ -81,199 +119,349 @@ BT::NodeStatus AcceptCandidatePath::tick()
   const bool has_current_path = static_cast<bool>(current_path_result);
 
   if (candidate_path.poses.size() < 2) {
+    obstacle_since_.reset();
     RCLCPP_WARN(logger_, "Reject candidate: path has fewer than 2 poses");
     return BT::NodeStatus::FAILURE;
   }
 
   if (!has_current_path || current_path.poses.size() < 2) {
-    invalid_since_.reset();
-    setOutput("output_path", candidate_path);
+    obstacle_since_.reset();
+    outputPath(candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate: no usable current path");
     return BT::NodeStatus::SUCCESS;
   }
 
   if (goalChanged(current_path, candidate_path)) {
-    invalid_since_.reset();
-    setOutput("output_path", candidate_path);
+    obstacle_since_.reset();
+    outputPath(candidate_path);
     RCLCPP_INFO(logger_, "Accept candidate: goal changed");
     return BT::NodeStatus::SUCCESS;
   }
 
-  if (isCandidateAcceptable(current_path, candidate_path)) {
-    invalid_since_.reset();
-    setOutput("output_path", candidate_path);
-    RCLCPP_INFO(logger_, "Accept candidate path");
-    return BT::NodeStatus::SUCCESS;
-  }
-
-  return rejectCandidate(current_path, candidate_path);
-}
-
-BT::NodeStatus AcceptCandidatePath::rejectCandidate(
-  const nav_msgs::msg::Path & current_path,
-  const nav_msgs::msg::Path & candidate_path)
-{
-  if (currentPathInvalid(current_path)) {
-    if (!invalid_since_) {
-      invalid_since_ = node_->now();
+  PathCost current_cost;
+  PathCost candidate_cost;
+  if (shouldSwitchForObstacle(current_path, candidate_path, current_cost, candidate_cost)) {
+    const auto now = node_->now();
+    if (!obstacle_since_) {
+      obstacle_since_ = now;
     }
 
-    const double invalid_for = (node_->now() - *invalid_since_).seconds();
-
-    if (invalid_for > force_accept_timeout_) {
-      invalid_since_.reset();
-      setOutput("output_path", candidate_path);
+    const double blocked_for = std::max(0.0, (now - *obstacle_since_).seconds());
+    if (blocked_for >= obstacle_confirmation_time_) {
+      obstacle_since_.reset();
+      outputPath(candidate_path);
       RCLCPP_WARN(
         logger_,
-        "Force-accept divergent candidate: current path invalid for %.1f s > %.1f s",
-        invalid_for, force_accept_timeout_);
+        "Accept obstacle detour: current max/mean %.0f/%.1f, candidate %.0f/%.1f",
+        current_cost.maximum, current_cost.mean,
+        candidate_cost.maximum, candidate_cost.mean);
       return BT::NodeStatus::SUCCESS;
     }
 
+    outputPath(current_path);
     RCLCPP_WARN(
       logger_,
-      "Reject candidate, current path invalid for %.1f s (force-accept at %.1f s)",
-      invalid_for, force_accept_timeout_);
-  } else {
-    invalid_since_.reset();
-    RCLCPP_WARN(logger_, "Reject candidate path, keeping current path");
+      "Obstacle detour waiting for confirmation: %.2f / %.2f s",
+      blocked_for, obstacle_confirmation_time_);
+    return BT::NodeStatus::SUCCESS;
   }
 
-  // Keep following the current path; rejection is normal operation and must
-  // not fail the tree (that would halt FollowPath and trigger recovery).
-  setOutput("output_path", current_path);
+  obstacle_since_.reset();
+
+  if (current_cost.samples > 0 && current_cost.maximum >= obstacle_switch_cost_) {
+    outputPath(current_path);
+    RCLCPP_WARN(
+      logger_,
+      "Keep blocked current path: candidate is not yet clear/better enough "
+      "(current max/mean %.0f/%.1f, candidate %.0f/%.1f)",
+      current_cost.maximum, current_cost.mean,
+      candidate_cost.maximum, candidate_cost.mean);
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  if (isCandidateAcceptable(current_path, candidate_path)) {
+    outputPath(candidate_path);
+    RCLCPP_INFO(logger_, "Accept stable candidate path");
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  // A geometrically divergent replan is ignored while the followed path is
+  // below the obstacle threshold. FollowPath therefore keeps the same prefix.
+  outputPath(current_path);
+  RCLCPP_WARN(logger_, "Reject divergent candidate: no obstacle-triggered switch");
   return BT::NodeStatus::SUCCESS;
 }
 
-bool AcceptCandidatePath::currentPathInvalid(const nav_msgs::msg::Path & path)
+bool AcceptCandidatePath::shouldSwitchForObstacle(
+  const nav_msgs::msg::Path & current_path,
+  const nav_msgs::msg::Path & candidate_path,
+  PathCost & current_cost,
+  PathCost & candidate_cost) const
 {
-  if (!is_path_valid_client_->service_is_ready()) {
+  const auto current_score = scorePathAhead(current_path);
+  const auto candidate_score = scorePathAhead(candidate_path);
+  if (!current_score || !candidate_score) {
     RCLCPP_WARN_THROTTLE(
       logger_, *node_->get_clock(), 5000,
-      "is_path_valid service not available, assuming current path is valid");
+      "Cannot compare path costs yet; keeping the current path stable");
     return false;
   }
 
-  auto request = std::make_shared<nav2_msgs::srv::IsPathValid::Request>();
-  request->path = path;
+  current_cost = *current_score;
+  candidate_cost = *candidate_score;
 
-  auto future = is_path_valid_client_->async_send_request(request);
+  const bool current_blocked = current_cost.maximum >= obstacle_switch_cost_;
+  const bool candidate_clear = candidate_cost.maximum < obstacle_switch_cost_;
+  const bool maximum_improved =
+    candidate_cost.maximum + minimum_cost_improvement_ <= current_cost.maximum;
+  const bool mean_improved =
+    candidate_cost.mean + minimum_cost_improvement_ <= current_cost.mean;
 
-  const auto timeout = std::chrono::duration<double>(is_path_valid_timeout_);
-  if (callback_group_executor_.spin_until_future_complete(future, timeout) !=
-    rclcpp::FutureReturnCode::SUCCESS)
+  return current_blocked && candidate_clear && (maximum_improved || mean_improved);
+}
+
+std::optional<AcceptCandidatePath::PathCost> AcceptCandidatePath::scorePathAhead(
+  const nav_msgs::msg::Path & path) const
+{
+  nav2_msgs::msg::Costmap::ConstSharedPtr costmap;
   {
-    RCLCPP_WARN(logger_, "is_path_valid did not answer in time, assuming valid");
-    return false;
+    std::lock_guard<std::mutex> lock(costmap_mutex_);
+    costmap = costmap_;
   }
 
-  return !future.get()->is_valid;
+  if (!costmap || costmap->metadata.resolution <= 0.0 ||
+    costmap->metadata.size_x == 0 || costmap->metadata.size_y == 0 ||
+    costmap->data.empty())
+  {
+    return std::nullopt;
+  }
+
+  const auto start = nearestPathIndex(path);
+  const std::string path_frame = pathFrame(path);
+  const std::string costmap_frame = costmap->header.frame_id;
+  if (!start || path_frame.empty() || costmap_frame.empty()) {
+    return std::nullopt;
+  }
+
+  std::optional<geometry_msgs::msg::TransformStamped> costmap_from_path;
+  if (path_frame != costmap_frame) {
+    try {
+      costmap_from_path = tf_buffer_->lookupTransform(
+        costmap_frame, path_frame, tf2::TimePointZero);
+    } catch (const tf2::TransformException & ex) {
+      RCLCPP_WARN_THROTTLE(
+        logger_, *node_->get_clock(), 5000,
+        "Cannot transform path costs from %s to %s: %s",
+        path_frame.c_str(), costmap_frame.c_str(), ex.what());
+      return std::nullopt;
+    }
+  }
+
+  const double origin_yaw = tf2::getYaw(costmap->metadata.origin.orientation);
+  const double cos_yaw = std::cos(origin_yaw);
+  const double sin_yaw = std::sin(origin_yaw);
+  const double resolution = static_cast<double>(costmap->metadata.resolution);
+  const double sample_spacing = std::max(0.02, 0.5 * resolution);
+
+  PathCost score;
+  double cost_sum = 0.0;
+
+  const auto addPointCost = [&](const geometry_msgs::msg::Point & path_point) {
+      geometry_msgs::msg::Point point = path_point;
+      if (costmap_from_path) {
+        geometry_msgs::msg::PointStamped input;
+        geometry_msgs::msg::PointStamped output;
+        input.header.frame_id = path_frame;
+        input.point = path_point;
+        tf2::doTransform(input, output, *costmap_from_path);
+        point = output.point;
+      }
+
+      const double dx = point.x - costmap->metadata.origin.position.x;
+      const double dy = point.y - costmap->metadata.origin.position.y;
+      const double local_x = cos_yaw * dx + sin_yaw * dy;
+      const double local_y = -sin_yaw * dx + cos_yaw * dy;
+      const int mx = static_cast<int>(std::floor(local_x / resolution));
+      const int my = static_cast<int>(std::floor(local_y / resolution));
+
+      if (mx < 0 || my < 0 ||
+        mx >= static_cast<int>(costmap->metadata.size_x) ||
+        my >= static_cast<int>(costmap->metadata.size_y))
+      {
+        return;
+      }
+
+      const std::size_t index =
+        static_cast<std::size_t>(my) * costmap->metadata.size_x +
+        static_cast<std::size_t>(mx);
+      if (index >= costmap->data.size()) {
+        return;
+      }
+
+      const std::uint8_t raw_cost = costmap->data[index];
+      if (raw_cost == 255u && !treat_unknown_as_obstacle_) {
+        return;
+      }
+
+      const double cost = static_cast<double>(raw_cost);
+      score.maximum = std::max(score.maximum, cost);
+      cost_sum += cost;
+      ++score.samples;
+    };
+
+  addPointCost(path.poses[*start].pose.position);
+  double travelled = 0.0;
+
+  for (std::size_t i = *start + 1;
+    i < path.poses.size() && travelled < obstacle_check_distance_; ++i)
+  {
+    const auto & a = path.poses[i - 1].pose.position;
+    const auto & b = path.poses[i].pose.position;
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double segment_length = std::hypot(dx, dy);
+    if (segment_length <= std::numeric_limits<double>::epsilon()) {
+      continue;
+    }
+
+    const double distance_to_sample = std::min(
+      segment_length, obstacle_check_distance_ - travelled);
+    const std::size_t sample_count = std::max<std::size_t>(
+      1, static_cast<std::size_t>(std::ceil(distance_to_sample / sample_spacing)));
+
+    for (std::size_t sample = 1; sample <= sample_count; ++sample) {
+      const double along = distance_to_sample *
+        static_cast<double>(sample) / static_cast<double>(sample_count);
+      const double ratio = along / segment_length;
+      geometry_msgs::msg::Point point;
+      point.x = a.x + ratio * dx;
+      point.y = a.y + ratio * dy;
+      point.z = a.z + ratio * (b.z - a.z);
+      addPointCost(point);
+    }
+
+    travelled += distance_to_sample;
+  }
+
+  if (score.samples == 0) {
+    return std::nullopt;
+  }
+
+  score.mean = cost_sum / static_cast<double>(score.samples);
+  return score;
+}
+
+std::optional<std::size_t> AcceptCandidatePath::nearestPathIndex(
+  const nav_msgs::msg::Path & path) const
+{
+  if (path.poses.empty()) {
+    return std::nullopt;
+  }
+
+  const std::string frame = pathFrame(path);
+  if (frame.empty()) {
+    return std::nullopt;
+  }
+
+  geometry_msgs::msg::TransformStamped path_from_base;
+  try {
+    path_from_base = tf_buffer_->lookupTransform(
+      frame, robot_base_frame_, tf2::TimePointZero);
+  } catch (const tf2::TransformException & ex) {
+    RCLCPP_WARN_THROTTLE(
+      logger_, *node_->get_clock(), 5000,
+      "Cannot locate %s in path frame %s: %s",
+      robot_base_frame_.c_str(), frame.c_str(), ex.what());
+    return std::nullopt;
+  }
+
+  const double robot_x = path_from_base.transform.translation.x;
+  const double robot_y = path_from_base.transform.translation.y;
+  std::size_t nearest = 0;
+  double nearest_distance = std::numeric_limits<double>::max();
+
+  for (std::size_t i = 0; i < path.poses.size(); ++i) {
+    const auto & point = path.poses[i].pose.position;
+    const double distance = std::hypot(point.x - robot_x, point.y - robot_y);
+    if (distance < nearest_distance) {
+      nearest = i;
+      nearest_distance = distance;
+    }
+  }
+
+  return nearest;
 }
 
 bool AcceptCandidatePath::isCandidateAcceptable(
   const nav_msgs::msg::Path & current_path,
   const nav_msgs::msg::Path & candidate_path) const
 {
-  const double candidate_heading = initialHeading(candidate_path, check_distance_);
-
-  std::string candidate_frame = candidate_path.header.frame_id;
-  if (candidate_frame.empty() && !candidate_path.poses.empty()) {
-    candidate_frame = candidate_path.poses.front().header.frame_id;
-  }
-
-  if (candidate_frame.empty()) {
-    RCLCPP_WARN(logger_, "Reject candidate: path frame is empty");
+  const std::string current_frame = pathFrame(current_path);
+  const std::string candidate_frame = pathFrame(candidate_path);
+  if (current_frame.empty() || current_frame != candidate_frame) {
+    RCLCPP_WARN(logger_, "Reject candidate: current and candidate path frames differ");
     return false;
   }
 
-  double robot_heading;
-  try {
-    // The transform rotation is the current base_link heading expressed in the
-    // candidate path frame. Subtracting it from the path direction is
-    // equivalent to expressing that direction in base_link and comparing it
-    // with base_link's +X axis.
-    const auto path_from_base = tf_buffer_->lookupTransform(
-      candidate_frame, robot_base_frame_, tf2::TimePointZero);
-    robot_heading = tf2::getYaw(path_from_base.transform.rotation);
-  } catch (const tf2::TransformException & ex) {
-    RCLCPP_WARN(
-      logger_,
-      "Reject candidate: cannot get current %s heading in %s: %s",
-      robot_base_frame_.c_str(), candidate_frame.c_str(), ex.what());
+  const auto current_start = nearestPathIndex(current_path);
+  const auto candidate_start = nearestPathIndex(candidate_path);
+  if (!current_start || !candidate_start) {
     return false;
   }
 
+  const double current_heading = pathHeading(
+    current_path, *current_start, check_distance_);
+  const double candidate_heading = pathHeading(
+    candidate_path, *candidate_start, check_distance_);
   const double heading_change_deg =
-    std::abs(angleDiff(candidate_heading, robot_heading)) * 180.0 / M_PI;
+    std::abs(angleDiff(candidate_heading, current_heading)) * 180.0 / M_PI;
 
   if (heading_change_deg > max_initial_angle_deg_) {
     RCLCPP_WARN(
       logger_,
-      "Reject candidate: initial direction is %.1f deg from current %s heading > %.1f deg",
-      heading_change_deg,
-      robot_base_frame_.c_str(),
-      max_initial_angle_deg_);
+      "Reject candidate: prefix heading changes %.1f deg > %.1f deg",
+      heading_change_deg, max_initial_angle_deg_);
     return false;
   }
 
-  const double current_len = pathLength(current_path, check_distance_);
-  const double candidate_len = pathLength(candidate_path, check_distance_);
-
+  const double current_len = pathLength(current_path, *current_start, check_distance_);
+  const double candidate_len = pathLength(candidate_path, *candidate_start, check_distance_);
   if (candidate_len > current_len * max_length_ratio_) {
     RCLCPP_WARN(
       logger_,
       "Reject candidate: local length %.2f > %.2f * %.2f",
-      candidate_len,
-      current_len,
-      max_length_ratio_);
+      candidate_len, current_len, max_length_ratio_);
     return false;
   }
 
-  if (!beginningMatches(current_path, candidate_path)) {
-    return false;
-  }
-
-  return true;
+  return beginningMatches(
+    current_path, *current_start, candidate_path, *candidate_start);
 }
 
 bool AcceptCandidatePath::beginningMatches(
   const nav_msgs::msg::Path & current_path,
-  const nav_msgs::msg::Path & candidate_path) const
+  std::size_t current_start,
+  const nav_msgs::msg::Path & candidate_path,
+  std::size_t candidate_start) const
 {
-  // Every candidate pose within check_distance_ of its start must stay within
-  // max_start_deviation_ of the beginning of the current path, so an accepted
-  // update never moves the section the controller is currently tracking.
-  double candidate_travelled = 0.0;
-
-  for (size_t i = 1; i < candidate_path.poses.size() &&
-    candidate_travelled < check_distance_; ++i)
+  double travelled = 0.0;
+  for (std::size_t i = candidate_start;
+    i < candidate_path.poses.size() && travelled <= check_distance_; ++i)
   {
-    const auto & prev = candidate_path.poses[i - 1].pose.position;
-    const auto & p = candidate_path.poses[i].pose.position;
-    candidate_travelled += std::hypot(p.x - prev.x, p.y - prev.y);
-
-    double min_dist = std::numeric_limits<double>::max();
-    double current_travelled = 0.0;
-
-    for (size_t j = 0; j < current_path.poses.size() &&
-      current_travelled < 2.0 * check_distance_; ++j)
-    {
-      if (j > 0) {
-        const auto & a = current_path.poses[j - 1].pose.position;
-        const auto & b = current_path.poses[j].pose.position;
-        current_travelled += std::hypot(b.x - a.x, b.y - a.y);
-      }
-
-      const auto & q = current_path.poses[j].pose.position;
-      min_dist = std::min(min_dist, std::hypot(p.x - q.x, p.y - q.y));
+    if (i > candidate_start) {
+      const auto & previous = candidate_path.poses[i - 1].pose.position;
+      const auto & point = candidate_path.poses[i].pose.position;
+      travelled += std::hypot(point.x - previous.x, point.y - previous.y);
     }
 
-    if (min_dist > max_start_deviation_) {
+    const double deviation = distanceToPathSection(
+      candidate_path.poses[i].pose.position,
+      current_path, current_start, 2.0 * check_distance_);
+    if (deviation > max_start_deviation_) {
       RCLCPP_WARN(
         logger_,
-        "Reject candidate: start deviates %.2f m > %.2f m from current path",
-        min_dist,
-        max_start_deviation_);
+        "Reject candidate: prefix deviates %.2f m > %.2f m from current path",
+        deviation, max_start_deviation_);
       return false;
     }
   }
@@ -281,56 +469,83 @@ bool AcceptCandidatePath::beginningMatches(
   return true;
 }
 
-double AcceptCandidatePath::pathLength(
+double AcceptCandidatePath::distanceToPathSection(
+  const geometry_msgs::msg::Point & point,
   const nav_msgs::msg::Path & path,
+  std::size_t start,
   double max_distance) const
 {
-  if (path.poses.size() < 2) {
-    return 0.0;
+  if (start >= path.poses.size()) {
+    return std::numeric_limits<double>::max();
   }
 
-  double total = 0.0;
+  double min_distance = std::hypot(
+    point.x - path.poses[start].pose.position.x,
+    point.y - path.poses[start].pose.position.y);
+  double travelled = 0.0;
 
-  for (size_t i = 1; i < path.poses.size(); ++i) {
+  for (std::size_t i = start + 1;
+    i < path.poses.size() && travelled <= max_distance; ++i)
+  {
     const auto & a = path.poses[i - 1].pose.position;
     const auto & b = path.poses[i].pose.position;
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double length_squared = dx * dx + dy * dy;
+    travelled += std::sqrt(length_squared);
 
-    const double ds = std::hypot(b.x - a.x, b.y - a.y);
-    total += ds;
+    double projection = 0.0;
+    if (length_squared > std::numeric_limits<double>::epsilon()) {
+      projection = ((point.x - a.x) * dx + (point.y - a.y) * dy) / length_squared;
+      projection = std::clamp(projection, 0.0, 1.0);
+    }
 
+    const double closest_x = a.x + projection * dx;
+    const double closest_y = a.y + projection * dy;
+    min_distance = std::min(
+      min_distance, std::hypot(point.x - closest_x, point.y - closest_y));
+  }
+
+  return min_distance;
+}
+
+double AcceptCandidatePath::pathLength(
+  const nav_msgs::msg::Path & path,
+  std::size_t start,
+  double max_distance) const
+{
+  double total = 0.0;
+  for (std::size_t i = start + 1; i < path.poses.size(); ++i) {
+    const auto & a = path.poses[i - 1].pose.position;
+    const auto & b = path.poses[i].pose.position;
+    total += std::hypot(b.x - a.x, b.y - a.y);
     if (total >= max_distance) {
       return max_distance;
     }
   }
-
   return total;
 }
 
-double AcceptCandidatePath::initialHeading(
+double AcceptCandidatePath::pathHeading(
   const nav_msgs::msg::Path & path,
+  std::size_t start,
   double lookahead_distance) const
 {
-  if (path.poses.size() < 2) {
+  if (start >= path.poses.size() - 1) {
     return 0.0;
   }
 
-  const auto & start = path.poses.front().pose.position;
-
-  double accumulated = 0.0;
-
-  for (size_t i = 1; i < path.poses.size(); ++i) {
-    const auto & prev = path.poses[i - 1].pose.position;
-    const auto & p = path.poses[i].pose.position;
-
-    accumulated += std::hypot(p.x - prev.x, p.y - prev.y);
-
-    if (accumulated >= lookahead_distance || i == path.poses.size() - 1) {
-      return std::atan2(p.y - start.y, p.x - start.x);
+  const auto & origin = path.poses[start].pose.position;
+  double travelled = 0.0;
+  for (std::size_t i = start + 1; i < path.poses.size(); ++i) {
+    const auto & previous = path.poses[i - 1].pose.position;
+    const auto & point = path.poses[i].pose.position;
+    travelled += std::hypot(point.x - previous.x, point.y - previous.y);
+    if (travelled >= lookahead_distance || i == path.poses.size() - 1) {
+      return std::atan2(point.y - origin.y, point.x - origin.x);
     }
   }
-
-  const auto & p = path.poses.back().pose.position;
-  return std::atan2(p.y - start.y, p.x - start.x);
+  return 0.0;
 }
 
 double AcceptCandidatePath::normalizeAngle(double angle) const
@@ -338,11 +553,9 @@ double AcceptCandidatePath::normalizeAngle(double angle) const
   while (angle > M_PI) {
     angle -= 2.0 * M_PI;
   }
-
   while (angle < -M_PI) {
     angle += 2.0 * M_PI;
   }
-
   return angle;
 }
 
@@ -359,16 +572,28 @@ bool AcceptCandidatePath::goalChanged(
     return true;
   }
 
-  const auto & a = current_path.poses.back().pose.position;
-  const auto & b = candidate_path.poses.back().pose.position;
+  const auto & current_goal = current_path.poses.back().pose.position;
+  const auto & candidate_goal = candidate_path.poses.back().pose.position;
+  return std::hypot(
+    candidate_goal.x - current_goal.x,
+    candidate_goal.y - current_goal.y) > 0.25;
+}
 
-  const double dist = std::hypot(b.x - a.x, b.y - a.y);
-  return dist > 0.25;
+std::string AcceptCandidatePath::pathFrame(const nav_msgs::msg::Path & path) const
+{
+  if (!path.header.frame_id.empty()) {
+    return path.header.frame_id;
+  }
+  return path.poses.empty() ? std::string{} : path.poses.front().header.frame_id;
+}
+
+void AcceptCandidatePath::outputPath(const nav_msgs::msg::Path & path)
+{
+  setOutput("output_path", path);
+  accepted_path_pub_->publish(path);
 }
 
 }  // namespace path_planning
-
-
 
 BT_REGISTER_NODES(factory)
 {
@@ -377,5 +602,4 @@ BT_REGISTER_NODES(factory)
 
   factory.registerNodeType<path_planning::RestampGoal>(
     "RestampGoal");
-
 }

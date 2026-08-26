@@ -22,10 +22,9 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes, SetParameter
 from launch_ros.actions import Node
-from launch_ros.descriptions import ComposableNode, ParameterFile
+from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
 
-from nav2_common.launch import RewrittenYaml
 from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
@@ -36,7 +35,7 @@ def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
-    params_file = LaunchConfiguration('params_file')
+    map_yaml_file = LaunchConfiguration('map')
     use_composition = LaunchConfiguration('use_composition')
     container_name = LaunchConfiguration('container_name')
     container_name_full = (namespace, '/', container_name)
@@ -62,8 +61,13 @@ def generate_launch_description():
     #              https://github.com/ros2/launch_ros/issues/56
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
-    # Pass the params file directly (bypass RewrittenYaml to avoid silent failures)
-    configured_params = '/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_mppi_with_global_map.yaml'
+    # Keep the real-rover parameter file explicit: on Humble, runtime rewriting
+    # of this file caused nested MPPI parameters such as FollowPath.critics to
+    # be dropped.
+    configured_params = (
+        '/home/xplore/dev_ws/src/navigation/path_planning/config/'
+        'nav2_params_real_2026_ppr_no_global_map.yaml'
+    )
 
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_LOGGING_BUFFERED_STREAM', '0'
@@ -79,10 +83,10 @@ def generate_launch_description():
         description='Use simulation (Gazebo) clock if true',
     )
 
-    declare_params_file_cmd = DeclareLaunchArgument(
-        'params_file',
-        default_value='/home/xplore/dev_ws/src/navigation/path_planning/config/nav2_params_real_2026_mppi_with_global_map.yaml',
-        description='Full path to the ROS2 parameters file to use for all launched nodes',
+    declare_map_yaml_cmd = DeclareLaunchArgument(
+        'map',
+        default_value='/home/xplore/dev_ws/src/navigation/path_planning/saved_maps/2026/blank_100m.yaml',
+        description='Full path to the occupancy-grid YAML loaded by map_server',
     )
 
     declare_autostart_cmd = DeclareLaunchArgument(
@@ -169,7 +173,10 @@ def generate_launch_description():
                 executable='map_server',
                 name='map_server',
                 output='screen',
-                parameters=[configured_params],
+                # MapServer requires yaml_filename to be initialized before its
+                # configure transition. Pass it explicitly instead of relying
+                # only on extraction from the shared Nav2 parameter file.
+                parameters=[configured_params, {'yaml_filename': map_yaml_file}],
                 arguments=['--ros-args', '--log-level', log_level],
                 #remapping needed ??
             ),
@@ -327,7 +334,7 @@ def generate_launch_description():
     # Declare the launch options
     ld.add_action(declare_namespace_cmd)
     ld.add_action(declare_use_sim_time_cmd)
-    ld.add_action(declare_params_file_cmd)
+    ld.add_action(declare_map_yaml_cmd)
     ld.add_action(declare_autostart_cmd)
     ld.add_action(declare_use_composition_cmd)
     ld.add_action(declare_container_name_cmd)
