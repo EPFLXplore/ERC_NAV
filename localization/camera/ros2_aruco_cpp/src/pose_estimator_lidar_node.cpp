@@ -73,6 +73,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <mutex>
@@ -510,6 +511,31 @@ public:
             //     edge_chi2_reject_, max_normalized_chi2_);
             throw std::runtime_error("invalid nonlinear localization chi2 gates");
         }
+
+        /* Optional conservative post-init mode.  Initialization is deliberately
+         * unchanged: Phase 1 still uses camera bearings and Phase 2 still uses
+         * the merged cube pipeline.  Once initialization is DONE, this mode
+         * excludes /cube_markers_phi camera solvePnP centres and requires the
+         * configured number of unique /cube_markers LiDAR detections to survive
+         * both validation and the solver's per-edge outlier rejection. */
+        declare_parameter<bool>("lidar_only_triangulation", false);
+        declare_parameter<int>("min_lidar_solver_tags", 3);
+        lidar_only_triangulation_ =
+            get_parameter("lidar_only_triangulation").as_bool();
+        const int64_t min_lidar_solver_tags =
+            get_parameter("min_lidar_solver_tags").as_int();
+        if (min_lidar_solver_tags <
+            static_cast<int64_t>(MIN_SOLVER_MARKERS)) {
+            throw std::runtime_error(
+                "min_lidar_solver_tags must be at least 2");
+        }
+        min_lidar_solver_tags_ =
+            static_cast<size_t>(min_lidar_solver_tags);
+        RCLCPP_INFO(
+            get_logger(),
+            "Post-init triangulation mode: %s (minimum LiDAR tags/inliers: %zu)",
+            lidar_only_triangulation_ ? "LiDAR only" : "merged LiDAR + camera",
+            min_lidar_solver_tags_);
         // RCLCPP_INFO(get_logger(),
         //     "Nonlinear solver gates: edge_chi2_reject=%.3f (2 DOF), "
         //     "max_normalized_chi2=%.3f",
@@ -650,6 +676,8 @@ private:
     double init_sigma_xy_m_{0.30};
     double init_sigma_yaw_rad_{5.0 * M_PI / 180.0};
     double init_backup_sigma_yaw_rad_{20.0 * M_PI / 180.0};
+    bool lidar_only_triangulation_{false};
+    size_t min_lidar_solver_tags_{3u};
 
     /* ---- pose state ---- */
     double x_estimate_, y_estimate_, yaw_estimate_;
@@ -1301,9 +1329,12 @@ private:
     /*  data association or a wrong landmark table — not noise.         */
     /* ================================================================ */
     std::optional<SolverSolution> solve_nonlinear_range_bearing(
-        const std::vector<ValidMarker> &valid_markers)
+        const std::vector<ValidMarker> &valid_markers,
+        size_t min_required_inliers = MIN_SOLVER_MARKERS)
     {
-        if (valid_markers.size() < MIN_SOLVER_MARKERS ||
+        min_required_inliers = std::max(
+            min_required_inliers, MIN_SOLVER_MARKERS);
+        if (valid_markers.size() < min_required_inliers ||
             !std::isfinite(curr_map_base_x_) ||
             !std::isfinite(curr_map_base_y_) ||
             !std::isfinite(curr_map_base_yaw_)) {
@@ -1378,7 +1409,7 @@ private:
         }
 
         // 3 DOF need 2 range-bearing edges (4 residuals) at the very least.
-        if (n_inliers < static_cast<int>(MIN_SOLVER_MARKERS)) {
+        if (n_inliers < static_cast<int>(min_required_inliers)) {
             // RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
             //     "[SOLVER] rejected: only %d/%zu edges survived the chi2 gate "
             //     "(need %zu)",
@@ -1920,8 +1951,30 @@ private:
         /*  POST-INIT CONTINUOUS UPDATES                                */
         /* ============================================================ */
         } else {
-            if (n >= 2) {
-                auto solution = solve_nonlinear_range_bearing(valid_markers);
+            std::vector<ValidMarker> lidar_solver_markers;
+            const std::vector<ValidMarker> *solver_markers = &valid_markers;
+            size_t min_required_inliers = MIN_SOLVER_MARKERS;
+
+            if (lidar_only_triangulation_) {
+                /* Keep one measurement per landmark ID.  The merge already
+                 * prefers LiDAR over camera for duplicate IDs, but enforcing
+                 * uniqueness here makes the minimum explicitly count tags,
+                 * not message entries. */
+                std::unordered_set<int> lidar_ids;
+                lidar_solver_markers.reserve(valid_markers.size());
+                for (const auto &marker : valid_markers) {
+                    if (marker.source == MeasSource::LIDAR &&
+                        lidar_ids.insert(marker.landmark_index).second) {
+                        lidar_solver_markers.push_back(marker);
+                    }
+                }
+                solver_markers = &lidar_solver_markers;
+                min_required_inliers = min_lidar_solver_tags_;
+            }
+
+            if (solver_markers->size() >= min_required_inliers) {
+                auto solution = solve_nonlinear_range_bearing(
+                    *solver_markers, min_required_inliers);
 
                 if (solution.has_value()) {
                     const Eigen::Vector3d &pose = solution->pose;

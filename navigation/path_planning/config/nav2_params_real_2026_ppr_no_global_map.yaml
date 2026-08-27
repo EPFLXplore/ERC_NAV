@@ -16,21 +16,55 @@ bt_navigator:
     default_nav_to_pose_bt_xml: "/home/xplore/dev_ws/src/navigation/path_planning/behavior_trees/stable_replanning.xml"
 
     # Tunables for the custom AcceptCandidatePath BT node (stable_replanning.xml).
-    # Keep the path prefix stable during normal replanning. A divergent planner
-    # result is accepted only when the followed path crosses a high-cost cell
-    # and the candidate is measurably cheaper on the same look-ahead distance.
+    # Keep the followed path unless the candidate is clear and meaningfully
+    # improves obstacle cost, mean cost, or rover-relative heading error.
     accept_candidate_path:
-      check_distance: 1.5            # [m] prefix compared from the rover's closest path point
-      max_initial_angle_deg: 200.0    # [deg] max candidate-vs-current prefix heading change
-      max_length_ratio: 30.0          # reject if the candidate prefix is much longer
-      max_start_deviation: 10.0      # [m] stable corridor around the followed prefix
-      costmap_topic: "global_costmap/costmap"
-      obstacle_check_distance: 3.0   # [m] cost-scored path ahead of the rover
-      obstacle_switch_cost: 100.0    # costs remain non-lethal, but trigger a route switch here
-      minimum_cost_improvement: 23000000.0 # required max or mean cost reduction
-      obstacle_confirmation_time: 0.0 # [s] planner already filters map updates; switch immediately
+      # Heading look-ahead from each path's closest point to the rover.
+      # Raise: smoother, farther-looking heading; lower: more immediate but more sensitive to path edges.
+      check_distance: 1.5
+
+      # Length of centerline ahead of the rover used for blocked and mean-cost checks.
+      # Raise: consider obstacles/cost farther ahead; lower: react only to nearer path conditions.
+      check_cost_distance: 3.0
+
+      # A sampled cell counts as high cost at or above this value.
+      # Raise: fewer paths are blocked; lower: more conservative and more sensitive to grey cells.
+      obstacle_cost_threshold: 220.0
+
+      # Sliding path interval in which nearby high-cost samples are accumulated.
+      # Raise: groups high-cost cells separated farther apart; lower: requires a tighter cluster.
+      # Keep this greater than or equal to minimum_blocked_length.
+      blocked_window_length: 0.25
+
+      # High-cost centerline coverage required inside blocked_window_length.
+      # Raise: tolerate more high-cost path; lower: reject smaller or more isolated cost clusters.
+      minimum_blocked_length: 1.0
+
+      # Required reduction in distance-weighted mean cost before switching by cost.
+      # Absolute differences below this value are "insignificant", allowing the heading test.
+      # Raise: fewer, more stable switches; lower: accept smaller gains but increase noise switching.
+      minimum_mean_cost_improvement: 10.0
+
+      # Required heading-error reduction when mean costs differ by less than
+      # minimum_mean_cost_improvement.
+      # Raise: keep the current path more often; lower: align sooner but risk steering oscillation.
+      minimum_heading_improvement_deg: 5.0
+
+      # Must publish nav2_msgs/Costmap; costmap_raw has the message type consumed by this BT node.
+      costmap_topic: "/global_costmap/costmap_raw"
+
+      # true: unknown (255) contributes as blocked/high cost; false: unknown samples are ignored.
       treat_unknown_as_obstacle: false
-      accepted_path_topic: "accepted_plan" # actual path written to FollowPath's blackboard
+
+      # Diagnostic copy of the actual path written to FollowPath's blackboard.
+      accepted_path_topic: "accepted_plan"
+
+    # Unused cost-blind alternative for AcceptCandidatePathStupid. It accepts
+    # a candidate only when its prefix heading differs from the current path by
+    # at least 30 degrees. The active behavior tree does not instantiate it.
+    # accept_candidate_path_stupid:
+    #   check_distance: 1.5
+    #   minimum_heading_change_deg: 30.0
     
     # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
     # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
@@ -595,7 +629,7 @@ planner_server:
       max_iterations: 100000
       max_on_approach_iterations: 800
       max_planning_time: 5.0
-      cost_travel_multiplier: 2.0 # 2.0 is great, 0.0 is classic A* without cost
+      cost_travel_multiplier: 5.0 # 2.0 is great, 0.0 is classic A* without cost
       use_final_approach_orientation: false
       smoother:
           # max_iterations: bounds maximum computation time by limiting smoothing passes

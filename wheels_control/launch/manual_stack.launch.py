@@ -226,7 +226,7 @@ def launch_setup(context: launch.LaunchContext, *args, **kwargs):
         package="wheels_control",
         executable="NAV_steer_control",
         name="motor_steering_servoing",
-        parameters=[{'ANGLE_TOLERANCE':0.8}],
+        parameters=[{'ANGLE_TOLERANCE':1.5}],
         output="screen"
     )
 

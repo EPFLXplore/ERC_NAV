@@ -415,12 +415,11 @@ class WaypointFollower(Node):
         # ---------------- Current test route ----------------
 
         waypoint_list = [
-            WP([0.0, 8.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
-            WP([-7.0, 5.0, 0.0],  ERC_WPT=True,   wait_time=15.0),
-            WP([-15.0, 8.5, 0.0],  ERC_WPT=True,   wait_time=15.0),
-            WP([-23.0, 6.0, 0.0], ERC_WPT=True,   wait_time=15.0),
-            WP([-15.0, -3.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
-            WP([0.0, 0.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
+            WP([8.8, -3.0, 0.0],   ERC_WPT=True,   wait_time=15.0),
+            WP([8.8, -0.8, 0.0],  ERC_WPT=True,   wait_time=15.0),
+            WP([3.6, 6.0, 0.0],  ERC_WPT=True,   wait_time=15.0),
+            WP([0.0, 9.0, 0.0], ERC_WPT=True,   wait_time=15.0),
+            WP([-1.4, -1.2, 0.0],   ERC_WPT=True,   wait_time=15.0),
         ]
 
         # Example of a route that mixes scored stops and shaping waypoints:

@@ -28,7 +28,7 @@ class MotorSteeringServoingNode : public rclcpp::Node
 public:
     MotorSteeringServoingNode() : Node("motor_steering_servoing")
     {
-        declare_parameter<double>("ANGLE_TOLERANCE", 0.5); // 0.5 rad = 28°
+        declare_parameter<double>("ANGLE_TOLERANCE", 1.5); // 0.5 rad = 28°
         angle_tolerance_ = get_parameter("ANGLE_TOLERANCE").as_double();
         // Commands are re-emitted on a fixed timer instead of once per /NAV/motor_nav_status.
         // Publishing from the status callback closed a loop through the CAN bus: every status

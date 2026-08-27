@@ -72,6 +72,8 @@ def generate_launch_description():
     phase2_backup_yaw_gate_deg = LaunchConfiguration(
         'phase2_backup_yaw_gate_deg')
     init_cube_timeout_sec = LaunchConfiguration('init_cube_timeout_sec')
+    lidar_only_triangulation = LaunchConfiguration('lidar_only_triangulation')
+    min_lidar_solver_tags = LaunchConfiguration('min_lidar_solver_tags')
 
     distance_threshold_inliers = LaunchConfiguration('distance_threshold_inliers')
     max_iterations = LaunchConfiguration('max_iterations')
@@ -136,6 +138,15 @@ def generate_launch_description():
         # unchanged) and hands map->odom to the KF. Increase: gives LiDAR more
         # time to produce a better seed but delays navigation. Decrease: hands
         # over sooner with less cube evidence. 0 disables the fallback and waits.
+        DeclareLaunchArgument(
+            'lidar_only_triangulation', default_value='false'),
+        # ^ Post-init solver mode. false preserves the current merged solve from
+        #   /cube_markers (LiDAR) plus missing IDs from /cube_markers_phi
+        #   (camera solvePnP). true excludes every camera-only centre and solves
+        #   from unique LiDAR-detected tags only. Initialization is unchanged.
+        DeclareLaunchArgument('min_lidar_solver_tags', default_value='3'),
+        # ^ Minimum unique LiDAR tags required when lidar_only_triangulation is
+        #   true. The same minimum must survive the solver's outlier rejection.
 
         # ---- ArUco camera detection (from ros2_aruco_cpp) ----
         Node(
@@ -157,6 +168,8 @@ def generate_launch_description():
                 'phase2_yaw_gate_deg': phase2_yaw_gate_deg,
                 'phase2_backup_yaw_gate_deg': phase2_backup_yaw_gate_deg,
                 'init_cube_timeout_sec': init_cube_timeout_sec,
+                'lidar_only_triangulation': lidar_only_triangulation,
+                'min_lidar_solver_tags': min_lidar_solver_tags,
             }],
             output='screen',
         ),

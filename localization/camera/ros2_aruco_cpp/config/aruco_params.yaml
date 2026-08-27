@@ -2,17 +2,17 @@
 # only need to be edited in one place.
 /**:
   ros__parameters:
-    erc_start_pos: [-0.90, 1.5] # in the map frame
-    backup_erc_map_yaw_rad: 1.2793 #calculated by aligning rover with vector S2->L7
+    erc_start_pos: [-1.4, -1.2] # in the map frame
+    #backup_erc_map_yaw_rad: 1.2793 #calculated by aligning rover with vector S2->L7
     landmark_poses: [ #in the map frame
-      3.0,  10.0,         # id 51 ==== 0 
-      -17.0,  2.5,          # id 52 ====1 
-      -12.0,  -7.5,  # id 53 ===== id2 
-      -6.0,  -1.5,  # id 54
-      -13.0,  15.5,  # id 55
+      7.2,  -1.7,         # id 51 ==== 0 
+      -1.5,  8.0,          # id 52 ====1 
+      999999.0,  999999.0,  # id 53 ===== id2 
+      999999.0,  999999.0,  # id 54
+      1.80,  6.0,  # id 55
       999999.0,  999999.0,  # id 56
       999999.0,  999999.0,  # id 57
-      -31.0,      2.0,     # id 58 === id 7
+      2.8,      -7.2,     # id 58 === id 7
       999999.0,  999999.0,  # id 59
       999999.0,  999999.0,  # id 60
       999999.0,  999999.0,  # id 61

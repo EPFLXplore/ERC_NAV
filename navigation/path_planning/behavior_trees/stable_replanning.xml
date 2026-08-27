@@ -19,6 +19,13 @@
                                  candidate_path="{candidate_path}"
                                  output_path="{path}"/>
 
+            <!-- Unused cost-blind alternative. To experiment, replace the
+                 active AcceptCandidatePath above with this node.
+            <AcceptCandidatePathStupid current_path="{path}"
+                                       candidate_path="{candidate_path}"
+                                       output_path="{path}"/>
+            -->
+
           </Sequence>
         </RateController>
 

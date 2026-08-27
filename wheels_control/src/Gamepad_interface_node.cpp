@@ -187,9 +187,9 @@ class GamepadInterface : public rclcpp::Node
       // filter to make the mapping to ackermann angular speed more linear with the joystick value:
       // joy_left_horiz = joy_left_horiz * joy_left_horiz * joy_left_horiz; //x³ filtering
       if(joy_left_horiz >= 0.0){
-        joy_left_horiz = joy_left_horiz * joy_left_horiz;
+        joy_left_horiz = joy_left_horiz * joy_left_horiz * joy_left_horiz;
       }else{
-        joy_left_horiz = (-1.0f)* joy_left_horiz * joy_left_horiz;
+        joy_left_horiz = joy_left_horiz * joy_left_horiz * joy_left_horiz;
       }
 
 

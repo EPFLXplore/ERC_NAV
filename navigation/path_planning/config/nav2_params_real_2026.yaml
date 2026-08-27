@@ -16,16 +16,19 @@ bt_navigator:
     default_nav_to_pose_bt_xml: "/home/xplore/dev_ws/src/navigation/path_planning/behavior_trees/stable_replanning.xml"
 
     # Tunables for the custom AcceptCandidatePath BT node (stable_replanning.xml).
-    # A candidate path is accepted only if its first check_distance meters stay
-    # close to the current path; otherwise the current path is kept, unless it
-    # has been in collision (planner is_path_valid) for > force_accept_timeout s.
+    # Keep the followed path unless the candidate is clear and meaningfully
+    # improves obstacle cost, mean cost, or rover-relative heading error.
     accept_candidate_path:
-      check_distance: 0.5          # [m] length of the path beginning that must stay stable
-      max_initial_angle_deg: 100.0 # [deg] max initial heading change of candidate vs current
-      max_length_ratio: 1.5        # reject if candidate beginning much longer than current
-      max_start_deviation: 0.15     # [m] max lateral deviation of candidate start from current path
-      force_accept_timeout: 0.5    # [s] accept a divergent candidate after current path invalid this long
-      is_path_valid_timeout: 0.2   # [s] service call timeout for is_path_valid
+      check_distance: 1.5             # [m] look-ahead used to calculate path heading
+      check_cost_distance: 3.0        # [m] centerline prefix scored in the costmap
+      obstacle_cost_threshold: 220.0  # cells at or above this cost count as blocked
+      blocked_window_length: 0.25     # [m] local window used to group nearby high-cost cells
+      minimum_blocked_length: 0.15    # [m] high-cost coverage within the local window
+      minimum_mean_cost_improvement: 10.0 # accept when candidate mean is lower by this amount
+      minimum_heading_improvement_deg: 5.0 # heading-error reduction required when costs are similar
+      costmap_topic: "global_costmap/costmap_raw"
+      treat_unknown_as_obstacle: false
+      accepted_path_topic: "accepted_plan"
     
     # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
     # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
@@ -585,4 +588,3 @@ velocity_smoother:
 #       min_height: 0.1
 #       max_height: 1.5
 #       enabled: true
-

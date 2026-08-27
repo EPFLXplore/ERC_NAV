@@ -192,6 +192,12 @@ def generate_launch_description():
             "higher is coarser and smoother.",
         ),
         arg(
+            "cell_clear_timeout_s",
+            "0.6",
+            "traversability_map: seconds without a new point before an observed cell reverts to unknown. "
+            "Lower clears stale cells sooner; higher retains them longer; 0 disables timeout clearing.",
+        ),
+        arg(
             "footprint_observation_stride_cells",
             "2",
             "Place one synthetic zero-cost footprint observation every N traversability cells in both "
@@ -346,6 +352,7 @@ def generate_launch_description():
         "output_lookup_radius_cells": typed("output_lookup_radius_cells", int),
         "grid_size_m": typed("grid_size_m", float),
         "grid_resolution_m": typed("grid_resolution_m", float),
+        "cell_clear_timeout_s": typed("cell_clear_timeout_s", float),
         "footprint_observation_stride_cells": typed(
             "footprint_observation_stride_cells", int),
         "footprint_clear_margin_cells": typed("footprint_clear_margin_cells", int),

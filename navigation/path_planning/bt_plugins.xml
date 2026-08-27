@@ -7,4 +7,12 @@
       Accepts or rejects a candidate path based on path stability checks.
     </description>
   </class>
+  <class
+    name="path_planning/AcceptCandidatePathStupid"
+    type="path_planning::AcceptCandidatePathStupid"
+    base_class_type="BT::ActionNodeBase">
+    <description>
+      Experimental cost-blind filter based only on candidate/current heading separation.
+    </description>
+  </class>
 </library>

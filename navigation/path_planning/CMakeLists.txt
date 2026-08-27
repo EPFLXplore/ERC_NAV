@@ -57,6 +57,7 @@ include_directories(include)
 
 add_library(path_planning_bt_nodes SHARED
   bt_nodes/accept_candidate_path.cpp
+  bt_nodes/accept_candidate_path_stupid.cpp
   bt_nodes/restamp_goal.cpp
 )
 

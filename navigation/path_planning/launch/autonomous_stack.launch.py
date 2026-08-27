@@ -188,7 +188,13 @@ def generate_launch_description():
                 respawn=use_respawn,
                 respawn_delay=2.0,
                 parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
+                # Keep the requested global Nav2 log level, but always expose
+                # the custom path-filter decisions and cost comparisons.
+                arguments=[
+                    '--ros-args',
+                    '--log-level', log_level,
+                    '--log-level', 'AcceptCandidatePath:=info',
+                ],
                 remappings=remappings,
             ),
             Node(
