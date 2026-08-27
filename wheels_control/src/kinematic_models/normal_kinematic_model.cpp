@@ -49,11 +49,7 @@ namespace
 
 constexpr double EPS = 1e-6;
 
-// A steering axis is never asked to sit further than this from straight ahead: past
-// 90 deg the wheel is simply pointing backwards along the same line, which the sign
-// of the rolling speed expresses just as well. The 10 deg of margin is hysteresis, so
-// that a command sitting right on the boundary does not flip at every cycle.
-constexpr double STEER_FOLD_LIMIT = M_PI / 2.0 + 10.0 * M_PI / 180.0;
+
 
 struct wheel_state
 {
@@ -67,42 +63,35 @@ struct wheel_state
  * param :  x_off, y_off    wheel position in the body frame [m]
  * param :  previous_angle  last commanded angle for that steering axis [rad]
  *
- * The slip rings make angle and angle +- k*pi equivalent (odd k simply reverses the
- * rolling direction), so the representative closest to the previous command is used.
- * The steering axis then never has to sweep more than 90 deg between two commands and
- * never has to unwind through a mechanical stop.
- *
- * Tracking the previous command alone is not enough. As soon as a turn gets tighter than
- * half the track, the inner wheel walks continuously through 90 deg (92, 101, 127 deg ...)
- * without any single step being large enough to wrap, and that side then stays on the far
- * branch for good: back in a straight line it is commanded to 180 deg and driven in
- * reverse. The chosen representative is therefore also folded back next to straight ahead.
  */
-wheel_state wheel_from_twist(double v_x, double omega_z, double x_off, double y_off,
-                             double previous_angle)
+wheel_state wheel_from_twist(
+    double v_x,
+    double omega_z,
+    double x_off,
+    double y_off,
+    double previous_angle)
 {
     const double v_wx = v_x - omega_z * y_off;
     const double v_wy = omega_z * x_off;
 
-    double angle = std::atan2(v_wy, v_wx);
-    double speed = std::hypot(v_wx, v_wy);
+    if (std::hypot(v_wx, v_wy) < EPS)
+        return {0.0, 0.0};
+        // return {previous_angle, 0.0};
 
-    double turns = std::round((previous_angle - angle) / M_PI);
-    angle += turns * M_PI;
+    const double raw_angle = std::atan2(v_wy, v_wx);
 
-    while (angle > STEER_FOLD_LIMIT)
-    {
-        angle -= M_PI;
-        turns -= 1.0;
-    }
-    while (angle < -STEER_FOLD_LIMIT)
-    {
-        angle += M_PI;
-        turns += 1.0;
-    }
+    const double delta =
+        std::remainder(raw_angle - previous_angle, M_PI);
 
-    if (static_cast<long>(std::llround(std::fabs(turns))) % 2 != 0)
-        speed = -speed; // driving backwards along a wheel heading flipped by pi
+    const double angle = previous_angle + delta;
+
+    /*
+     * Determine whether the wheel must drive forward or backward
+     * along the selected steering axis.
+     */
+    const double speed =
+        v_wx * std::cos(angle) +
+        v_wy * std::sin(angle);
 
     return {angle, speed};
 }
