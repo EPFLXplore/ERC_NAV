@@ -378,6 +378,7 @@ void *open_gateway(void)
     std::string port_name;
     unsigned int nb_ports = 0;
     bool port_found = false;
+    std::vector<std::string> available_ports;
     while (get_port_name_selection(device_name,
                                    protocol_stack,
                                    interface_name,
@@ -389,6 +390,7 @@ void *open_gateway(void)
     {
         nb_ports++;
         log_info("  [4/4] available port      : " + port_name);
+        available_ports.push_back(port_name);
         if (port_name == port_name_wanted)
             port_found = true;
         if (end_of_selection)
@@ -407,42 +409,67 @@ void *open_gateway(void)
     }
 
     // ---- open the device ----
-    error_code = 0;
-    const auto open_start = std::chrono::steady_clock::now();
-    void *gateway = VCS_OpenDevice((char *)device_name.c_str(),
-                                   (char *)protocol_stack.c_str(),
-                                   (char *)interface_name.c_str(),
-                                   (char *)port_name_wanted.c_str(),
-                                   &error_code);
-    const double open_ms = std::chrono::duration<double, std::milli>(
-                               std::chrono::steady_clock::now() - open_start)
-                               .count();
-    print_VCS_error(error_code, __FUNCTION__);
+    // The EPOS command library caches every EPOS4 it has ever enumerated in
+    // ~/.maxon_motor_ag/registry.xml and builds the USBn names from that cache,
+    // not from what is plugged in right now. Moving the gateway to another
+    // physical USB port keeps the old entry as USB0 with PluggedIn 0 and gives
+    // the live controller the next free name, so opening a hardcoded USB0
+    // blocks for 10 s and returns a null handle with error code 0. Try the
+    // preferred port first, then every other port that was enumerated.
+    std::vector<std::string> candidates;
+    candidates.push_back(port_name_wanted);
+    for (size_t i = 0; i < available_ports.size(); i++)
+        if (available_ports[i] != port_name_wanted)
+            candidates.push_back(available_ports[i]);
 
     char summary[256];
-    if (gateway == nullptr)
+    for (size_t i = 0; i < candidates.size(); i++)
     {
+        const std::string &port = candidates[i];
+
+        error_code = 0;
+        const auto open_start = std::chrono::steady_clock::now();
+        void *gateway = VCS_OpenDevice((char *)device_name.c_str(),
+                                       (char *)protocol_stack.c_str(),
+                                       (char *)interface_name.c_str(),
+                                       (char *)port.c_str(),
+                                       &error_code);
+        const double open_ms = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - open_start)
+                                   .count();
+        print_VCS_error(error_code, __FUNCTION__);
+
+        if (gateway == nullptr)
+        {
+            std::snprintf(summary, sizeof(summary),
+                          "VCS_OpenDevice FAILED after %.0f ms on %s/%s (%s)",
+                          open_ms, interface_name.c_str(), port.c_str(),
+                          vcs_error_string(error_code).c_str());
+            log_error(summary);
+            continue;
+        }
+
+        if (error_code)
+            log_warn("VCS_OpenDevice returned a valid handle but reported " + vcs_error_string(error_code));
+
         std::snprintf(summary, sizeof(summary),
-                      "VCS_OpenDevice FAILED after %.0f ms on %s/%s (%s)",
-                      open_ms, interface_name.c_str(), port_name_wanted.c_str(),
-                      vcs_error_string(error_code).c_str());
-        log_error(summary);
-        log_error("===== EPOS gateway : NOT opened, no motor can be reached =====");
+                      "VCS_OpenDevice OK in %.0f ms : handle=%p on %s/%s",
+                      open_ms, gateway, interface_name.c_str(), port.c_str());
+        log_info(summary);
+        if (port != port_name_wanted)
+            log_warn("the gateway answered on " + port + " and not on the requested " + port_name_wanted +
+                     " : the EPOS4 sits on a different USB port than the one cached by the EPOS library");
+        log_info("===== EPOS gateway : opened =====");
+
+        // VCS_ClearFault(gateway, 0, &error_code);
+        // print_VCS_error(error_code);
         return gateway;
     }
 
-    if (error_code)
-        log_warn("VCS_OpenDevice returned a valid handle but reported " + vcs_error_string(error_code));
-
-    std::snprintf(summary, sizeof(summary),
-                  "VCS_OpenDevice OK in %.0f ms : handle=%p on %s/%s",
-                  open_ms, gateway, interface_name.c_str(), port_name_wanted.c_str());
-    log_info(summary);
-    log_info("===== EPOS gateway : opened =====");
-
-    // VCS_ClearFault(gateway, 0, &error_code);
-    // print_VCS_error(error_code);
-    return gateway;
+    log_error("===== EPOS gateway : NOT opened, no motor can be reached =====");
+    log_error("        if the controller is powered and 'lsusb' shows the maxon device, the cached");
+    log_error("        USB port names are stale : delete ~/.maxon_motor_ag/registry.xml and retry");
+    return nullptr;
 }
 
 void close_gateway(void *gateway)
