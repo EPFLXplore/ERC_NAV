@@ -49,7 +49,7 @@ _Float64 motors_cmds[8];
 bool safemode = true;
 
 std::vector<NAV_Motor> motors;
-struct gateway_struct *gateway;
+void *gateway = nullptr;
 
 void publish_motors_position();
 
@@ -521,7 +521,24 @@ public:
         RCLCPP_INFO(logger, "==== NAV motors : connection sequence start (homing=%s, %zu motors expected) ====",
                     homing ? "true" : "false", nb_expected);
 
-        void *gateway = open_gateway();
+        // A previous failed attempt leaves its motors and its USB handle behind :
+        // on_configure returning FAILURE keeps the node UNCONFIGURED, so on_cleanup
+        // (the only caller of disconnect_motors) never runs. Start from a clean slate,
+        // otherwise the stale entries are probed again in the enable loop below and
+        // the retry is rejected because of a motor that answered fine this time.
+        if (!motors.empty() || gateway)
+        {
+            RCLCPP_WARN(logger, "leftover state from a previous connection attempt (%zu motors) : discarding it",
+                        motors.size());
+            motors.clear();  // the fault bookkeeping is resized from motors in on_configure
+            if (gateway)
+            {
+                close_gateway(gateway);
+                gateway = nullptr;
+            }
+        }
+
+        gateway = open_gateway();
         rclcpp::Rate reconnect_rate(0.5);
 
         // Make sure that the check is interrupted by a CTRL+C
@@ -547,6 +564,7 @@ public:
         {
             RCLCPP_ERROR(logger, "CAN network gateway could not be opened after %d attempts, aborting configuration",
                          retries + 1);
+            motors.clear();
             return false;
         }
         if (retries > 0)
@@ -563,7 +581,6 @@ public:
             motors.push_back(NAV_Motor(
                 gateway,
                 layout.can_id,
-                drive_motor ? MT_EC_BLOCK_COMMUTATED_MOTOR : MT_EC_SINUS_COMMUTATED_MOTOR,
                 drive_motor ? OMD_PROFILE_VELOCITY_MODE : OMD_PROFILE_POSITION_MODE,
                 drive_motor ? false : homing));
 
@@ -595,6 +612,9 @@ public:
             if (layout == nullptr) {
                 RCLCPP_WARN_THROTTLE(get_logger(), *clock, 1000,
                     "Unknown CAN node ID %d after motor detection", id);
+                motors.clear();
+                close_gateway(gateway);
+                gateway = nullptr;
                 return false;
             }
             if (motor->connected())
@@ -630,6 +650,9 @@ public:
                 RCLCPP_ERROR(logger,
                     "%s (node %d) is unresponsive : aborting the connection sequence, the whole node stays unconfigured",
                     layout->name, id);
+                motors.clear();
+                close_gateway(gateway);
+                gateway = nullptr;
                 return false;
             }
         }
@@ -660,7 +683,11 @@ private:
         }
         RCLCPP_INFO_ONCE(get_logger(), "Disconnect motors called");
 
-        close_gateway(gateway);
+        if (gateway)
+        {
+            close_gateway(gateway);
+            gateway = nullptr;
+        }
         motors.clear();
         last_fault_log_times.clear();
     }

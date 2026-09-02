@@ -486,7 +486,7 @@ void close_gateway(void *gateway)
 }
 
 // CONSTRUCTORS
-NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp_type, signed char mode, bool homing)
+NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, signed char mode, bool homing)
 {
     unsigned int error_code = 0;
     gateway = KeyHandle;
@@ -498,8 +498,8 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
     char buffer[256];
 
     std::snprintf(buffer, sizeof(buffer),
-                  "%s : probing | expected_type=%s requested_mode=%s homing=%s",
-                  tag.c_str(), motor_type_name(exp_type), operation_mode_name(mode),
+                  "%s : probing | requested_mode=%s homing=%s",
+                  tag.c_str(), operation_mode_name(mode),
                   homing ? "true" : "false");
     log_info(buffer);
 
@@ -517,15 +517,6 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
                       "%s : ANSWERED in %.0f ms | motor_type=%d (%s)",
                       tag.c_str(), probe_ms, (int)motor_type, motor_type_name(motor_type));
         log_info(buffer);
-
-        if (exp_type && (motor_type != exp_type))
-        {
-            std::snprintf(buffer, sizeof(buffer),
-                          "%s : motor type MISMATCH, expected %s but the controller reports %s",
-                          tag.c_str(), motor_type_name(exp_type), motor_type_name(motor_type));
-            log_warn(buffer);
-            // throw 0;
-        }
 
         // state of the controller as found at connection time
         unsigned int fault_error_code = 0;
@@ -588,7 +579,8 @@ NAV_Motor::NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp
                 VCS_SetPositionProfile(gateway, id, MAX_STEER_VEL, MAX_STEER_ACCEL, MAX_STEER_ACCEL, &error_code);
                 std::snprintf(buffer, sizeof(buffer),
                               "%s : position profile vel=%d rpm accel=decel=%d rpm/s -> %s",
-                              tag.c_str(), MAX_STEER_VEL, MAX_STEER_ACCEL, error_code ? "FAILED" : "ok");
+                              tag.c_str(), (int)MAX_STEER_VEL, (int)MAX_STEER_ACCEL,
+                              error_code ? "FAILED" : "ok");
             }
             else if (mode == OMD_PROFILE_VELOCITY_MODE)
             {

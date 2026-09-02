@@ -38,10 +38,11 @@ public:
      * brief :  class of objects to represent a NAV motor
      * param    KeyHandle   handle to the USB gateway
      * param    node_id     CAN Node ID of the controller
-     * param    exp_type    expected motor type (0 for no expected type)
+     * note :   the motor type is whatever the controller reports, it is logged
+     *          and never asserted against an expectation held on this side
      */
-    NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp_type, signed char mode, bool homing);
-    NAV_Motor(void *KeyHandle, unsigned short node_id, unsigned short exp_type) : NAV_Motor(KeyHandle, node_id, exp_type, 0, false) {};
+    NAV_Motor(void *KeyHandle, unsigned short node_id, signed char mode, bool homing);
+    NAV_Motor(void *KeyHandle, unsigned short node_id) : NAV_Motor(KeyHandle, node_id, 0, false) {};
 
     /* get_id
      * brief :  return the CAN id of the node

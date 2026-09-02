@@ -10,7 +10,6 @@ Description: Node handling service requests from the CS to change the mode of na
 
 What this file does:
 - Gamepad forwarding to nav
-- Front servo angle publisher
 - speed change subscriber and publisher
 - subscribes to all info from nav and publishes it as a single summarizing message at 2hz
 - camera rgb activation service clients
@@ -44,7 +43,7 @@ from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import SetBool
 
 # Custom message imports
-from custom_msg.msg import MotorStatus, ServoRequest
+from custom_msg.msg import MotorStatus
 from custom_msg.srv import ChangeModeCamera, ChangeModeSystem
 
 
@@ -145,12 +144,6 @@ MOTOR_STEER_RL = 7  # Rear Left Steer
 
 # Gamepad button indices
 GAMEPAD_NAV_SELECT_BUTTON = 0  # Button to confirm gamepad is for NAV
-GAMEPAD_CAMERA_UP_BUTTON = 2   # Button to tilt camera up
-GAMEPAD_CAMERA_DOWN_BUTTON = 3 # Button to tilt camera down
-
-# Camera servo settings
-CAMERA_SERVO_ID = 1
-CAMERA_SERVO_INCREMENT_DEG = 20
 
 # Timer periods (seconds)
 FULL_STATE_PUBLISH_PERIOD = 0.5 # 2hz
@@ -201,7 +194,6 @@ class NavCSInterface(Node):
         self.mode = 'Off'
         self.transitioning_state = False
         self.state_motor_control = State.PRIMARY_STATE_UNCONFIGURED
-        self.last_increment = 0  # Camera servo state
         self.last_motor_status_log_time = 0.0
 
         # ====================================================================
@@ -247,16 +239,6 @@ class NavCSInterface(Node):
             self.handle_localization,
             qos_profile=self.qos_profile
         )
-
-        # ====================================================================
-        # Camera Servo Control
-        # ====================================================================
-        # TODO: FIX
-        # self.front_cam_servo_pub = self.create_publisher(
-        #     ServoRequest, 
-        #     self.el_names["SERVO_REQ_TOPIC"], 
-        #     QOS_DEPTH
-        # )
 
         # ====================================================================
         # Speed Control Interface
@@ -661,9 +643,6 @@ class NavCSInterface(Node):
             self.get_logger().warning("Motors not ready, ignoring gamepad")
             return
         
-        # Handle camera servo controls (buttons[2] and buttons[3])
-        self.handle_camera_servo(msg)
-        
         # Forward gamepad to motor controller
         self.gamepad_pub.publish(msg)
 
@@ -683,43 +662,6 @@ class NavCSInterface(Node):
 
         self.get_logger().info(f"Speed change requested: {msg.data}")
         self.speed_pub.publish(msg)
-
-    def handle_camera_servo(self, msg):
-        """
-        Handle front camera servo angle adjustment from gamepad buttons.
-        
-        Uses buttons[2] (up) and buttons[3] (down) for servo control.
-        Implements debouncing to prevent rapid repeated commands.
-        
-        Args:
-            msg: Joy message with button states
-        """
-        # Arrow up/down buttons
-        increase = msg.buttons[GAMEPAD_CAMERA_UP_BUTTON]  # +1
-        decrease = msg.buttons[GAMEPAD_CAMERA_DOWN_BUTTON]  # -1
-        
-        # Reset debounce state when buttons released
-        if increase == 0 and decrease == 0:
-            self.last_increment = 0
-            return
-        
-        # Debounce: ignore if already processing
-        if self.last_increment == 1 and (increase == 1 or decrease == 1):
-            return
-        
-        # Create servo request
-        angle = ServoRequest()
-        angle.id = CAMERA_SERVO_ID
-        angle.zero_in = False
-        
-        if increase == 1:
-            angle.increment = CAMERA_SERVO_INCREMENT_DEG
-            self.front_cam_servo_pub.publish(angle)
-            self.last_increment = 1
-        elif decrease == 1:
-            angle.increment = -CAMERA_SERVO_INCREMENT_DEG
-            self.front_cam_servo_pub.publish(angle)
-            self.last_increment = 1
 
     # ========================================================================
     # Motor Status Monitoring
